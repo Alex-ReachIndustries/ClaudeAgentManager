@@ -255,6 +255,38 @@ export function getMessages(agentId: string) {
   return stmt.all(agentId);
 }
 
+export function touchAgentHeartbeat(agentId: string) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE agents SET last_update_at = datetime('now') WHERE id = ?
+  `);
+  return stmt.run(agentId);
+}
+
+export function archiveInactiveAgents(inactiveMinutes: number = 30): string[] {
+  const db = getDb();
+
+  // Find agents that are active/idle but haven't been heard from in > N minutes
+  const findInactive = db.prepare(`
+    SELECT id FROM agents
+    WHERE status IN ('active', 'idle')
+      AND last_update_at < datetime('now', ? || ' minutes')
+  `);
+  const archiveOne = db.prepare(`
+    UPDATE agents SET status = 'archived', last_update_at = datetime('now') WHERE id = ?
+  `);
+
+  const transaction = db.transaction(() => {
+    const inactive = findInactive.all(`-${inactiveMinutes}`) as { id: string }[];
+    for (const agent of inactive) {
+      archiveOne.run(agent.id);
+    }
+    return inactive.map((a) => a.id);
+  });
+
+  return transaction();
+}
+
 export function getMessagesByStatus(agentId: string, status: string) {
   const db = getDb();
   const stmt = db.prepare(`

@@ -12,6 +12,7 @@ import {
   addMessage,
   getMessages,
   getMessagesByStatus,
+  touchAgentHeartbeat,
   addFile,
   getFile,
   getFilesMeta,
@@ -84,8 +85,10 @@ Every time you complete a discrete piece of work (bug fix, feature, config chang
 After finishing a response with no further work: \`/loop 1m\` to poll Agent Manager for pending messages.
 
 ## Polling behaviour
+- Every poll (even with no messages) acts as a **heartbeat** — the server records the agent as alive.
 - **Empty response** (\`[]\`): silent no-op. Do not output anything or interrupt work.
 - **Message present**: treat it exactly like a user message — act on it at the next natural pause point. Do not interrupt mid-task.
+- **Auto-archive**: Agents that haven't polled or sent an update for 30+ minutes are automatically archived by the server. Polling automatically reactivates an archived agent — no manual re-registration needed.
 
 ## Communication frequency
 Communicate **frequently** via the Agent Manager — especially when:
@@ -159,6 +162,8 @@ This must use the literal UUID string, not a shell expression.
 
 **On each poll response**: If the response is a JSON object with a \`poll_delay_until\` field, save the delay to \`~/.claude/poll-delays.json\`, cancel the polling cron, and schedule a one-shot cron at the delay time to auto-restart polling.
 
+**Heartbeat**: Every poll automatically updates the agent's \`last_update_at\` timestamp on the server. Agents inactive for 30+ minutes are auto-archived. When polling resumes (e.g. after a delay expires), the server auto-reactivates the agent — no manual re-registration required.
+
 ### 5. Done
 Now respond to the user's first message. Remember to also invoke /agent-checkin to send the first update.`,
         },
@@ -221,6 +226,52 @@ When you answer a question or provide analysis — whether from chat or agent ma
 - Update title if the user's focus changed
 - Don't send duplicate updates for the same work
 - Skip if agent manager was unreachable at session start (and user approved continuing without)`,
+        },
+
+        session_resume: {
+          filename: "session-resume.md",
+          description: "Run when resuming a session (claude --resume) to re-establish Agent Manager connection and polling",
+          content: `Run this when resuming a session (via \`claude --resume\`). It re-establishes the Agent Manager connection and polling that were lost when the previous session ended.
+
+**How to detect a resume**: If you have prior conversation context but have NOT run /session-init or /session-resume in this conversation turn, you are in a resumed session. Run this skill immediately.
+
+## Steps (execute ALL, in order)
+
+### 1. Agent Manager — reconnect
+\`\`\`bash
+AGENT_URL=$(cat ~/.claude/agent-server-url 2>/dev/null || echo "${U}")
+curl -s --max-time 3 "$AGENT_URL/api/health"
+\`\`\`
+- If \`{"status":"ok"}\`: proceed.
+- If unreachable: warn user.
+
+### 2. Discover agent ID
+\`\`\`bash
+ls -t ~/.claude/projects/<project-path>/*.jsonl | head -1
+\`\`\`
+**CRITICAL**: Resolve to a fixed literal string.
+
+### 3. Re-register with Agent Manager
+POST an update to let the server know this agent is alive. This auto-unarchives if the agent was archived due to inactivity.
+\`\`\`bash
+curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
+  -H "Content-Type: application/json" \\
+  -d '{"type":"status","title":"<current task>","summary":"Session resumed","content":"Resumed session — reconnecting to Agent Manager"}'
+\`\`\`
+Check \`pendingMessages\` in response.
+
+### 4. Memory — refresh context
+1. Read the 2-3 most recent \`.claude/memories/*.md\` files.
+2. If today's log doesn't exist, create it.
+
+### 5. Check poll delay + start polling
+Read \`~/.claude/poll-delays.json\`. If no delay, start polling:
+\`\`\`
+/loop 1m curl -s "$AGENT_URL/api/agents/<SESSION_UUID>/messages?status=pending&deliver=true"
+\`\`\`
+
+### 6. Done
+Respond to the user. Also invoke /agent-checkin with a proper status update.`,
         },
       },
 
@@ -445,6 +496,16 @@ router.get("/:id/messages", (req: Request, res: Response) => {
     const deliver = req.query.deliver === "true";
 
     if (statusFilter === "pending" && deliver) {
+      // Heartbeat: update last_update_at so server knows agent is alive
+      touchAgentHeartbeat(id);
+
+      // Auto-unarchive: if agent was archived but is now polling, it's alive again
+      if ((agent as Record<string, unknown>).status === "archived") {
+        updateAgent(id, { status: "active" });
+        const reactivated = getAgent(id);
+        broadcast("agent-updated", reactivated);
+      }
+
       // Atomic: fetch pending + mark delivered in one transaction
       const messages = getPendingMessages(id);
       // Include poll_delay_until so the agent knows to pause if set
