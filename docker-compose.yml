@@ -1,0 +1,36 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - agent-data:/app/data
+    environment:
+      - PORT=3001
+      - DB_PATH=/app/data/agents.db
+      - PDF_SERVICE_URL=http://pdf-generator:8090
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  pdf-generator:
+    build: ./printingpress-api
+    volumes:
+      - /c/Users/kuron/Documents/PrintingPress:/app
+      - /c/Users/kuron/Documents/PrintingPress/api_wrapper.py:/app/api_wrapper.py
+    restart: unless-stopped
+
+volumes:
+  agent-data:

@@ -1,0 +1,108 @@
+import type { Agent, AgentUpdate, AgentMessage, SSEEvent } from './types';
+
+const BASE = '/api';
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export async function fetchAgents(): Promise<Agent[]> {
+  return request<Agent[]>('/agents');
+}
+
+export async function fetchAgent(id: string): Promise<Agent> {
+  return request<Agent>(`/agents/${id}`);
+}
+
+export async function fetchUpdates(agentId: string): Promise<AgentUpdate[]> {
+  const updates = await request<AgentUpdate[]>(`/agents/${agentId}/updates`);
+  return updates.map((u) => {
+    let content = u.content;
+    if (typeof content === 'string') {
+      try {
+        content = JSON.parse(content);
+      } catch {
+        // plain text content, keep as-is
+      }
+    }
+    return { ...u, content };
+  });
+}
+
+export async function fetchMessages(agentId: string): Promise<AgentMessage[]> {
+  return request<AgentMessage[]>(`/agents/${agentId}/messages`);
+}
+
+export async function sendMessage(agentId: string, content: string): Promise<AgentMessage> {
+  return request<AgentMessage>(`/agents/${agentId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteAgent(agentId: string): Promise<void> {
+  return request<void>(`/agents/${agentId}`, { method: 'DELETE' });
+}
+
+export async function updateAgent(
+  agentId: string,
+  fields: Partial<Pick<Agent, 'title' | 'status' | 'poll_delay_until'>>,
+): Promise<Agent> {
+  return request<Agent>(`/agents/${agentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields),
+  });
+}
+
+export async function uploadFile(
+  agentId: string,
+  file: File,
+): Promise<{ ok: boolean; file: { id: number; filename: string; mimetype: string; size: number } }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/agents/${agentId}/files`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+export function subscribeToEvents(onEvent: (event: SSEEvent) => void): () => void {
+  const es = new EventSource(`${BASE}/events`);
+
+  const handleAgentUpdated = (e: MessageEvent) => {
+    onEvent({ type: 'agent-updated', data: JSON.parse(e.data) });
+  };
+
+  const handleAgentDeleted = (e: MessageEvent) => {
+    onEvent({ type: 'agent-deleted', data: JSON.parse(e.data) });
+  };
+
+  const handleMessageQueued = (e: MessageEvent) => {
+    onEvent({ type: 'message-queued', data: JSON.parse(e.data) });
+  };
+
+  es.addEventListener('agent-updated', handleAgentUpdated);
+  es.addEventListener('agent-deleted', handleAgentDeleted);
+  es.addEventListener('message-queued', handleMessageQueued);
+
+  return () => {
+    es.removeEventListener('agent-updated', handleAgentUpdated);
+    es.removeEventListener('agent-deleted', handleAgentDeleted);
+    es.removeEventListener('message-queued', handleMessageQueued);
+    es.close();
+  };
+}
