@@ -12,6 +12,7 @@ export interface Agent {
   workspace: string | null;
   unread_update_count: number;
   last_read_at: string | null;
+  last_message_at: string | null;
 }
 
 export interface AgentUpdate {

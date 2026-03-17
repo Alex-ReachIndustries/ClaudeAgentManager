@@ -12,10 +12,12 @@ interface DashboardProps {
 
 function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   const { activeAgents, archivedAgents } = useMemo(() => {
-    const sorted = [...agents].sort(
-      (a, b) =>
-        new Date(b.last_update_at).getTime() - new Date(a.last_update_at).getTime(),
-    );
+    const sorted = [...agents].sort((a, b) => {
+      // Sort by last message received time (most recent first), falling back to last_update_at
+      const aTime = a.last_message_at || a.last_update_at;
+      const bTime = b.last_message_at || b.last_update_at;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
     return {
       activeAgents: sorted.filter((a) => a.status !== 'archived'),
       archivedAgents: sorted.filter((a) => a.status === 'archived'),

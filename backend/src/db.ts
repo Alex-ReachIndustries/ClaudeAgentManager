@@ -167,7 +167,8 @@ export function getAllAgents() {
       a.*,
       (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') AS pending_message_count,
       (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) AS unread_update_count,
-      (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary
+      (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary,
+      (SELECT MAX(m.created_at) FROM messages m WHERE m.agent_id = a.id) AS last_message_at
     FROM agents a
     ORDER BY a.last_update_at DESC
   `);
@@ -181,7 +182,8 @@ export function getAgent(id: string) {
       a.*,
       (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') AS pending_message_count,
       (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) AS unread_update_count,
-      (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary
+      (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary,
+      (SELECT MAX(m.created_at) FROM messages m WHERE m.agent_id = a.id) AS last_message_at
     FROM agents a
     WHERE a.id = ?
   `);
