@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, MessageSquare, Clock, Copy, Check } from 'lucide-react';
+import { Activity, MessageSquare, Clock, Copy, Check, Folder, Bell } from 'lucide-react';
 import type { Agent } from '../types';
 import { timeAgo } from '../utils/time';
 
 const statusConfig = {
   active: { color: 'bg-green-400', label: 'Active' },
+  working: { color: 'bg-blue-400', label: 'Working' },
   idle: { color: 'bg-yellow-400', label: 'Idle' },
+  'waiting-for-input': { color: 'bg-orange-400', label: 'Waiting for Input' },
   completed: { color: 'bg-dark-500', label: 'Completed' },
   archived: { color: 'bg-dark-600', label: 'Archived' },
 } as const;
@@ -36,7 +38,7 @@ function AgentCard({ agent }: AgentCardProps) {
     >
       {/* Status badge + copy button */}
       <div className="flex items-center gap-2 mb-3">
-        <span className={`w-2.5 h-2.5 rounded-full ${status.color} ${agent.status === 'active' ? 'animate-pulse' : ''}`} />
+        <span className={`w-2.5 h-2.5 rounded-full ${status.color} ${['active', 'working'].includes(agent.status) ? 'animate-pulse' : ''}`} />
         <span className="text-xs font-medium text-dark-400 uppercase tracking-wide">
           {status.label}
         </span>
@@ -57,7 +59,15 @@ function AgentCard({ agent }: AgentCardProps) {
       </div>
 
       {/* Title */}
-      <h3 className="text-lg font-bold text-dark-100 mb-2 truncate">{agent.title}</h3>
+      <h3 className="text-lg font-bold text-dark-100 mb-1 truncate">{agent.title}</h3>
+
+      {/* Workspace subtitle */}
+      {agent.workspace && (
+        <p className="flex items-center gap-1 text-xs text-dark-500 mb-2 truncate">
+          <Folder size={11} />
+          {agent.workspace}
+        </p>
+      )}
 
       {/* Latest summary */}
       {agent.latest_summary ? (
@@ -75,7 +85,15 @@ function AgentCard({ agent }: AgentCardProps) {
           {agent.update_count}
         </span>
         <span
+          className={`flex items-center gap-1 ${agent.unread_update_count > 0 ? 'text-blue-400 font-medium' : ''}`}
+          title="Unread updates"
+        >
+          <Bell size={12} />
+          {agent.unread_update_count}
+        </span>
+        <span
           className={`flex items-center gap-1 ${agent.pending_message_count > 0 ? 'text-lumi-400 font-medium' : ''}`}
+          title="Pending messages"
         >
           <MessageSquare size={12} />
           {agent.pending_message_count}

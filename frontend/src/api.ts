@@ -63,6 +63,10 @@ export async function updateAgent(
   });
 }
 
+export async function markAgentRead(agentId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/agents/${agentId}/read`, { method: 'POST' });
+}
+
 export async function uploadFile(
   agentId: string,
   file: File,

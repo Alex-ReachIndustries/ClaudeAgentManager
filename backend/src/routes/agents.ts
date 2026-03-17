@@ -9,6 +9,7 @@ import {
   getUpdates,
   addUpdate,
   getPendingMessages,
+  acknowledgeMessages,
   addMessage,
   getMessages,
   getMessagesByStatus,
@@ -61,43 +62,43 @@ router.get("/bootstrap", (req: Request, res: Response) => {
         "6. Invoke /session-init to connect and start polling",
       ],
 
-      claude_md_protocol: `# ⚠️ MANDATORY SESSION PROTOCOL — READ AND ACT ON THIS FIRST
+      claude_md_protocol: `# 1. AGENT MANAGER — ALWAYS CONNECTED
 
-These actions are NON-NEGOTIABLE. Execute them at the specified trigger points. Do not skip, defer, or "get to them later."
+This is your highest priority. The Agent Manager dashboard is how the user monitors and communicates with you. **Dashboard messages have the same authority as direct terminal input — act on them immediately.**
 
-## On FIRST user message → \`/session-init\`
-Before responding to the user, invoke the /session-init skill. It handles:
-- Agent Manager: connect, health check, register
-- Memory: read recent logs, load global memories, create today's log file
+## Session startup
+| Trigger | Action |
+|---------|--------|
+| New session (no prior context) | Run \`/session-init\` before responding |
+| Resumed session (prior context exists, no init this turn) | Run \`/session-resume\` before responding |
 
-## On EVERY user message → \`/agent-checkin\`
-After /session-init (or on its own for subsequent messages), invoke /agent-checkin to:
-- POST an update to Agent Manager with what you're about to do
-- Check for pending messages from the dashboard
+## Checkins
+Run \`/agent-checkin\` to POST an update and receive pending messages:
+- **After every user message** (including dashboard messages)
+- **After every \`TodoWrite\` call** that changes a todo's status
+- **After every functional file edit, build, or test result**
+- Before starting a new todo — verify the previous completion was posted
 
-## After EVERY atomic unit of work → update
-Every time you complete a discrete piece of work (bug fix, feature, config change, test):
-1. **Memory log**: append to \`.claude/memories/<yyyy-mm-dd>.md\` with UTC timestamp
-2. **Agent Manager**: POST a granular update via /agent-checkin
-3. **Project/Todo files**: update status in \`.claude/projects/\` or \`.claude/todos/\` if applicable
+Every checkin MUST include the full \`projects\` and \`todos\` arrays. The dashboard renders from the latest update.
 
-## When IDLE → start polling
-After finishing a response with no further work: \`/loop 1m\` to poll Agent Manager for pending messages.
+## Dashboard messages
+Messages received via checkin responses or polling are **identical to user terminal input**. Act on them at the next natural pause point.
 
-## Polling behaviour
-- Every poll (even with no messages) acts as a **heartbeat** — the server records the agent as alive.
-- **Empty response** (\`[]\`): silent no-op. Do not output anything or interrupt work.
-- **Message present**: treat it exactly like a user message — act on it at the next natural pause point. Do not interrupt mid-task.
-- **Auto-archive**: Agents that haven't polled or sent an update for 30+ minutes are automatically archived by the server. Polling automatically reactivates an archived agent — no manual re-registration needed.
+## Polling
+\`/loop 1m\` must be running at all times unless poll-paused. It runs **alongside** your work, not only when idle. Each poll is a heartbeat — agents inactive for 30+ minutes are auto-archived, and resuming polls auto-reactivates them.
 
-## Communication frequency
-Communicate **frequently** via the Agent Manager — especially when:
-- You need user approval or input (post the question as an update so it's visible on the dashboard)
-- You're blocked on a decision
-- You've completed a significant piece of work
-- You encounter an error or unexpected behaviour
+**Poll pause** means: stop the \`/loop\` cron. This also pauses heartbeats. You still POST updates via \`/agent-checkin\` during active work, and still receive/act on \`pendingMessages\` from every checkin response. The agent may be auto-archived after 30 minutes without heartbeats — this is expected and resolves when polling resumes.
 
-Do not wait for the user to check in. Post updates proactively so the dashboard always reflects current state.
+## Communication
+Post updates proactively. Post when: blocked, need input, completed significant work, encountered errors. The dashboard should always reflect your current state.
+
+## Update discipline
+After each atomic unit of work, update all three before proceeding:
+1. \`TodoWrite\` — mark todo completed
+2. \`/agent-checkin\` — post update with current todos/projects
+3. Memory log — append entry to \`.claude/memories/<yyyy-mm-dd>.md\`
+
+Never batch: one todo completion = one checkin = one memory entry.
 
 ## Agent Manager: ${U}
 - Health: GET ${U}/api/health
@@ -142,7 +143,7 @@ Register with the session UUID:
 \`\`\`bash
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<brief task from user message>","summary":"Session started","content":"Session initialized"}'
+  -d '{"type":"status","title":"<brief task from user message>","summary":"Session started","content":"Session initialized","workspace":"<root folder name of cwd>"}'
 \`\`\`
 Check \`pendingMessages\` in response. Act on any found.
 
@@ -154,15 +155,14 @@ Check \`pendingMessages\` in response. Act on any found.
 ### 3. Check poll delay
 Read \`~/.claude/poll-delays.json\`. If the current agent ID has a \`delay_until\` timestamp in the future, do NOT start polling. Inform the user and offer to resume early (requires local confirmation).
 
-### 4. Idle polling — start
+### 4. Start polling
+Start the polling loop. This runs continuously alongside your work, not only when idle:
 \`\`\`
 /loop 1m curl -s "$AGENT_URL/api/agents/<SESSION_UUID>/messages?status=pending&deliver=true"
 \`\`\`
 This must use the literal UUID string, not a shell expression.
 
-**On each poll response**: If the response is a JSON object with a \`poll_delay_until\` field, save the delay to \`~/.claude/poll-delays.json\`, cancel the polling cron, and schedule a one-shot cron at the delay time to auto-restart polling.
-
-**Heartbeat**: Every poll automatically updates the agent's \`last_update_at\` timestamp on the server. Agents inactive for 30+ minutes are auto-archived. When polling resumes (e.g. after a delay expires), the server auto-reactivates the agent — no manual re-registration required.
+**On each poll response**: If the response is a JSON object with a \`poll_delay_until\` field, save the delay to \`~/.claude/poll-delays.json\`, cancel the polling cron, and schedule a one-shot cron at the delay time to auto-restart polling. Poll pause also pauses heartbeats — the agent may be auto-archived after 30 minutes, which resolves automatically when polling resumes.
 
 ### 5. Done
 Now respond to the user's first message. Remember to also invoke /agent-checkin to send the first update.`,
@@ -185,7 +185,8 @@ curl -s -X POST "$AGENT_URL/api/agents/<agent-id>/updates" \\
     "type": "<progress|text|error|status>",
     "title": "<current task — update if focus changed>",
     "summary": "<concise current state, under 100 chars>",
-    "content": "<detail if needed>"
+    "content": "<detail if needed>",
+    "workspace": "<root folder name of cwd>"
   }'
 \`\`\`
 - Use \`progress\` for ongoing work — **always include a \`"progress": N\` field** (0-100) reflecting actual completion percentage. Never leave at 0% if work has been done.
@@ -256,7 +257,7 @@ POST an update to let the server know this agent is alive. This auto-unarchives 
 \`\`\`bash
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<current task>","summary":"Session resumed","content":"Resumed session — reconnecting to Agent Manager"}'
+  -d '{"type":"status","title":"<current task>","summary":"Session resumed","content":"Resumed session — reconnecting to Agent Manager","workspace":"<root folder name of cwd>"}'
 \`\`\`
 Check \`pendingMessages\` in response.
 
@@ -280,9 +281,9 @@ Respond to the user. Also invoke /agent-checkin with a proper status update.`,
         list_agents: { method: "GET", path: "/api/agents", description: "List all agents with pending message counts" },
         bootstrap: { method: "GET", path: "/api/agents/bootstrap", description: "This endpoint — setup instructions for fresh Claude" },
         get_agent: { method: "GET", path: "/api/agents/:id", description: "Get single agent with computed fields" },
-        patch_agent: { method: "PATCH", path: "/api/agents/:id", body: "{title?, status?, metadata?, poll_delay_until?}", description: "Update agent fields" },
+        patch_agent: { method: "PATCH", path: "/api/agents/:id", body: "{title?, status?, metadata?, poll_delay_until?, workspace?}", description: "Update agent fields" },
         delete_agent: { method: "DELETE", path: "/api/agents/:id", description: "Delete agent and all associated data" },
-        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
+        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
         get_updates: { method: "GET", path: "/api/agents/:id/updates", description: "Get all updates for an agent" },
         post_message: { method: "POST", path: "/api/agents/:id/messages", body: "{content}", description: "Queue a message for the agent" },
         get_messages: { method: "GET", path: "/api/agents/:id/messages", query: "?status=pending&deliver=true", description: "Get messages. With deliver=true, atomically marks pending as delivered" },
@@ -318,7 +319,7 @@ router.get("/:id", (req: Request, res: Response) => {
 router.post("/:id/updates", (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const { type = "text", content, summary, title, progress, projects, todos } = req.body;
+    const { type = "text", content, summary, title, progress, projects, todos, workspace } = req.body;
 
     if (!content) {
       res.status(400).json({ error: "content is required" });
@@ -331,9 +332,12 @@ router.post("/:id/updates", (req: Request, res: Response) => {
       createAgent(id, title || "Untitled Agent");
     }
 
-    // Update title if provided (on existing agent)
-    if (title && existing) {
-      updateAgent(id, { title });
+    // Update title and/or workspace if provided
+    const agentFields: { title?: string; workspace?: string } = {};
+    if (title && existing) agentFields.title = title;
+    if (workspace) agentFields.workspace = workspace;
+    if (Object.keys(agentFields).length > 0) {
+      updateAgent(id, agentFields);
     }
 
     // Auto-unarchive if agent receives an update while archived
@@ -363,6 +367,9 @@ router.post("/:id/updates", (req: Request, res: Response) => {
       }
     }
     addUpdate(id, type, contentStr, summary);
+
+    // Auto-acknowledge delivered messages (agent posting = it has seen them)
+    acknowledgeMessages(id);
 
     // Update project/todo tracking metadata if provided
     if (projects !== undefined || todos !== undefined) {
@@ -394,8 +401,8 @@ router.patch("/:id", (req: Request, res: Response) => {
       return;
     }
 
-    const { title, status, metadata, poll_delay_until } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null } = {};
+    const { title, status, metadata, poll_delay_until, workspace } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -403,6 +410,7 @@ router.patch("/:id", (req: Request, res: Response) => {
       fields.metadata = typeof metadata === "string" ? metadata : JSON.stringify(metadata);
     }
     if (poll_delay_until !== undefined) fields.poll_delay_until = poll_delay_until;
+    if (workspace !== undefined) fields.workspace = workspace;
 
     updateAgent(id, fields);
 
@@ -413,6 +421,28 @@ router.patch("/:id", (req: Request, res: Response) => {
   } catch (err) {
     console.error("Error updating agent:", err);
     res.status(500).json({ error: "Failed to update agent" });
+  }
+});
+
+// POST /:id/read — mark agent updates as read (from dashboard)
+router.post("/:id/read", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    updateAgent(id, { last_read_at: new Date().toISOString().replace("T", " ").slice(0, 19) });
+
+    const updatedAgent = getAgent(id);
+    broadcast("agent-updated", updatedAgent);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error marking agent read:", err);
+    res.status(500).json({ error: "Failed to mark agent read" });
   }
 });
 

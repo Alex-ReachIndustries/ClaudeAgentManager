@@ -1,7 +1,7 @@
 export interface Agent {
   id: string;
   title: string;
-  status: 'active' | 'idle' | 'completed' | 'archived';
+  status: 'active' | 'working' | 'idle' | 'waiting-for-input' | 'completed' | 'archived';
   created_at: string;
   last_update_at: string;
   update_count: number;
@@ -9,6 +9,9 @@ export interface Agent {
   pending_message_count: number;
   latest_summary: string | null;
   poll_delay_until: string | null;
+  workspace: string | null;
+  unread_update_count: number;
+  last_read_at: string | null;
 }
 
 export interface AgentUpdate {
@@ -26,7 +29,8 @@ export interface AgentMessage {
   created_at: string;
   delivered_at: string | null;
   content: string;
-  status: 'pending' | 'delivered' | 'executed';
+  status: 'pending' | 'delivered' | 'acknowledged' | 'executed';
+  acknowledged_at: string | null;
 }
 
 export interface ProjectPhase {

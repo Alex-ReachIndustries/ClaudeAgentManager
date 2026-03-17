@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Send, Paperclip, Clock, CheckCircle, PlayCircle, File as FileIcon, X } from 'lucide-react';
+import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X } from 'lucide-react';
 import type { AgentMessage } from '../types';
 import { sendMessage, uploadFile } from '../api';
 import { timeAgo } from '../utils/time';
@@ -7,6 +7,7 @@ import { timeAgo } from '../utils/time';
 const messageStatusConfig = {
   pending: { icon: Clock, color: 'text-yellow-400', bg: 'bg-yellow-400/10', label: 'Pending' },
   delivered: { icon: CheckCircle, color: 'text-blue-400', bg: 'bg-blue-400/10', label: 'Delivered' },
+  acknowledged: { icon: CheckCheck, color: 'text-purple-400', bg: 'bg-purple-400/10', label: 'Acknowledged' },
   executed: { icon: PlayCircle, color: 'text-green-400', bg: 'bg-green-400/10', label: 'Executed' },
 } as const;
 

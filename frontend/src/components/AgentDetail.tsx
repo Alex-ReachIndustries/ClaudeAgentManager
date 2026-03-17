@@ -1,8 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent } from '../api';
+import { updateAgent, markAgentRead } from '../api';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
 import MessagePanel from './MessagePanel';
@@ -13,7 +13,9 @@ import type { ProjectStatus, TodoStatus } from '../types';
 
 const statusConfig = {
   active: { color: 'bg-green-400', label: 'Active' },
+  working: { color: 'bg-blue-400', label: 'Working' },
   idle: { color: 'bg-yellow-400', label: 'Idle' },
+  'waiting-for-input': { color: 'bg-orange-400', label: 'Waiting for Input' },
   completed: { color: 'bg-dark-500', label: 'Completed' },
   archived: { color: 'bg-dark-600', label: 'Archived' },
 } as const;
@@ -25,6 +27,13 @@ function AgentDetail() {
 
   const isArchived = agent?.status === 'archived';
   const [exporting, setExporting] = useState(false);
+
+  // Mark agent as read when viewing detail page
+  useEffect(() => {
+    if (id && agent) {
+      markAgentRead(id).catch(() => {});
+    }
+  }, [id, agent?.update_count]);
 
   const handleToggleArchive = async () => {
     if (!id || !agent) return;

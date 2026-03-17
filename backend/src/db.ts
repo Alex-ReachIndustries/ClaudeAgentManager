@@ -24,7 +24,7 @@ export function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT 'Untitled Agent',
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','completed','archived')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
       update_count INTEGER NOT NULL DEFAULT 0,
@@ -66,6 +66,8 @@ export function getDb(): Database.Database {
 
   // Migrations — add columns safely
   try { db.exec("ALTER TABLE agents ADD COLUMN poll_delay_until TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN workspace TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN last_read_at TEXT"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'user'"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE files ADD COLUMN description TEXT NOT NULL DEFAULT ''"); } catch { /* exists */ }
 
@@ -88,7 +90,7 @@ export function getDb(): Database.Database {
       CREATE TABLE agents_new (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL DEFAULT 'Untitled Agent',
-        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','completed','archived')),
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived')),
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
         update_count INTEGER NOT NULL DEFAULT 0,
@@ -98,6 +100,57 @@ export function getDb(): Database.Database {
       INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
       DROP TABLE agents;
       ALTER TABLE agents_new RENAME TO agents;
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
+  // Migration: add 'working' and 'waiting-for-input' to agents status CHECK constraint
+  const agentTableNow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
+  if (agentTableNow && !agentTableNow.sql.includes("'working'")) {
+    const cols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).join(", ");
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS agents_new`);
+    db.exec(`
+      CREATE TABLE agents_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT 'Untitled Agent',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
+        update_count INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        poll_delay_until TEXT,
+        workspace TEXT,
+        last_read_at TEXT
+      );
+      INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
+      DROP TABLE agents;
+      ALTER TABLE agents_new RENAME TO agents;
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
+  // Migration: add 'acknowledged' to messages status CHECK constraint
+  const msgTableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").get() as { sql: string } | undefined;
+  if (msgTableInfo && !msgTableInfo.sql.includes("'acknowledged'")) {
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS messages_new`);
+    db.exec(`
+      CREATE TABLE messages_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        delivered_at TEXT,
+        acknowledged_at TEXT,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','acknowledged','executed'))
+      );
+      INSERT INTO messages_new (id, agent_id, created_at, delivered_at, content, status)
+        SELECT id, agent_id, created_at, delivered_at, content, status FROM messages;
+      DROP TABLE messages;
+      ALTER TABLE messages_new RENAME TO messages;
+      CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
     `);
     db.pragma("foreign_keys = ON");
   }
@@ -113,6 +166,7 @@ export function getAllAgents() {
     SELECT
       a.*,
       (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') AS pending_message_count,
+      (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) AS unread_update_count,
       (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary
     FROM agents a
     ORDER BY a.last_update_at DESC
@@ -126,6 +180,7 @@ export function getAgent(id: string) {
     SELECT
       a.*,
       (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') AS pending_message_count,
+      (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) AS unread_update_count,
       (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary
     FROM agents a
     WHERE a.id = ?
@@ -143,7 +198,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string }
 ) {
   const db = getDb();
 
@@ -165,6 +220,14 @@ export function updateAgent(
   if (fields.poll_delay_until !== undefined) {
     setClauses.push("poll_delay_until = ?");
     values.push(fields.poll_delay_until);
+  }
+  if (fields.workspace !== undefined) {
+    setClauses.push("workspace = ?");
+    values.push(fields.workspace);
+  }
+  if (fields.last_read_at !== undefined) {
+    setClauses.push("last_read_at = ?");
+    values.push(fields.last_read_at);
   }
 
   if (setClauses.length === 0) return;
@@ -247,6 +310,16 @@ export function addMessage(agentId: string, content: string) {
   return stmt.run(agentId, content);
 }
 
+export function acknowledgeMessages(agentId: string) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE messages
+    SET status = 'acknowledged', acknowledged_at = datetime('now')
+    WHERE agent_id = ? AND status = 'delivered'
+  `);
+  return stmt.run(agentId);
+}
+
 export function getMessages(agentId: string) {
   const db = getDb();
   const stmt = db.prepare(`
@@ -267,10 +340,13 @@ export function archiveInactiveAgents(inactiveMinutes: number = 30): string[] {
   const db = getDb();
 
   // Find agents that are active/idle but haven't been heard from in > N minutes
+  // Skip agents that have pending messages or unread updates
   const findInactive = db.prepare(`
-    SELECT id FROM agents
-    WHERE status IN ('active', 'idle')
-      AND last_update_at < datetime('now', ? || ' minutes')
+    SELECT a.id FROM agents a
+    WHERE a.status IN ('active', 'idle', 'working', 'waiting-for-input')
+      AND a.last_update_at < datetime('now', ? || ' minutes')
+      AND (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') = 0
+      AND (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) = 0
   `);
   const archiveOne = db.prepare(`
     UPDATE agents SET status = 'archived', last_update_at = datetime('now') WHERE id = ?
