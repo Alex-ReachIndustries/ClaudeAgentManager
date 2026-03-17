@@ -45,7 +45,7 @@ export function useAgents() {
           setAgents((prev) =>
             prev.map((a) =>
               a.id === event.data.agent_id
-                ? { ...a, pending_message_count: a.pending_message_count + 1 }
+                ? { ...a, pending_message_count: a.pending_message_count + 1, last_message_at: event.data.created_at }
                 : a,
             ),
           );
