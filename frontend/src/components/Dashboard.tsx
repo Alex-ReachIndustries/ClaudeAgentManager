@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import AgentCard from './AgentCard';
-import { RefreshCw, Bot, Archive } from 'lucide-react';
+import FolderPicker from './FolderPicker';
+import { createLaunchRequest } from '../api';
+import { RefreshCw, Bot, Archive, Plus } from 'lucide-react';
 
 interface DashboardProps {
   agents: Agent[];
@@ -11,11 +13,22 @@ interface DashboardProps {
 }
 
 function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+
+  const handleLaunch = async (folderPath: string) => {
+    try {
+      await createLaunchRequest('new', folderPath);
+      setShowFolderPicker(false);
+    } catch (err) {
+      console.error('Failed to create launch request:', err);
+    }
+  };
+
   const { activeAgents, archivedAgents } = useMemo(() => {
     const sorted = [...agents].sort((a, b) => {
-      // Sort by last message received time (most recent first), falling back to last_update_at
-      const aTime = a.last_message_at || a.last_update_at;
-      const bTime = b.last_message_at || b.last_update_at;
+      // Sort by real activity (updates & messages), not heartbeats
+      const aTime = a.last_activity_at || a.last_update_at;
+      const bTime = b.last_activity_at || b.last_update_at;
       return new Date(bTime).getTime() - new Date(aTime).getTime();
     });
     return {
@@ -87,7 +100,24 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-6 sm:space-y-8">
+      {/* New Agent button */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowFolderPicker(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-lumi-600 hover:bg-lumi-500 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          <Plus size={16} />
+          New Agent
+        </button>
+      </div>
+
+      <FolderPicker
+        isOpen={showFolderPicker}
+        onClose={() => setShowFolderPicker(false)}
+        onSelect={handleLaunch}
+      />
+
       {/* Active agents */}
       {activeAgents.length > 0 && (
         <div>

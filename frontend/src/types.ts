@@ -10,9 +10,11 @@ export interface Agent {
   latest_summary: string | null;
   poll_delay_until: string | null;
   workspace: string | null;
+  cwd: string | null;
   unread_update_count: number;
   last_read_at: string | null;
   last_message_at: string | null;
+  last_activity_at: string | null;
 }
 
 export interface AgentUpdate {

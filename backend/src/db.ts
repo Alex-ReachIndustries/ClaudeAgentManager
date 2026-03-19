@@ -59,9 +59,22 @@ export function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS launch_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume')),
+      folder_path TEXT NOT NULL,
+      resume_agent_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','claimed','completed','failed')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      claimed_at TEXT,
+      completed_at TEXT,
+      agent_id TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
     CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
     CREATE INDEX IF NOT EXISTS idx_files_agent_id ON files(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_launch_requests_status ON launch_requests(status);
   `);
 
   // Migrations — add columns safely
@@ -70,6 +83,10 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE agents ADD COLUMN last_read_at TEXT"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'user'"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE files ADD COLUMN description TEXT NOT NULL DEFAULT ''"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN last_activity_at TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN cwd TEXT"); } catch { /* exists */ }
+  // Backfill last_activity_at from last_update_at where null
+  try { db.exec("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL"); } catch { /* ignore */ }
 
   // Migration: add 'archived' to agents status CHECK constraint
   // SQLite doesn't support ALTER CHECK, so we recreate the table if needed
@@ -200,7 +217,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string }
 ) {
   const db = getDb();
 
@@ -231,10 +248,17 @@ export function updateAgent(
     setClauses.push("last_read_at = ?");
     values.push(fields.last_read_at);
   }
+  if (fields.cwd !== undefined) {
+    setClauses.push("cwd = ?");
+    values.push(fields.cwd);
+  }
 
   if (setClauses.length === 0) return;
 
-  setClauses.push("last_update_at = datetime('now')");
+  // Do NOT bump last_update_at here — it should only be updated by
+  // heartbeats (touchAgentHeartbeat) and agent updates (addUpdate).
+  // Updating it on every field change (e.g. marking read from the dashboard)
+  // would incorrectly make the agent appear recently active.
   values.push(id);
 
   const sql = `UPDATE agents SET ${setClauses.join(", ")} WHERE id = ?`;
@@ -270,7 +294,8 @@ export function addUpdate(
   const bumpAgent = db.prepare(`
     UPDATE agents
     SET update_count = update_count + 1,
-        last_update_at = datetime('now')
+        last_update_at = datetime('now'),
+        last_activity_at = datetime('now')
     WHERE id = ?
   `);
 
@@ -306,10 +331,18 @@ export function getPendingMessages(agentId: string) {
 
 export function addMessage(agentId: string, content: string) {
   const db = getDb();
-  const stmt = db.prepare(`
+  const insert = db.prepare(`
     INSERT INTO messages (agent_id, content) VALUES (?, ?)
   `);
-  return stmt.run(agentId, content);
+  const touchActivity = db.prepare(`
+    UPDATE agents SET last_activity_at = datetime('now') WHERE id = ?
+  `);
+  const transaction = db.transaction(() => {
+    const result = insert.run(agentId, content);
+    touchActivity.run(agentId);
+    return result;
+  });
+  return transaction();
 }
 
 export function acknowledgeMessages(agentId: string) {
@@ -405,4 +438,44 @@ export function getFilesMeta(agentId: string) {
     SELECT id, agent_id, filename, mimetype, size, source, description, created_at FROM files WHERE agent_id = ? ORDER BY created_at ASC
   `);
   return stmt.all(agentId);
+}
+
+// --- Launch requests ---
+
+export function createLaunchRequest(type: string, folderPath: string, resumeAgentId?: string) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO launch_requests (type, folder_path, resume_agent_id) VALUES (?, ?, ?)
+  `);
+  const result = stmt.run(type, folderPath, resumeAgentId ?? null);
+  return { id: result.lastInsertRowid, type, folder_path: folderPath, resume_agent_id: resumeAgentId ?? null, status: 'pending' };
+}
+
+export function getLaunchRequestsByStatus(status: string) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT * FROM launch_requests WHERE status = ? ORDER BY created_at ASC
+  `);
+  return stmt.all(status);
+}
+
+export function updateLaunchRequest(id: number, fields: { status?: string; agent_id?: string; claimed_at?: string; completed_at?: string }) {
+  const db = getDb();
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+
+  if (fields.status !== undefined) { setClauses.push("status = ?"); values.push(fields.status); }
+  if (fields.agent_id !== undefined) { setClauses.push("agent_id = ?"); values.push(fields.agent_id); }
+  if (fields.claimed_at !== undefined) { setClauses.push("claimed_at = ?"); values.push(fields.claimed_at); }
+  if (fields.completed_at !== undefined) { setClauses.push("completed_at = ?"); values.push(fields.completed_at); }
+
+  if (setClauses.length === 0) return;
+  values.push(id);
+  const sql = `UPDATE launch_requests SET ${setClauses.join(", ")} WHERE id = ?`;
+  return db.prepare(sql).run(...values);
+}
+
+export function getLaunchRequest(id: number) {
+  const db = getDb();
+  return db.prepare("SELECT * FROM launch_requests WHERE id = ?").get(id);
 }

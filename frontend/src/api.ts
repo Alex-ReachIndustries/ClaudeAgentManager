@@ -25,6 +25,7 @@ export async function fetchAgent(id: string): Promise<Agent> {
 
 export async function fetchUpdates(agentId: string): Promise<AgentUpdate[]> {
   const updates = await request<AgentUpdate[]>(`/agents/${agentId}/updates`);
+  if (!updates) return [];
   return updates.map((u) => {
     let content = u.content;
     if (typeof content === 'string') {
@@ -82,6 +83,25 @@ export async function uploadFile(
     throw new Error(`API error ${res.status}: ${body}`);
   }
   return res.json();
+}
+
+// --- Folder browser ---
+export interface FolderEntry {
+  name: string;
+  path: string;
+  hasChildren: boolean;
+}
+
+export async function fetchFolders(folderPath: string = ''): Promise<{ current: string; folders: FolderEntry[] }> {
+  return request<{ current: string; folders: FolderEntry[] }>(`/folders?path=${encodeURIComponent(folderPath)}`);
+}
+
+// --- Launch requests ---
+export async function createLaunchRequest(type: 'new' | 'resume', folderPath: string, resumeAgentId?: string): Promise<{ ok: boolean; request: unknown }> {
+  return request<{ ok: boolean; request: unknown }>('/launch-requests', {
+    method: 'POST',
+    body: JSON.stringify({ type, folder_path: folderPath, resume_agent_id: resumeAgentId }),
+  });
 }
 
 export function subscribeToEvents(onEvent: (event: SSEEvent) => void): () => void {

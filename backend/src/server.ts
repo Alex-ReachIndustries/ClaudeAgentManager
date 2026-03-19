@@ -3,6 +3,8 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import agentsRouter from "./routes/agents.js";
+import foldersRouter from "./routes/folders.js";
+import launchRouter from "./routes/launch.js";
 import { addClient, removeClient, broadcast } from "./sse.js";
 import { archiveInactiveAgents, getAgent } from "./db.js";
 
@@ -30,6 +32,8 @@ app.use(compression());
 
 // Routes
 app.use("/api/agents", agentsRouter);
+app.use("/api/folders", foldersRouter);
+app.use("/api/launch-requests", launchRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {

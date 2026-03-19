@@ -49,7 +49,7 @@ router.get("/bootstrap", (req: Request, res: Response) => {
 
     res.json({
       name: "Agent Manager Bootstrap",
-      version: "1.1",
+      version: "2.0",
       description: "Everything a fresh Claude session needs to connect to and use the Agent Manager. Follow the setup_steps in order, writing each file as specified.",
       server_url: U,
 
@@ -96,7 +96,7 @@ Post updates proactively. Post when: blocked, need input, completed significant 
 After each atomic unit of work, update all three before proceeding:
 1. \`TodoWrite\` — mark todo completed
 2. \`/agent-checkin\` — post update with current todos/projects
-3. Memory log — append entry to \`.claude/memories/<yyyy-mm-dd>.md\`
+3. Memory log — append entry to \`claudeadmin/memories/<yyyy-mm-dd>.md\`
 
 Never batch: one todo completion = one checkin = one memory entry.
 
@@ -132,7 +132,7 @@ The agent ID MUST be the current Claude session's UUID. This allows the dashboar
 
 Find it by getting the most recently modified \`.jsonl\` file in the project's session directory:
 \`\`\`bash
-ls -t ~/.claude/projects/<project-path>/*.jsonl | head -1
+ls -t ~/claudeadmin/projects/<project-path>/*.jsonl | head -1
 # Extract the UUID filename (without path or extension)
 \`\`\`
 The \`<project-path>\` is the Claude project key — the current working directory with path separators replaced by \`--\` and prefixed with drive letter, e.g. \`c--Users-kuron-Research-MyProject\`.
@@ -148,9 +148,9 @@ curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
 Check \`pendingMessages\` in response. Act on any found.
 
 ### 2. Memory — load context
-1. Read the 2-3 most recent \`.claude/memories/*.md\` files to understand where things left off.
+1. Read the 2-3 most recent \`claudeadmin/memories/*.md\` files to understand where things left off.
 2. Read \`~/.claude/memory/MEMORY.md\` and any relevant referenced memory files.
-3. If today's log (\`.claude/memories/<yyyy-mm-dd>.md\`) doesn't exist, create it with header \`# Session Log — <yyyy-mm-dd>\`
+3. If today's log (\`claudeadmin/memories/<yyyy-mm-dd>.md\`) doesn't exist, create it with header \`# Session Log — <yyyy-mm-dd>\`
 
 ### 3. Check poll delay
 Read \`~/.claude/poll-delays.json\`. If the current agent ID has a \`delay_until\` timestamp in the future, do NOT start polling. Inform the user and offer to resume early (requires local confirmation).
@@ -202,7 +202,7 @@ curl -s -X POST "$AGENT_URL/api/agents/<agent-id>/updates" \\
   "todos": [{"name": "Description", "completed": false, "project": "Name"}]
 }
 \`\`\`
-Read all \`.claude/projects/*.md\` and \`.claude/todos/*.md\` files to build the arrays. **Every todo MUST include a \`"project"\` field**. Use \`"Unattached"\` if not part of a project. If no active projects/todos, send empty arrays.
+Read all \`claudeadmin/projects/*.md\` and \`claudeadmin/todos/*.md\` files to build the arrays. **Every todo MUST include a \`"project"\` field**. Use \`"Unattached"\` if not part of a project. If no active projects/todos, send empty arrays.
 
 ### 3. Check pendingMessages
 Read \`pendingMessages\` array from the response. Act on any messages as if the user sent them.
@@ -248,7 +248,7 @@ curl -s --max-time 3 "$AGENT_URL/api/health"
 
 ### 2. Discover agent ID
 \`\`\`bash
-ls -t ~/.claude/projects/<project-path>/*.jsonl | head -1
+ls -t ~/claudeadmin/projects/<project-path>/*.jsonl | head -1
 \`\`\`
 **CRITICAL**: Resolve to a fixed literal string.
 
@@ -262,7 +262,7 @@ curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
 Check \`pendingMessages\` in response.
 
 ### 4. Memory — refresh context
-1. Read the 2-3 most recent \`.claude/memories/*.md\` files.
+1. Read the 2-3 most recent \`claudeadmin/memories/*.md\` files.
 2. If today's log doesn't exist, create it.
 
 ### 5. Check poll delay + start polling
@@ -281,9 +281,9 @@ Respond to the user. Also invoke /agent-checkin with a proper status update.`,
         list_agents: { method: "GET", path: "/api/agents", description: "List all agents with pending message counts" },
         bootstrap: { method: "GET", path: "/api/agents/bootstrap", description: "This endpoint — setup instructions for fresh Claude" },
         get_agent: { method: "GET", path: "/api/agents/:id", description: "Get single agent with computed fields" },
-        patch_agent: { method: "PATCH", path: "/api/agents/:id", body: "{title?, status?, metadata?, poll_delay_until?, workspace?}", description: "Update agent fields" },
+        patch_agent: { method: "PATCH", path: "/api/agents/:id", body: "{title?, status?, metadata?, poll_delay_until?, workspace?, cwd?}", description: "Update agent fields" },
         delete_agent: { method: "DELETE", path: "/api/agents/:id", description: "Delete agent and all associated data" },
-        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
+        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?, cwd?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
         get_updates: { method: "GET", path: "/api/agents/:id/updates", description: "Get all updates for an agent" },
         post_message: { method: "POST", path: "/api/agents/:id/messages", body: "{content}", description: "Queue a message for the agent" },
         get_messages: { method: "GET", path: "/api/agents/:id/messages", query: "?status=pending&deliver=true", description: "Get messages. With deliver=true, atomically marks pending as delivered" },
@@ -292,6 +292,11 @@ Respond to the user. Also invoke /agent-checkin with a proper status update.`,
         get_file: { method: "GET", path: "/api/agents/:id/files/:fileId", description: "Download a file with correct content-type" },
         export_pdf: { method: "GET", path: "/api/agents/:id/export/pdf", description: "Generate and download a branded PDF report of agent activity" },
         events_sse: { method: "GET", path: "/api/events", description: "SSE stream: agent-updated, agent-deleted, message-queued events" },
+        mark_read: { method: "POST", path: "/api/agents/:id/read", description: "Mark agent as read (resets unread count)" },
+        browse_folders: { method: "GET", path: "/api/folders", query: "?path=relative/path", description: "Browse folders under user home directory" },
+        launch_request: { method: "POST", path: "/api/launch-requests", body: "{type: 'new'|'resume', folder_path, resume_agent_id?}", description: "Request a new agent launch or session resume" },
+        list_launch_requests: { method: "GET", path: "/api/launch-requests", query: "?status=pending", description: "List launch requests by status" },
+        update_launch_request: { method: "PATCH", path: "/api/launch-requests/:id", body: "{status}", description: "Update launch request status (claimed, completed, failed)" },
       },
     });
   } catch (err) {
@@ -319,7 +324,7 @@ router.get("/:id", (req: Request, res: Response) => {
 router.post("/:id/updates", (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const { type = "text", content, summary, title, progress, projects, todos, workspace } = req.body;
+    const { type = "text", content, summary, title, progress, projects, todos, workspace, cwd } = req.body;
 
     if (!content) {
       res.status(400).json({ error: "content is required" });
@@ -332,10 +337,11 @@ router.post("/:id/updates", (req: Request, res: Response) => {
       createAgent(id, title || "Untitled Agent");
     }
 
-    // Update title and/or workspace if provided
-    const agentFields: { title?: string; workspace?: string } = {};
+    // Update title, workspace, cwd if provided
+    const agentFields: { title?: string; workspace?: string; cwd?: string } = {};
     if (title && existing) agentFields.title = title;
     if (workspace) agentFields.workspace = workspace;
+    if (cwd) agentFields.cwd = cwd;
     if (Object.keys(agentFields).length > 0) {
       updateAgent(id, agentFields);
     }
@@ -401,8 +407,8 @@ router.patch("/:id", (req: Request, res: Response) => {
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string } = {};
+    const { title, status, metadata, poll_delay_until, workspace, cwd } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -411,6 +417,7 @@ router.patch("/:id", (req: Request, res: Response) => {
     }
     if (poll_delay_until !== undefined) fields.poll_delay_until = poll_delay_until;
     if (workspace !== undefined) fields.workspace = workspace;
+    if (cwd !== undefined) fields.cwd = cwd;
 
     updateAgent(id, fields);
 

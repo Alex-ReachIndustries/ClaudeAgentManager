@@ -66,7 +66,7 @@ function ProjectTodoPanel({ projects, todos }: ProjectTodoPanelProps) {
               <div key={project.name}>
                 <h3 className="text-sm font-medium text-dark-200 mb-2">{project.name}</h3>
                 <ul className="space-y-1.5 pl-1">
-                  {project.phases.map((phase) => (
+                  {(project.phases || []).map((phase) => (
                     <li key={phase.name} className="flex items-center gap-2 text-sm">
                       {phaseIcon[phase.status]}
                       <span
