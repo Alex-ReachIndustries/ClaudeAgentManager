@@ -110,97 +110,44 @@ function launchNewAgent(folderPath) {
   const cwd = resolveFolder(folderPath);
   log(`Launching NEW agent in: ${cwd}`);
 
-  // Pre-create project dir so Claude skips the trust prompt
+  // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
-  // Step 1: Run claude -p headlessly to establish trust (skips trust dialog in -p mode)
-  // Step 2: Launch interactive session (trust is now established)
-  return new Promise((resolve) => {
-    log(`Pre-trusting workspace via claude -p...`);
-    const trust = spawn('claude', ['-p', 'ok'], {
-      cwd,
-      stdio: 'ignore',
-      shell: true,
-    });
-    trust.on('close', () => {
-      log(`Trust established, launching interactive session`);
-      const proc = spawn('wt.exe', [
-        'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
-        '-d', cwd,
-        'cmd', '/k',
-        'claude', '--dangerously-skip-permissions', 'run /session-init and then await instructions'
-      ], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      proc.unref();
-      log(`Spawned wt.exe for new agent`);
-      resolve(proc);
-    });
-    // Timeout after 30s in case -p hangs
-    setTimeout(() => {
-      try { trust.kill(); } catch {}
-      log(`Trust pre-flight timed out, launching anyway`);
-      const proc = spawn('wt.exe', [
-        'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
-        '-d', cwd,
-        'cmd', '/k',
-        'claude', '--dangerously-skip-permissions', 'run /session-init and then await instructions'
-      ], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      proc.unref();
-      resolve(proc);
-    }, 30000);
+  // Launch interactive session directly (no pre-flight — it caused double agents)
+  const proc = spawn('wt.exe', [
+    'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
+    '-d', cwd,
+    'cmd', '/k',
+    'claude', '--dangerously-skip-permissions', 'run /session-init and then await instructions'
+  ], {
+    detached: true,
+    stdio: 'ignore',
   });
+  proc.unref();
+  log(`Spawned wt.exe for new agent`);
+  return proc;
 }
 
 function launchResumeAgent(agentId, folderPath) {
   const cwd = resolveFolder(folderPath);
   log(`Resuming agent ${agentId} in: ${cwd}`);
 
-  // Pre-create project dir
+  // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
-  return new Promise((resolve) => {
-    log(`Pre-trusting workspace via claude -p...`);
-    const trust = spawn('claude', ['-p', 'ok'], {
-      cwd,
-      stdio: 'ignore',
-      shell: true,
-    });
-    trust.on('close', () => {
-      log(`Trust established, launching resume session`);
-      const proc = spawn('wt.exe', [
-        'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
-        '-d', cwd,
-        'cmd', '/k',
-        'claude', '--dangerously-skip-permissions', '--resume', agentId, 'run /session-resume and then await instructions'
-      ], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      proc.unref();
-      log(`Spawned wt.exe for resume agent ${agentId}`);
-      resolve(proc);
-    });
-    setTimeout(() => {
-      try { trust.kill(); } catch {}
-      log(`Trust pre-flight timed out, launching anyway`);
-      const proc = spawn('wt.exe', [
-        'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
-        '-d', cwd,
-        'cmd', '/k',
-        'claude', '--dangerously-skip-permissions', '--resume', agentId, 'run /session-resume and then await instructions'
-      ], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      proc.unref();
-      resolve(proc);
-    }, 30000);
+  // Launch resume session directly (no pre-flight — it caused double agents)
+  const proc = spawn('wt.exe', [
+    'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
+    '-d', cwd,
+    'cmd', '/k',
+    'claude', '--dangerously-skip-permissions', '--resume', agentId, 'run /session-resume and then await instructions'
+  ], {
+    detached: true,
+    stdio: 'ignore',
   });
+  proc.unref();
+  log(`Spawned wt.exe for resume agent ${agentId}`);
+  return proc;
 }
 
 async function processPendingRequests() {
