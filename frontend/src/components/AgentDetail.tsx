@@ -1,8 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play } from 'lucide-react';
+import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, closeAgent } from '../api';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
 import MessagePanel from './MessagePanel';
@@ -28,6 +28,7 @@ function AgentDetail() {
   const isArchived = agent?.status === 'archived';
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [closing, setClosing] = useState(false);
 
   // Mark agent as read when viewing detail page
   useEffect(() => {
@@ -131,11 +132,9 @@ function AgentDetail() {
             if (!id || !agent || resuming) return;
             setResuming(true);
             try {
-              // Use cwd to derive folder path relative to user home
-              // cwd is like "C:\Users\kuron\Research\ClaudeManager" — extract relative part
-              const cwdPath = agent.cwd || '';
-              const folderPath = cwdPath.replace(/^[A-Za-z]:[/\\]Users[/\\][^/\\]+[/\\]/, '').replace(/\\/g, '/');
-              await createLaunchRequest('resume', folderPath || agent.workspace || '', id);
+              // Pass absolute cwd path for resume — launcher handles it directly
+              const cwdPath = (agent.cwd || '').replace(/\\/g, '/');
+              await createLaunchRequest('resume', cwdPath || agent.workspace || '', id);
             } catch (err) {
               console.error('Resume failed:', err);
             } finally {
@@ -187,6 +186,30 @@ function AgentDetail() {
         >
           {isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
           <span className="text-xs">{isArchived ? 'Unarchive' : 'Archive'}</span>
+        </button>
+        <button
+          onClick={async () => {
+            if (!id || !agent || closing) return;
+            if (!confirm('Close this agent? This will archive it and terminate its Claude process.')) return;
+            setClosing(true);
+            try {
+              const result = await closeAgent(id);
+              if (!result.terminated) {
+                alert('Agent archived, but no PID was stored — the Claude process may still be running.');
+              }
+              refetch();
+            } catch (err) {
+              console.error('Close failed:', err);
+            } finally {
+              setClosing(false);
+            }
+          }}
+          disabled={closing || isArchived}
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-dark-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Close agent — archive and terminate process"
+        >
+          <XCircle size={16} />
+          <span className="text-xs">{closing ? 'Closing...' : 'Close'}</span>
         </button>
         </div>
       </div>

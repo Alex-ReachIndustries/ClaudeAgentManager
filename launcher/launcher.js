@@ -79,8 +79,10 @@ async function patchJSON(urlStr, body) {
 }
 
 function resolveFolder(folderPath) {
-  // The folder_path from the API is relative to user home
   if (!folderPath) return USER_HOME;
+  // If it's already an absolute path (e.g. resume sends full cwd), use it directly
+  if (path.isAbsolute(folderPath)) return folderPath;
+  // Otherwise treat as relative to user home (new-agent requests)
   return path.join(USER_HOME, folderPath);
 }
 
@@ -128,8 +130,22 @@ function launchNewAgent(folderPath) {
   return proc;
 }
 
-function launchResumeAgent(agentId, folderPath) {
-  const cwd = resolveFolder(folderPath);
+async function launchResumeAgent(agentId, folderPath) {
+  let cwd = resolveFolder(folderPath);
+
+  // If folder_path wasn't absolute, try fetching the agent's stored cwd from the server
+  if (!path.isAbsolute(folderPath || '')) {
+    try {
+      const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+      if (agent && agent.cwd) {
+        cwd = agent.cwd.replace(/\//g, '\\');
+        log(`Using agent's stored cwd: ${cwd}`);
+      }
+    } catch (err) {
+      log(`Could not fetch agent cwd from server: ${err.message}`);
+    }
+  }
+
   log(`Resuming agent ${agentId} in: ${cwd}`);
 
   // Pre-create project dir and trust settings
@@ -150,6 +166,29 @@ function launchResumeAgent(agentId, folderPath) {
   return proc;
 }
 
+function terminateAgent(pid) {
+  log(`Terminating terminal process with PID: ${pid}`);
+  try {
+    // The stored PID is the cmd.exe terminal tab (parent of claude.exe).
+    // Killing it with /T /F closes the terminal window and all children (including claude).
+    const proc = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      stdio: 'pipe',
+    });
+    let output = '';
+    proc.stdout.on('data', (data) => { output += data.toString(); });
+    proc.stderr.on('data', (data) => { output += data.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0) {
+        log(`Successfully terminated PID ${pid} and its process tree`);
+      } else {
+        log(`taskkill exited with code ${code} for PID ${pid}: ${output.trim()}`);
+      }
+    });
+  } catch (err) {
+    log(`Failed to terminate PID ${pid}: ${err.message}`);
+  }
+}
+
 async function processPendingRequests() {
   try {
     const requests = await fetchJSON(`${SERVER_URL}/api/launch-requests?status=pending`);
@@ -162,10 +201,18 @@ async function processPendingRequests() {
       await patchJSON(`${SERVER_URL}/api/launch-requests/${req.id}`, { status: 'claimed' });
 
       try {
-        if (req.type === 'resume' && req.resume_agent_id) {
-          launchResumeAgent(req.resume_agent_id, req.folder_path);
-        } else {
+        if (req.type === 'terminate') {
+          if (req.target_pid) {
+            terminateAgent(req.target_pid);
+          } else {
+            log(`Terminate request #${req.id} has no target_pid — skipping`);
+          }
+        } else if (req.type === 'resume' && req.resume_agent_id) {
+          await launchResumeAgent(req.resume_agent_id, req.folder_path);
+        } else if (req.type === 'new') {
           launchNewAgent(req.folder_path);
+        } else {
+          log(`Unknown request type "${req.type}" for #${req.id} — skipping`);
         }
 
         // Mark completed

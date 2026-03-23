@@ -24,7 +24,13 @@ router.post("/", (req: Request, res: Response) => {
       return;
     }
 
-    const request = createLaunchRequest(type, folder_path || "", resume_agent_id);
+    if (type === "terminate" && !resume_agent_id) {
+      res.status(400).json({ error: "resume_agent_id (target agent) is required for terminate requests" });
+      return;
+    }
+
+    const { target_pid } = req.body;
+    const request = createLaunchRequest(type, folder_path || "", resume_agent_id, target_pid);
     broadcast("launch-request-created", request);
     res.status(201).json({ ok: true, request });
   } catch (err) {

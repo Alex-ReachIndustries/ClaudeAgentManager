@@ -96,6 +96,11 @@ export async function fetchFolders(folderPath: string = ''): Promise<{ current: 
   return request<{ current: string; folders: FolderEntry[] }>(`/folders?path=${encodeURIComponent(folderPath)}`);
 }
 
+// --- Agent close ---
+export async function closeAgent(agentId: string): Promise<{ ok: boolean; terminated: boolean; pid: number | null }> {
+  return request<{ ok: boolean; terminated: boolean; pid: number | null }>(`/agents/${agentId}/close`, { method: 'POST' });
+}
+
 // --- Launch requests ---
 export async function createLaunchRequest(type: 'new' | 'resume', folderPath: string, resumeAgentId?: string): Promise<{ ok: boolean; request: unknown }> {
   return request<{ ok: boolean; request: unknown }>('/launch-requests', {

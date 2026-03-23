@@ -61,9 +61,10 @@ export function getDb(): Database.Database {
 
     CREATE TABLE IF NOT EXISTS launch_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume')),
-      folder_path TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate')),
+      folder_path TEXT NOT NULL DEFAULT '',
       resume_agent_id TEXT,
+      target_pid INTEGER,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','claimed','completed','failed')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       claimed_at TEXT,
@@ -85,6 +86,8 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE files ADD COLUMN description TEXT NOT NULL DEFAULT ''"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE agents ADD COLUMN last_activity_at TEXT"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE agents ADD COLUMN cwd TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN pid INTEGER"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE launch_requests ADD COLUMN target_pid INTEGER"); } catch { /* exists */ }
   // Backfill last_activity_at from last_update_at where null
   try { db.exec("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL"); } catch { /* ignore */ }
 
@@ -144,6 +147,34 @@ export function getDb(): Database.Database {
       INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
       DROP TABLE agents;
       ALTER TABLE agents_new RENAME TO agents;
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
+  // Migration: add 'terminate' to launch_requests type CHECK constraint
+  const launchTableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='launch_requests'").get() as { sql: string } | undefined;
+  if (launchTableInfo && !launchTableInfo.sql.includes("'terminate'")) {
+    const cols = db.prepare("PRAGMA table_info(launch_requests)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).filter((n) => n !== "target_pid").join(", ");
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS launch_requests_new`);
+    db.exec(`
+      CREATE TABLE launch_requests_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate')),
+        folder_path TEXT NOT NULL DEFAULT '',
+        resume_agent_id TEXT,
+        target_pid INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','claimed','completed','failed')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        claimed_at TEXT,
+        completed_at TEXT,
+        agent_id TEXT
+      );
+      INSERT INTO launch_requests_new (${colNames}) SELECT ${colNames} FROM launch_requests;
+      DROP TABLE launch_requests;
+      ALTER TABLE launch_requests_new RENAME TO launch_requests;
+      CREATE INDEX IF NOT EXISTS idx_launch_requests_status ON launch_requests(status);
     `);
     db.pragma("foreign_keys = ON");
   }
@@ -217,7 +248,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number }
 ) {
   const db = getDb();
 
@@ -251,6 +282,10 @@ export function updateAgent(
   if (fields.cwd !== undefined) {
     setClauses.push("cwd = ?");
     values.push(fields.cwd);
+  }
+  if (fields.pid !== undefined) {
+    setClauses.push("pid = ?");
+    values.push(fields.pid);
   }
 
   if (setClauses.length === 0) return;
@@ -442,13 +477,13 @@ export function getFilesMeta(agentId: string) {
 
 // --- Launch requests ---
 
-export function createLaunchRequest(type: string, folderPath: string, resumeAgentId?: string) {
+export function createLaunchRequest(type: string, folderPath: string, resumeAgentId?: string, targetPid?: number) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO launch_requests (type, folder_path, resume_agent_id) VALUES (?, ?, ?)
+    INSERT INTO launch_requests (type, folder_path, resume_agent_id, target_pid) VALUES (?, ?, ?, ?)
   `);
-  const result = stmt.run(type, folderPath, resumeAgentId ?? null);
-  return { id: result.lastInsertRowid, type, folder_path: folderPath, resume_agent_id: resumeAgentId ?? null, status: 'pending' };
+  const result = stmt.run(type, folderPath, resumeAgentId ?? null, targetPid ?? null);
+  return { id: result.lastInsertRowid, type, folder_path: folderPath, resume_agent_id: resumeAgentId ?? null, target_pid: targetPid ?? null, status: 'pending' };
 }
 
 export function getLaunchRequestsByStatus(status: string) {

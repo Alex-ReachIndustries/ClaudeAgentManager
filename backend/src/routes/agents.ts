@@ -17,6 +17,7 @@ import {
   addFile,
   getFile,
   getFilesMeta,
+  createLaunchRequest,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 
@@ -324,7 +325,7 @@ router.get("/:id", (req: Request, res: Response) => {
 router.post("/:id/updates", (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const { type = "text", content, summary, title, progress, projects, todos, workspace, cwd } = req.body;
+    const { type = "text", content, summary, title, progress, projects, todos, workspace, cwd, pid } = req.body;
 
     if (!content) {
       res.status(400).json({ error: "content is required" });
@@ -337,11 +338,12 @@ router.post("/:id/updates", (req: Request, res: Response) => {
       createAgent(id, title || "Untitled Agent");
     }
 
-    // Update title, workspace, cwd if provided
-    const agentFields: { title?: string; workspace?: string; cwd?: string } = {};
+    // Update title, workspace, cwd, pid if provided
+    const agentFields: { title?: string; workspace?: string; cwd?: string; pid?: number } = {};
     if (title && existing) agentFields.title = title;
     if (workspace) agentFields.workspace = workspace;
     if (cwd) agentFields.cwd = cwd;
+    if (pid !== undefined) agentFields.pid = pid;
     if (Object.keys(agentFields).length > 0) {
       updateAgent(id, agentFields);
     }
@@ -407,8 +409,8 @@ router.patch("/:id", (req: Request, res: Response) => {
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace, cwd } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string } = {};
+    const { title, status, metadata, poll_delay_until, workspace, cwd, pid } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -418,6 +420,7 @@ router.patch("/:id", (req: Request, res: Response) => {
     if (poll_delay_until !== undefined) fields.poll_delay_until = poll_delay_until;
     if (workspace !== undefined) fields.workspace = workspace;
     if (cwd !== undefined) fields.cwd = cwd;
+    if (pid !== undefined) fields.pid = pid;
 
     updateAgent(id, fields);
 
@@ -450,6 +453,36 @@ router.post("/:id/read", (req: Request, res: Response) => {
   } catch (err) {
     console.error("Error marking agent read:", err);
     res.status(500).json({ error: "Failed to mark agent read" });
+  }
+});
+
+// POST /:id/close — archive agent and terminate its process
+router.post("/:id/close", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const pid = (agent as Record<string, unknown>).pid as number | null;
+
+    // Archive the agent
+    updateAgent(id, { status: "archived" });
+
+    // Create terminate request for the launcher to kill the process
+    if (pid) {
+      createLaunchRequest("terminate", "", id, pid);
+    }
+
+    const updatedAgent = getAgent(id);
+    broadcast("agent-updated", updatedAgent);
+
+    res.json({ ok: true, terminated: !!pid, pid: pid || null });
+  } catch (err) {
+    console.error("Error closing agent:", err);
+    res.status(500).json({ error: "Failed to close agent" });
   }
 });
 

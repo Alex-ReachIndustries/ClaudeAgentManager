@@ -62,11 +62,11 @@ function FolderPicker({ isOpen, onClose, onSelect }: FolderPickerProps) {
           return { ...node, expanded: true };
         }
         if (node.children && node.expanded) {
-          const newChildren = [...node.children];
+          let updatedChildren = node.children;
           await toggleNode(path, node.children, (c) => {
-            node.children = c;
+            updatedChildren = c;
           });
-          return { ...node, children: newChildren };
+          return { ...node, children: updatedChildren };
         }
         return node;
       }),

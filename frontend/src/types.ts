@@ -11,6 +11,7 @@ export interface Agent {
   poll_delay_until: string | null;
   workspace: string | null;
   cwd: string | null;
+  pid: number | null;
   unread_update_count: number;
   last_read_at: string | null;
   last_message_at: string | null;
