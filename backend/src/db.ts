@@ -72,6 +72,19 @@ export function getDb(): Database.Database {
       agent_id TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      endpoint TEXT NOT NULL UNIQUE,
+      keys_p256dh TEXT NOT NULL,
+      keys_auth TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
     CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
     CREATE INDEX IF NOT EXISTS idx_files_agent_id ON files(agent_id);
@@ -513,4 +526,40 @@ export function updateLaunchRequest(id: number, fields: { status?: string; agent
 export function getLaunchRequest(id: number) {
   const db = getDb();
   return db.prepare("SELECT * FROM launch_requests WHERE id = ?").get(id);
+}
+
+// --- Settings ---
+
+export function getSetting(key: string): string | undefined {
+  const db = getDb();
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+export function setSetting(key: string, value: string): void {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+}
+
+// --- Push subscriptions ---
+
+export function addPushSubscription(endpoint: string, p256dh: string, auth: string): void {
+  const db = getDb();
+  db.prepare(
+    "INSERT OR REPLACE INTO push_subscriptions (endpoint, keys_p256dh, keys_auth) VALUES (?, ?, ?)"
+  ).run(endpoint, p256dh, auth);
+}
+
+export function removePushSubscription(endpoint: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+}
+
+export function getAllPushSubscriptions(): { endpoint: string; keys_p256dh: string; keys_auth: string }[] {
+  const db = getDb();
+  return db.prepare("SELECT endpoint, keys_p256dh, keys_auth FROM push_subscriptions").all() as {
+    endpoint: string;
+    keys_p256dh: string;
+    keys_auth: string;
+  }[];
 }

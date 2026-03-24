@@ -5,8 +5,10 @@ import compression from "compression";
 import agentsRouter from "./routes/agents.js";
 import foldersRouter from "./routes/folders.js";
 import launchRouter from "./routes/launch.js";
+import pushRouter from "./routes/push.js";
 import { addClient, removeClient, broadcast } from "./sse.js";
 import { archiveInactiveAgents, getAgent } from "./db.js";
+import { initPush } from "./push.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -34,6 +36,7 @@ app.use(compression());
 app.use("/api/agents", agentsRouter);
 app.use("/api/folders", foldersRouter);
 app.use("/api/launch-requests", launchRouter);
+app.use("/api/push", pushRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -42,6 +45,9 @@ app.get("/api/health", (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Agent Manager backend listening on port ${PORT}`);
+
+  // Initialize Web Push (generates VAPID keys on first run)
+  initPush();
 
   // Periodic sweep: archive agents inactive for >30 minutes, every 5 minutes
   setInterval(() => {
