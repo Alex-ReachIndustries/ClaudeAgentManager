@@ -109,31 +109,6 @@ export async function createLaunchRequest(type: 'new' | 'resume', folderPath: st
   });
 }
 
-// --- Push notifications ---
-
-export async function fetchVapidPublicKey(): Promise<string> {
-  const { publicKey } = await request<{ publicKey: string }>('/push/vapid-public-key');
-  return publicKey;
-}
-
-export async function subscribePush(subscription: PushSubscription): Promise<void> {
-  const raw = subscription.toJSON();
-  await request('/push/subscribe', {
-    method: 'POST',
-    body: JSON.stringify({
-      endpoint: raw.endpoint,
-      keys: raw.keys,
-    }),
-  });
-}
-
-export async function unsubscribePush(endpoint: string): Promise<void> {
-  await request('/push/unsubscribe', {
-    method: 'POST',
-    body: JSON.stringify({ endpoint }),
-  });
-}
-
 export function subscribeToEvents(onEvent: (event: SSEEvent) => void): () => void {
   const es = new EventSource(`${BASE}/events`);
 

@@ -22,10 +22,6 @@ services:
     build: ./frontend
     ports:
       - "8080:80"
-      - "8443:443"
-    volumes:
-      - ./certs/fullchain.crt:/etc/nginx/certs/fullchain.crt:ro
-      - ./certs/server.key:/etc/nginx/certs/server.key:ro
     depends_on:
       backend:
         condition: service_healthy

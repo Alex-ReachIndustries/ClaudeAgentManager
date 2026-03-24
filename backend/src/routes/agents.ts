@@ -20,7 +20,6 @@ import {
   createLaunchRequest,
 } from "../db.js";
 import { broadcast } from "../sse.js";
-import { sendPushToAll } from "../push.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -391,14 +390,6 @@ router.post("/:id/updates", (req: Request, res: Response) => {
 
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);
-
-    // Send push notification for agent updates
-    const agentWorkspace = (updatedAgent as Record<string, unknown>)?.workspace || "Unknown";
-    const pushTitle = `Agent: ${agentWorkspace}`;
-    const pushBody = summary || (typeof content === "string" ? content : JSON.stringify(content));
-    sendPushToAll(pushTitle, pushBody, `/agent/${id}`).catch((err) =>
-      console.error("Push notification error:", err)
-    );
 
     const pendingMessages = getPendingMessages(id);
     res.json({ ok: true, pendingMessages });
