@@ -724,22 +724,13 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
 
     const updatesResult = getUpdates(id, 10000);
     const msgsResult = getMessages(id, 10000);
-
-    // Parse projects/todos from metadata
-    let projects: unknown[] = [];
-    let todos: unknown[] = [];
-    try {
-      const meta = JSON.parse((agent.metadata as string) || "{}");
-      if (Array.isArray(meta.projects)) projects = meta.projects;
-      if (Array.isArray(meta.todos)) todos = meta.todos;
-    } catch { /* ignore */ }
+    const filesResult = getFilesMeta(id, 1000);
 
     const payload = {
       agent,
       updates: updatesResult.data,
       messages: msgsResult.data,
-      projects,
-      todos,
+      files: filesResult.data,
     };
 
     // Call the PDF generator service
@@ -758,8 +749,26 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
     }
 
     const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
+    const agentTitle = (agent as Record<string, unknown>).title as string || "Agent";
+    const filename = `${agentTitle.replace(/[^a-zA-Z0-9]/g, '_')}_Report.pdf`;
+
+    // Auto-upload PDF as a session file
+    try {
+      const filePath = path.join(process.cwd(), "data", "files", id);
+      fs.mkdirSync(filePath, { recursive: true });
+      const pdfPath = path.join(filePath, `${Date.now().toString(36)}_${filename}`);
+      fs.writeFileSync(pdfPath, pdfBuffer);
+      addFile(id, filename, "application/pdf", pdfPath, pdfBuffer.length, "claude", "Auto-generated agent report");
+      broadcast("agent-updated", getAgent(id));
+
+      // Send push notification
+      sendPushToAll(agentTitle, "PDF report ready for download", `/agent/${id}`).catch(() => {});
+    } catch (uploadErr) {
+      logger.error({ uploadErr }, "Failed to auto-upload PDF to session");
+    }
+
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="Agent_Report_${id.slice(0, 8)}.pdf"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(pdfBuffer);
   } catch (err) {
     logger.error({ err }, "Error generating PDF");
