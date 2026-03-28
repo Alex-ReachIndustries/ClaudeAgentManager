@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X } from 'lucide-react';
+import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User } from 'lucide-react';
 import type { AgentMessage } from '../types';
 import { sendMessage, uploadFile } from '../api';
 import { timeAgo } from '../utils/time';
@@ -141,16 +141,32 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
           [...messages].reverse().map((msg) => {
             const statusCfg = messageStatusConfig[msg.status];
             const StatusIcon = statusCfg.icon;
+            const isAgent = msg.source === 'agent';
 
             return (
               <div
                 key={msg.id}
                 className={`p-3 rounded-lg border ${
-                  msg.status === 'pending'
-                    ? 'bg-yellow-950/10 border-yellow-800/20'
-                    : 'bg-dark-850 border-dark-800/50'
+                  isAgent
+                    ? 'bg-blue-950/10 border-blue-800/20'
+                    : msg.status === 'pending'
+                      ? 'bg-yellow-950/10 border-yellow-800/20'
+                      : 'bg-dark-850 border-dark-800/50'
                 }`}
               >
+                {/* Source label */}
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  {isAgent ? (
+                    <Bot size={13} className="text-blue-400" />
+                  ) : (
+                    <User size={13} className="text-purple-400" />
+                  )}
+                  <span className={`text-xs font-medium ${isAgent ? 'text-blue-400' : 'text-purple-400'}`}>
+                    {isAgent
+                      ? (msg.source_agent_id ? `Agent ${msg.source_agent_id}` : 'Agent')
+                      : 'You'}
+                  </span>
+                </div>
                 <p className="text-sm text-dark-200 whitespace-pre-wrap break-words mb-2">
                   {msg.content}
                 </p>

@@ -186,6 +186,26 @@ export async function rotateApiKey(): Promise<string> {
   return key;
 }
 
+// --- Webhooks ---
+export async function fetchWebhooks() { return request<any[]>('/webhooks'); }
+export async function createWebhook(url: string, events: string[]) { return request('/webhooks', { method: 'POST', body: JSON.stringify({ url, events }) }); }
+export async function updateWebhook(id: number, fields: any) { return request(`/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }); }
+export async function deleteWebhook(id: number) { return request(`/webhooks/${id}`, { method: 'DELETE' }); }
+export async function testWebhook(id: number) { return request(`/webhooks/${id}/test`, { method: 'POST' }); }
+
+// --- Retention ---
+export async function fetchRetentionStatus() { return request<any>('/retention/status'); }
+export async function updateRetentionSettings(settings: any) { return request('/retention/settings', { method: 'PATCH', body: JSON.stringify(settings) }); }
+export async function runRetention() { return request<any>('/retention/run', { method: 'POST' }); }
+
+// --- Workflows ---
+export async function fetchWorkflows() { return request<any[]>('/workflows'); }
+export async function fetchWorkflow(id: string) { return request<any>(`/workflows/${id}`); }
+export async function createWorkflow(data: any) { return request('/workflows', { method: 'POST', body: JSON.stringify(data) }); }
+export async function startWorkflow(id: string) { return request(`/workflows/${id}/start`, { method: 'POST' }); }
+export async function pauseWorkflow(id: string) { return request(`/workflows/${id}/pause`, { method: 'POST' }); }
+export async function deleteWorkflow(id: string) { return request(`/workflows/${id}`, { method: 'DELETE' }); }
+
 // --- SSE connection state tracking ---
 export type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 

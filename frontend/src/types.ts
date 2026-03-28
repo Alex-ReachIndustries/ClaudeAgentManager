@@ -35,6 +35,8 @@ export interface AgentMessage {
   content: string;
   status: 'pending' | 'delivered' | 'acknowledged' | 'executed';
   acknowledged_at: string | null;
+  source?: string;
+  source_agent_id?: string;
 }
 
 export interface ProjectPhase {

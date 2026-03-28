@@ -4,6 +4,9 @@ import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import AgentDetail from './components/AgentDetail';
 import Settings from './components/Settings';
+import Workflows from './components/Workflows';
+import WorkflowDetail from './components/WorkflowDetail';
+import WorkflowCreate from './components/WorkflowCreate';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -34,6 +37,9 @@ function App() {
             }
           />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/workflows" element={<Workflows />} />
+          <Route path="/workflows/new" element={<WorkflowCreate />} />
+          <Route path="/workflows/:id" element={<WorkflowDetail />} />
         </Routes>
       </main>
     </div>

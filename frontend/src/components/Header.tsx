@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Settings } from 'lucide-react';
+import { Settings, GitBranch } from 'lucide-react';
 import type { Agent } from '../types';
 import type { ConnectionState } from '../api';
 import NotificationToggle from './NotificationToggle';
@@ -51,6 +51,14 @@ function Header({ agents, connectionState }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate('/workflows')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors text-sm"
+          title="Workflows"
+        >
+          <GitBranch size={16} />
+          <span className="hidden sm:inline">Workflows</span>
+        </button>
         <button
           onClick={() => navigate('/settings')}
           className="p-2 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors"
