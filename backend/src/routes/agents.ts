@@ -389,7 +389,7 @@ router.get("/:id", (req: Request, res: Response) => {
 router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const { type = "text", content, summary, title, progress, projects, todos, workspace, cwd, pid } = req.body;
+    const { type = "text", content, summary, title, status, progress, projects, todos, workspace, cwd, pid } = req.body;
 
     // Create agent if it doesn't exist
     const existing = getAgent(id);
@@ -397,9 +397,10 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
       createAgent(id, title || "Untitled Agent");
     }
 
-    // Update title, workspace, cwd, pid if provided
-    const agentFields: { title?: string; workspace?: string; cwd?: string; pid?: number } = {};
+    // Update title, status, workspace, cwd, pid if provided
+    const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number } = {};
     if (title && existing) agentFields.title = title;
+    if (status) agentFields.status = status;
     if (workspace) agentFields.workspace = workspace;
     if (cwd) agentFields.cwd = cwd;
     if (pid !== undefined) agentFields.pid = pid;
