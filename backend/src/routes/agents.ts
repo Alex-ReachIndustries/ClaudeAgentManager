@@ -413,24 +413,38 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     }
 
     // Normalize content to always be a JSON string
-    let contentStr: string;
+    let contentStr: string = "";
     if (typeof content === "object") {
       contentStr = JSON.stringify(content);
     } else {
-      // Wrap plain-string content into a typed object
-      switch (type) {
-        case "progress":
-          contentStr = JSON.stringify({ description: content, percentage: progress ?? 0 });
-          break;
-        case "error":
-          contentStr = JSON.stringify({ message: content });
-          break;
-        case "status":
-          contentStr = JSON.stringify({ status: content });
-          break;
-        default:
-          contentStr = JSON.stringify({ text: content });
-          break;
+      // Check if content is already a valid JSON string with expected fields
+      let alreadyJson = false;
+      try {
+        const parsed = JSON.parse(content);
+        if (typeof parsed === "object" && parsed !== null) {
+          contentStr = content;
+          alreadyJson = true;
+        }
+      } catch {
+        // not JSON, will wrap below
+      }
+
+      if (!alreadyJson) {
+        // Wrap plain-string content into a typed object
+        switch (type) {
+          case "progress":
+            contentStr = JSON.stringify({ description: content, percentage: progress ?? 0 });
+            break;
+          case "error":
+            contentStr = JSON.stringify({ message: content });
+            break;
+          case "status":
+            contentStr = JSON.stringify({ status: content });
+            break;
+          default:
+            contentStr = JSON.stringify({ text: content });
+            break;
+        }
       }
     }
     addUpdate(id, type, contentStr, summary);
