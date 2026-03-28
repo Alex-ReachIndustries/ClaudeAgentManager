@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { fetchProjects, createProject } from '../api';
 import { timeAgo } from '../utils/time';
+import FolderPicker from './FolderPicker';
 
 type ProjectStatus = 'pending' | 'active' | 'paused' | 'completed' | 'failed';
 
@@ -169,6 +170,7 @@ function CreateProjectDialog({ onClose, onCreated }: CreateDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [folderPath, setFolderPath] = useState('');
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [maxConcurrent, setMaxConcurrent] = useState(4);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -235,14 +237,29 @@ function CreateProjectDialog({ onClose, onCreated }: CreateDialogProps) {
 
           <div>
             <label className="block text-xs text-dark-400 mb-1">Folder Path</label>
-            <input
-              type="text"
-              value={folderPath}
-              onChange={(e) => setFolderPath(e.target.value)}
-              className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors"
-              placeholder="/path/to/project"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={folderPath}
+                readOnly
+                className="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500"
+                placeholder="Select a folder..."
+              />
+              <button
+                type="button"
+                onClick={() => setShowFolderPicker(true)}
+                className="px-3 py-2 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded-lg text-sm text-dark-300 transition-colors"
+              >
+                Browse
+              </button>
+            </div>
           </div>
+
+          <FolderPicker
+            isOpen={showFolderPicker}
+            onSelect={(path) => { setFolderPath(path); setShowFolderPicker(false); }}
+            onClose={() => setShowFolderPicker(false)}
+          />
 
           <div>
             <label className="block text-xs text-dark-400 mb-1">Max Concurrent Agents</label>

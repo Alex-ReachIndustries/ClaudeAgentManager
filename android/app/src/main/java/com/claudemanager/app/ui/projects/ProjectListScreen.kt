@@ -329,6 +329,7 @@ private fun CreateProjectDialog(
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var folderPath by remember { mutableStateOf("") }
+    var showFolderPicker by remember { mutableStateOf(false) }
 
     val textFieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = LumiPurple500,
@@ -369,14 +370,34 @@ private fun CreateProjectDialog(
                     modifier = Modifier.fillMaxWidth(),
                     colors = textFieldColors
                 )
-                OutlinedTextField(
-                    value = folderPath,
-                    onValueChange = { folderPath = it },
-                    label = { Text("Folder Path") },
-                    singleLine = true,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = textFieldColors
-                )
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = folderPath,
+                        onValueChange = {},
+                        label = { Text("Folder Path") },
+                        readOnly = true,
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = textFieldColors
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(onClick = { showFolderPicker = true }) {
+                        Text("Browse", color = LumiPurple500)
+                    }
+                }
+
+                if (showFolderPicker) {
+                    com.claudemanager.app.ui.detail.components.FolderPickerDialog(
+                        onDismiss = { showFolderPicker = false },
+                        onSelect = { path ->
+                            folderPath = path
+                            showFolderPicker = false
+                        }
+                    )
+                }
             }
         },
         confirmButton = {
