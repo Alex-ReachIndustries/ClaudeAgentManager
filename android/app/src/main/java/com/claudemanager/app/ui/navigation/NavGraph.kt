@@ -1,6 +1,7 @@
 package com.claudemanager.app.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,20 @@ fun AppNavGraph(
         if (serverUrl.isBlank()) Routes.SETUP else Routes.AGENTS
     }
 
+    // Handle deep link navigation: navigate to agent detail with agents list in back stack
+    val deepLinkConsumed = remember { mutableStateOf(false) }
+    LaunchedEffect(startAgentId) {
+        if (startAgentId != null && !deepLinkConsumed.value) {
+            deepLinkConsumed.value = true
+            // Ensure we're on the agents list first, then navigate to detail
+            navController.navigate(Routes.agentDetail(startAgentId)) {
+                // Keep agents list in back stack so back button works
+                popUpTo(Routes.AGENTS) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = startDestination
@@ -65,10 +80,6 @@ fun AppNavGraph(
         }
 
         composable(Routes.AGENTS) {
-            // Consume startAgentId exactly once to prevent back-button re-navigation
-            val oneTimeStartId = remember {
-                mutableStateOf(startAgentId)
-            }
             AgentListScreen(
                 onAgentClick = { agentId ->
                     navController.navigate(Routes.agentDetail(agentId))
@@ -76,12 +87,8 @@ fun AppNavGraph(
                 onSettingsClick = {
                     navController.navigate(Routes.SETUP)
                 },
-                startAgentId = oneTimeStartId.value
+                startAgentId = null // Deep links handled above via LaunchedEffect
             )
-            // Clear after first composition so back navigation doesn't re-trigger
-            if (oneTimeStartId.value != null) {
-                oneTimeStartId.value = null
-            }
         }
 
         composable(
