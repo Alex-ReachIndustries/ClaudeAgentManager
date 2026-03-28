@@ -163,6 +163,10 @@ class AgentDetailViewModel(
         _uiState.update { it.copy(draftMessage = text) }
     }
 
+    fun clearAttachment() {
+        _uiState.update { it.copy(lastUploadedFileName = null) }
+    }
+
     /**
      * Send a message to the agent.
      * On success, clears the draft. On failure, keeps the draft so the user can retry.
@@ -174,7 +178,7 @@ class AgentDetailViewModel(
         viewModelScope.launch {
             repository.sendMessage(agentId, content)
                 .onSuccess {
-                    _uiState.update { it.copy(draftMessage = "") }
+                    _uiState.update { it.copy(draftMessage = "", lastUploadedFileName = null) }
                     refreshMessages()
                 }
                 .onFailure { e ->
@@ -206,11 +210,6 @@ class AgentDetailViewModel(
                 .onSuccess {
                     refreshFiles()
                     _uiState.update { it.copy(lastUploadedFileName = displayName) }
-                    // Clear the confirmation after 3 seconds
-                    launch {
-                        delay(3_000)
-                        _uiState.update { it.copy(lastUploadedFileName = null) }
-                    }
                 }
                 .onFailure { e ->
                     _uiState.update { it.copy(error = e.message ?: "Failed to upload file") }

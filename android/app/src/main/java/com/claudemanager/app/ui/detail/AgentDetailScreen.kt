@@ -365,6 +365,7 @@ fun AgentDetailScreen(
                                 draftMessage = state.draftMessage,
                                 onDraftChanged = viewModel::updateDraftMessage,
                                 lastUploadedFileName = state.lastUploadedFileName,
+                                onClearAttachment = viewModel::clearAttachment,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

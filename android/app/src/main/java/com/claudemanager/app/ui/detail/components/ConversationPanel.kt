@@ -106,6 +106,7 @@ fun ConversationPanel(
     draftMessage: String = "",
     onDraftChanged: (String) -> Unit = {},
     lastUploadedFileName: String? = null,
+    onClearAttachment: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var messageText by remember { mutableStateOf(draftMessage) }
@@ -251,12 +252,8 @@ fun ConversationPanel(
             }
         }
 
-        // Post-upload confirmation chip — briefly shows uploaded filename
-        AnimatedVisibility(
-            visible = lastUploadedFileName != null,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it }
-        ) {
+        // Persistent attachment indicator with dismiss button
+        if (lastUploadedFileName != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -265,19 +262,31 @@ fun ConversationPanel(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.CheckCircle,
+                    imageVector = Icons.Default.AttachFile,
                     contentDescription = null,
                     tint = LumiSuccess,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Uploaded: ${lastUploadedFileName ?: ""}",
+                    text = "Attached: ${lastUploadedFileName}",
                     style = MaterialTheme.typography.bodySmall,
                     color = LumiOnSurface,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
+                IconButton(
+                    onClick = onClearAttachment,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
         }
 
