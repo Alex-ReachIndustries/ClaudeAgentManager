@@ -3,6 +3,7 @@
 package com.claudemanager.app.ui.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
@@ -60,10 +63,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.claudemanager.app.ClaudeManagerApp
+import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentStatus
+import com.claudemanager.app.data.models.MessageStatus
 import com.claudemanager.app.ui.detail.components.ConversationPanel
 import com.claudemanager.app.ui.detail.components.FilesPanel
-import com.claudemanager.app.ui.detail.components.ProjectTodoPanel
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
@@ -72,6 +76,7 @@ import com.claudemanager.app.ui.theme.LumiOnSurfaceSecondary
 import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
 import com.claudemanager.app.ui.theme.LumiPurple500
 import com.claudemanager.app.ui.theme.agentStatusColor
+import com.claudemanager.app.util.TimeUtils
 
 /**
  * Agent detail screen with tabs for Conversation and Info.
@@ -325,12 +330,15 @@ fun AgentDetailScreen(
                                 isUploading = state.isUploading,
                                 onSendMessage = viewModel::sendMessage,
                                 onUploadFile = { uri -> viewModel.uploadFile(uri, context) },
+                                draftMessage = state.draftMessage,
+                                onDraftChanged = viewModel::updateDraftMessage,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
                         DetailTab.INFO -> {
                             InfoTab(
-                                metadata = state.agent?.metadata,
+                                agent = state.agent,
+                                messages = state.messages,
                                 files = state.files,
                                 onFileClick = { fileId ->
                                     val file = state.files.find { it.id == fileId }
@@ -386,19 +394,21 @@ fun AgentDetailScreen(
 }
 
 /**
- * Combined Info tab that renders project/todo metadata and file list
+ * Combined Info tab that renders agent metrics and file list
  * in a single scrollable LazyColumn to avoid nested scroll conflicts.
  */
 @Composable
 private fun InfoTab(
-    metadata: com.claudemanager.app.data.models.AgentMetadata?,
+    agent: Agent?,
+    messages: List<com.claudemanager.app.data.models.AgentMessage>,
     files: List<com.claudemanager.app.data.models.FileInfo>,
     onFileClick: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
-        ProjectTodoPanel(
-            metadata = metadata,
+        AgentMetricsPanel(
+            agent = agent,
+            messages = messages,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -409,6 +419,112 @@ private fun InfoTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+        )
+    }
+}
+
+/**
+ * Displays agent metrics in themed cards: created date, session duration,
+ * update count, message counts, workspace, PID, and status.
+ */
+@Composable
+private fun AgentMetricsPanel(
+    agent: Agent?,
+    messages: List<com.claudemanager.app.data.models.AgentMessage>,
+    modifier: Modifier = Modifier
+) {
+    if (agent == null) {
+        Box(
+            modifier = modifier,
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "No agent data",
+                style = MaterialTheme.typography.bodyLarge,
+                color = LumiOnSurfaceTertiary
+            )
+        }
+        return
+    }
+
+    val pendingCount = messages.count { it.status == MessageStatus.PENDING }
+    val deliveredCount = messages.count { it.status == MessageStatus.DELIVERED }
+    val acknowledgedCount = messages.count { it.status == MessageStatus.ACKNOWLEDGED || it.status == MessageStatus.EXECUTED }
+    val totalMessages = messages.size
+
+    val sessionDuration = TimeUtils.durationBetween(agent.createdAt, agent.lastUpdateAt)
+    val durationText = if (sessionDuration != null) TimeUtils.formatDuration(sessionDuration) else "N/A"
+
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "Agent Metrics",
+            style = MaterialTheme.typography.titleSmall,
+            color = LumiOnSurfaceSecondary
+        )
+
+        // Created date
+        MetricCard(label = "Created", value = TimeUtils.formatFull(agent.createdAt))
+
+        // Session duration
+        MetricCard(label = "Session Duration", value = durationText)
+
+        // Total updates
+        MetricCard(label = "Total Updates", value = agent.updateCount.toString())
+
+        // Messages breakdown
+        MetricCard(
+            label = "Messages",
+            value = "$totalMessages total ($pendingCount pending, $deliveredCount delivered, $acknowledgedCount ack'd)"
+        )
+
+        // Workspace / CWD
+        if (!agent.workspace.isNullOrBlank() || !agent.cwd.isNullOrBlank()) {
+            MetricCard(
+                label = "Workspace",
+                value = agent.workspace ?: agent.cwd ?: ""
+            )
+        }
+
+        // PID
+        if (agent.pid != null) {
+            MetricCard(label = "PID", value = agent.pid.toString())
+        }
+
+        // Current status
+        MetricCard(label = "Status", value = agent.status.displayName)
+    }
+}
+
+/**
+ * A single metric row rendered as a themed card.
+ */
+@Composable
+private fun MetricCard(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(LumiCard)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = LumiOnSurfaceSecondary,
+            modifier = Modifier.width(120.dp)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = LumiOnSurface,
+            modifier = Modifier.weight(1f)
         )
     }
 }

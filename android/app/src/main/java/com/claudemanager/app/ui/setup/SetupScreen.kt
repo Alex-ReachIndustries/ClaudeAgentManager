@@ -217,6 +217,11 @@ fun SetupScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── Notification Settings Section ────────────────────────────────
+            NotificationSettingsSection(viewModel = viewModel, state = state)
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // Test Connection button
@@ -266,11 +271,6 @@ fun SetupScreen(
             ) {
                 Text("Connect", style = MaterialTheme.typography.labelLarge)
             }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // ── Notification Settings Section ────────────────────────────────
-            NotificationSettingsSection(viewModel = viewModel, state = state)
 
             Spacer(modifier = Modifier.height(48.dp))
         }

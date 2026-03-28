@@ -41,7 +41,8 @@ data class AgentDetailUiState(
     val selectedTab: DetailTab = DetailTab.CONVERSATION,
     val isSendingMessage: Boolean = false,
     val isUploading: Boolean = false,
-    val isRefreshing: Boolean = false
+    val isRefreshing: Boolean = false,
+    val draftMessage: String = ""
 )
 
 /**
@@ -151,7 +152,15 @@ class AgentDetailViewModel(
     }
 
     /**
+     * Update the draft message text (persists across tab switches).
+     */
+    fun updateDraftMessage(text: String) {
+        _uiState.update { it.copy(draftMessage = text) }
+    }
+
+    /**
      * Send a message to the agent.
+     * On success, clears the draft. On failure, keeps the draft so the user can retry.
      */
     fun sendMessage(content: String) {
         if (content.isBlank()) return
@@ -160,10 +169,15 @@ class AgentDetailViewModel(
         viewModelScope.launch {
             repository.sendMessage(agentId, content)
                 .onSuccess {
+                    _uiState.update { it.copy(draftMessage = "") }
                     refreshMessages()
                 }
                 .onFailure { e ->
-                    _uiState.update { it.copy(error = e.message ?: "Failed to send message") }
+                    // Keep the message in the draft so the user can retry
+                    _uiState.update { it.copy(
+                        error = e.message ?: "Failed to send message",
+                        draftMessage = content
+                    ) }
                 }
             _uiState.update { it.copy(isSendingMessage = false) }
         }

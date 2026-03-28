@@ -94,13 +94,22 @@ fun ConversationPanel(
     isUploading: Boolean,
     onSendMessage: (String) -> Unit,
     onUploadFile: (Uri) -> Unit,
+    draftMessage: String = "",
+    onDraftChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var messageText by remember { mutableStateOf("") }
+    var messageText by remember { mutableStateOf(draftMessage) }
     var uploadingFileName by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val listState = rememberLazyListState()
+
+    // Sync from ViewModel draft when re-entering the tab (e.g., after failed send)
+    LaunchedEffect(draftMessage) {
+        if (draftMessage != messageText && draftMessage.isNotEmpty()) {
+            messageText = draftMessage
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -246,7 +255,10 @@ fun ConversationPanel(
 
             OutlinedTextField(
                 value = messageText,
-                onValueChange = { messageText = it },
+                onValueChange = {
+                    messageText = it
+                    onDraftChanged(it)
+                },
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
@@ -271,9 +283,11 @@ fun ConversationPanel(
             IconButton(
                 onClick = {
                     if (messageText.isNotBlank() && !isSending) {
-                        onSendMessage(messageText.trim())
+                        val textToSend = messageText.trim()
                         messageText = ""
+                        onDraftChanged("")
                         focusManager.clearFocus()
+                        onSendMessage(textToSend)
                     }
                 },
                 enabled = messageText.isNotBlank() && !isSending
