@@ -198,6 +198,19 @@ export async function fetchRetentionStatus() { return request<any>('/retention/s
 export async function updateRetentionSettings(settings: any) { return request('/retention/settings', { method: 'PATCH', body: JSON.stringify(settings) }); }
 export async function runRetention() { return request<any>('/retention/run', { method: 'POST' }); }
 
+// --- Projects ---
+export async function fetchProjects() { return request<any[]>('/projects'); }
+export async function createProject(data: {name: string, description: string, folder_path: string, max_concurrent?: number}) { return request('/projects', { method: 'POST', body: JSON.stringify(data) }); }
+export async function fetchProject(id: string) { return request<any>(`/projects/${id}`); }
+export async function fetchProjectAgents(id: string) { return request<any>(`/projects/${id}/agents`); }
+export async function fetchProjectUpdates(id: string) { return request<any>(`/projects/${id}/updates`); }
+export async function startProject(id: string) { return request(`/projects/${id}/start`, { method: 'POST' }); }
+export async function pauseProject(id: string) { return request(`/projects/${id}/pause`, { method: 'POST' }); }
+export async function completeProject(id: string) { return request(`/projects/${id}/complete`, { method: 'POST' }); }
+export async function deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }); }
+export async function spawnProjectAgent(id: string, role: string, prompt: string) { return request(`/projects/${id}/spawn-agent`, { method: 'POST', body: JSON.stringify({ role, prompt }) }); }
+export async function addProjectUpdate(id: string, type: string, content: string) { return request(`/projects/${id}/updates`, { method: 'POST', body: JSON.stringify({ type, content }) }); }
+
 // --- Workflows ---
 export async function fetchWorkflows() { return request<any[]>('/workflows'); }
 export async function fetchWorkflow(id: string) { return request<any>(`/workflows/${id}`); }

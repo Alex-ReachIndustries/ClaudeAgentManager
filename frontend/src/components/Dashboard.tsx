@@ -8,6 +8,7 @@ import { RefreshCw, Bot, Archive, Plus, Search } from 'lucide-react';
 
 type StatusFilter = 'all' | 'active' | 'idle' | 'working' | 'waiting-for-input' | 'completed' | 'archived';
 type SortOption = 'activity' | 'created' | 'updates' | 'name';
+type ProjectFilter = 'all' | 'standalone' | string;
 
 const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -38,6 +39,18 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sortOption, setSortOption] = useState<SortOption>('activity');
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
+
+  // Collect unique project names for filter dropdown
+  const projectNames = useMemo(() => {
+    const names = new Set<string>();
+    agents.forEach((a) => {
+      if (a.project_id && a.role) {
+        names.add(a.project_id);
+      }
+    });
+    return Array.from(names);
+  }, [agents]);
 
   const handleLaunch = async (folderPath: string) => {
     try {
@@ -61,7 +74,14 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
       });
     }
 
-    // 2. Status filter
+    // 2. Project filter
+    if (projectFilter === 'standalone') {
+      filtered = filtered.filter((a) => !a.project_id);
+    } else if (projectFilter !== 'all') {
+      filtered = filtered.filter((a) => a.project_id === projectFilter);
+    }
+
+    // 3. Status filter
     if (statusFilter !== 'all') {
       filtered = filtered.filter((a) => a.status === statusFilter);
     }
@@ -97,7 +117,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
       activeAgents: sorted.filter((a) => a.status !== 'archived'),
       archivedAgents: sorted.filter((a) => a.status === 'archived'),
     };
-  }, [agents, searchQuery, statusFilter, sortOption]);
+  }, [agents, searchQuery, statusFilter, sortOption, projectFilter]);
 
   if (loading) {
     return (
@@ -197,6 +217,21 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          {projectNames.length > 0 && (
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="px-3 py-1.5 bg-dark-900 border border-dark-700 rounded-lg text-xs text-dark-300 focus:outline-none focus:border-lumi-500 transition-colors"
+            >
+              <option value="all">All Agents</option>
+              <option value="standalone">Standalone</option>
+              {projectNames.map((pid) => (
+                <option key={pid} value={pid}>
+                  Project: {pid.slice(0, 8)}
+                </option>
+              ))}
+            </select>
+          )}
           <select
             value={sortOption}
             onChange={(e) => setSortOption(e.target.value as SortOption)}

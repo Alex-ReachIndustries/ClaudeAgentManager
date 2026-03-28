@@ -7,6 +7,8 @@ import Settings from './components/Settings';
 import Workflows from './components/Workflows';
 import WorkflowDetail from './components/WorkflowDetail';
 import WorkflowCreate from './components/WorkflowCreate';
+import Projects from './components/Projects';
+import ProjectDetail from './components/ProjectDetail';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -37,6 +39,15 @@ function App() {
             }
           />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route
+            path="/projects/:id"
+            element={
+              <ErrorBoundary>
+                <ProjectDetail />
+              </ErrorBoundary>
+            }
+          />
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/workflows/new" element={<WorkflowCreate />} />
           <Route path="/workflows/:id" element={<WorkflowDetail />} />

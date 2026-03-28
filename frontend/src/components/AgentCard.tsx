@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, MessageSquare, Clock, Copy, Check, Folder, Bell } from 'lucide-react';
+import { Activity, MessageSquare, Clock, Copy, Check, Folder, Bell, FolderKanban } from 'lucide-react';
 import type { Agent } from '../types';
 import { timeAgo } from '../utils/time';
 
@@ -60,6 +60,14 @@ function AgentCard({ agent }: AgentCardProps) {
 
       {/* Title */}
       <h3 className="text-lg font-bold text-dark-100 mb-1 truncate">{agent.title}</h3>
+
+      {/* Project badge */}
+      {agent.project_id && agent.role && (
+        <p className="inline-flex items-center gap-1.5 px-2 py-0.5 mb-1 bg-lumi-600/10 border border-lumi-500/20 rounded-full text-xs text-lumi-400 truncate">
+          <FolderKanban size={10} />
+          <span className="truncate">{agent.role}</span>
+        </p>
+      )}
 
       {/* Workspace subtitle */}
       {agent.workspace && (
