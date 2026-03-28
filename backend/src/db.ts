@@ -86,6 +86,28 @@ export function getDb(): Database.Database {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      events TEXT NOT NULL DEFAULT '[]',
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      last_triggered_at TEXT,
+      failure_count INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      steps TEXT NOT NULL DEFAULT '[]',
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed','paused')),
+      current_step INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      started_at TEXT,
+      completed_at TEXT,
+      metadata TEXT DEFAULT '{}'
+    );
+
     CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
     CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
     CREATE INDEX IF NOT EXISTS idx_files_agent_id ON files(agent_id);
@@ -104,6 +126,10 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE launch_requests ADD COLUMN target_pid INTEGER"); } catch { /* exists */ }
   // Backfill last_activity_at from last_update_at where null
   try { db.exec("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL"); } catch { /* ignore */ }
+
+  // Feature 17: Agent-to-agent messaging source columns
+  try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE messages ADD COLUMN source_agent_id TEXT"); } catch { /* exists */ }
 
   // Feature 5: Computed field caching columns
   try { db.exec("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0"); } catch { /* exists */ }
@@ -495,16 +521,16 @@ export function getPendingMessages(agentId: string) {
   return transaction();
 }
 
-export function addMessage(agentId: string, content: string) {
+export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string) {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT INTO messages (agent_id, content) VALUES (?, ?)
+    INSERT INTO messages (agent_id, content, source, source_agent_id) VALUES (?, ?, ?, ?)
   `);
   const touchActivity = db.prepare(`
     UPDATE agents SET last_activity_at = datetime('now') WHERE id = ?
   `);
   const transaction = db.transaction(() => {
-    const result = insert.run(agentId, content);
+    const result = insert.run(agentId, content, source, sourceAgentId ?? null);
     touchActivity.run(agentId);
     return result;
   });

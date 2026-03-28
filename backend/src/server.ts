@@ -8,9 +8,15 @@ import agentsRouter from "./routes/agents.js";
 import foldersRouter from "./routes/folders.js";
 import launchRouter from "./routes/launch.js";
 import pushRouter from "./routes/push.js";
+import webhooksRouter from "./routes/webhooks.js";
+import workflowsRouter from "./routes/workflows.js";
+import retentionRouter from "./routes/retention.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
 import { archiveInactiveAgents, getAgent, getDb } from "./db.js";
 import { initPush } from "./push.js";
+import { initWebhookDispatcher } from "./webhook-dispatcher.js";
+import { initWorkflowEngine } from "./workflow-engine.js";
+import { startRetentionScheduler } from "./retention.js";
 import { authMiddleware, getApiKey } from "./middleware/auth.js";
 import { startBackupScheduler } from "./backup.js";
 
@@ -81,6 +87,9 @@ app.use("/api/agents", agentsRouter);
 app.use("/api/folders", foldersRouter);
 app.use("/api/launch-requests", launchRouter);
 app.use("/api/push", pushRouter);
+app.use("/api/webhooks", webhooksRouter);
+app.use("/api/workflows", workflowsRouter);
+app.use("/api/retention", retentionRouter);
 
 const server = app.listen(PORT, () => {
   logger.info(`Agent Manager backend listening on port ${PORT}`);
@@ -96,6 +105,15 @@ const server = app.listen(PORT, () => {
 
   // Start backup scheduler
   startBackupScheduler();
+
+  // Initialize webhook dispatcher
+  initWebhookDispatcher();
+
+  // Initialize workflow engine
+  initWorkflowEngine();
+
+  // Start retention scheduler
+  startRetentionScheduler();
 
   // Periodic sweep: archive agents inactive for >30 minutes, every 5 minutes
   setInterval(() => {

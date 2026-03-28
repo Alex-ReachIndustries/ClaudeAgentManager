@@ -27,8 +27,10 @@ import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
 import { agentUpdateLimiter, fileUploadLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
-import { updateSchema, messageSchema, agentPatchSchema } from "../schemas.js";
+import { updateSchema, messageSchema, agentPatchSchema, relaySchema } from "../schemas.js";
 import { logger } from "../logger.js";
+import { dispatchWebhook } from "../webhook-dispatcher.js";
+import { onAgentStatusChange } from "../workflow-engine.js";
 
 // Disk storage for file uploads
 const storage = multer.diskStorage({
@@ -465,6 +467,20 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);
 
+    // Dispatch webhooks for status changes
+    if (status) {
+      dispatchWebhook("agent.status_changed", { agent: updatedAgent as Record<string, unknown>, details: { newStatus: status } });
+      onAgentStatusChange(id, status);
+      if (status === "completed") {
+        dispatchWebhook("agent.completed", { agent: updatedAgent as Record<string, unknown> });
+      } else if (status === "waiting-for-input") {
+        dispatchWebhook("agent.waiting", { agent: updatedAgent as Record<string, unknown> });
+      }
+    }
+    if (type === "error") {
+      dispatchWebhook("agent.error", { agent: updatedAgent as Record<string, unknown>, details: { content: contentStr, summary } });
+    }
+
     // Send push notification with agent title and update summary
     const agentTitle = (updatedAgent as Record<string, unknown>)?.title as string || "Untitled Agent";
     const pushBody = summary || (typeof content === "string" ? content : JSON.stringify(content));
@@ -630,6 +646,12 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
 
     addMessage(id, content);
     broadcast("message-queued", { agentId: id, content });
+
+    // Dispatch webhook for new message
+    dispatchWebhook("message.received", {
+      agent: agent as Record<string, unknown>,
+      details: { content },
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -822,6 +844,43 @@ router.get("/:id/files/:fileId", (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "Error downloading file");
     res.status(500).json({ error: "Failed to download file" });
+  }
+});
+
+// POST /:id/relay — agent-to-agent messaging
+router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) => {
+  try {
+    const senderId = param(req, "id");
+    const { target_agent_id, content } = req.body;
+
+    // Validate sender exists
+    const sender = getAgent(senderId);
+    if (!sender) {
+      res.status(404).json({ error: "Sender agent not found" });
+      return;
+    }
+
+    // Validate target exists
+    const target = getAgent(target_agent_id);
+    if (!target) {
+      res.status(404).json({ error: "Target agent not found" });
+      return;
+    }
+
+    // Create message on target agent with source info
+    addMessage(target_agent_id, content, "agent", senderId);
+    broadcast("message-queued", { agentId: target_agent_id, content, source: "agent", sourceAgentId: senderId });
+
+    // Dispatch webhook for message received on target
+    dispatchWebhook("message.received", {
+      agent: target as Record<string, unknown>,
+      details: { content, source: "agent", sourceAgentId: senderId },
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Error relaying message");
+    res.status(500).json({ error: "Failed to relay message" });
   }
 });
 
