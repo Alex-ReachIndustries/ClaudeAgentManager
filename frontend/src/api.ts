@@ -204,7 +204,7 @@ export async function createProject(data: {name: string, description: string, fo
 export async function fetchProject(id: string) { return request<any>(`/projects/${id}`); }
 export async function fetchProjectAgents(id: string) { return request<any>(`/projects/${id}/agents`); }
 export async function fetchProjectUpdates(id: string) { return request<any>(`/projects/${id}/updates`); }
-export async function startProject(id: string) { return request(`/projects/${id}/start`, { method: 'POST' }); }
+export async function startProject(id: string, initialPrompt?: string) { return request(`/projects/${id}/start`, { method: 'POST', body: JSON.stringify({ initial_prompt: initialPrompt || '' }) }); }
 export async function pauseProject(id: string) { return request(`/projects/${id}/pause`, { method: 'POST' }); }
 export async function completeProject(id: string) { return request(`/projects/${id}/complete`, { method: 'POST' }); }
 export async function deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }); }

@@ -202,7 +202,10 @@ export default function ProjectDetail() {
           <div className="flex items-center gap-2 shrink-0">
             {canStart && (
               <button
-                onClick={() => handleAction('start', () => startProject(id!))}
+                onClick={() => {
+                  const prompt = (document.getElementById('pm-prompt') as HTMLTextAreaElement)?.value || '';
+                  handleAction('start', () => startProject(id!, prompt));
+                }}
                 disabled={actionLoading !== null}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
               >
@@ -245,6 +248,19 @@ export default function ProjectDetail() {
             )}
           </div>
         </div>
+
+        {/* Initial prompt input for starting projects */}
+        {canStart && (
+          <div className="mt-4">
+            <label className="block text-xs text-dark-400 mb-1">Initial Prompt for Project Manager</label>
+            <textarea
+              id="pm-prompt"
+              rows={4}
+              className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors resize-none"
+              placeholder="Describe the task for the project manager agent..."
+            />
+          </div>
+        )}
 
         {/* Progress bar */}
         {progress > 0 && (
