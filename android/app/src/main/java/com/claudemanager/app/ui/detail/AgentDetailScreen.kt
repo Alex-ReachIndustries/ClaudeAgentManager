@@ -194,18 +194,28 @@ fun AgentDetailScreen(
 
                                 // PDF Export
                                 DropdownMenuItem(
-                                    text = { Text("Export PDF") },
+                                    text = {
+                                        if (state.isExporting) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Exporting PDF...")
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    color = LumiPurple500,
+                                                    strokeWidth = 2.dp
+                                                )
+                                            }
+                                        } else {
+                                            Text("Export PDF")
+                                        }
+                                    },
                                     leadingIcon = {
                                         Icon(Icons.Default.PictureAsPdf, contentDescription = null)
                                     },
+                                    enabled = !state.isExporting,
                                     onClick = {
                                         showOverflowMenu = false
-                                        val url = viewModel.getPdfExportUrl()
-                                        val intent = android.content.Intent(
-                                            android.content.Intent.ACTION_VIEW,
-                                            android.net.Uri.parse(url)
-                                        )
-                                        context.startActivity(intent)
+                                        viewModel.exportPdf(context)
                                     }
                                 )
 
@@ -354,6 +364,7 @@ fun AgentDetailScreen(
                                 onUploadFile = { uri -> viewModel.uploadFile(uri, context) },
                                 draftMessage = state.draftMessage,
                                 onDraftChanged = viewModel::updateDraftMessage,
+                                lastUploadedFileName = state.lastUploadedFileName,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

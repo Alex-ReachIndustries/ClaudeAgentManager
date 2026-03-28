@@ -45,7 +45,9 @@ data class AgentDetailUiState(
     val isRefreshing: Boolean = false,
     val draftMessage: String = "",
     val otherAgents: List<Agent> = emptyList(),
-    val isRelaying: Boolean = false
+    val isRelaying: Boolean = false,
+    val isExporting: Boolean = false,
+    val lastUploadedFileName: String? = null
 )
 
 /**
@@ -188,13 +190,27 @@ class AgentDetailViewModel(
 
     /**
      * Upload a file attachment to the agent.
+     * On success, briefly shows the uploaded filename for 3 seconds.
      */
     fun uploadFile(uri: Uri, context: Context) {
+        // Resolve the display name from the URI for the confirmation chip
+        val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            cursor.moveToFirst()
+            if (nameIndex >= 0) cursor.getString(nameIndex) else null
+        } ?: uri.lastPathSegment ?: "file"
+
         _uiState.update { it.copy(isUploading = true) }
         viewModelScope.launch {
             repository.uploadFile(agentId, uri, context)
                 .onSuccess {
                     refreshFiles()
+                    _uiState.update { it.copy(lastUploadedFileName = displayName) }
+                    // Clear the confirmation after 3 seconds
+                    launch {
+                        delay(3_000)
+                        _uiState.update { it.copy(lastUploadedFileName = null) }
+                    }
                 }
                 .onFailure { e ->
                     _uiState.update { it.copy(error = e.message ?: "Failed to upload file") }
@@ -223,10 +239,60 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Get the PDF export URL for this agent.
+     * Export the agent as PDF by downloading in-app via OkHttp (with auth interceptor),
+     * saving to cache, and opening via FileProvider.
      */
-    fun getPdfExportUrl(): String {
-        return "${com.claudemanager.app.data.api.ApiClient.getBaseUrl()}/api/agents/$agentId/export/pdf"
+    fun exportPdf(context: Context) {
+        _uiState.update { it.copy(isExporting = true) }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val url = "${com.claudemanager.app.data.api.ApiClient.getBaseUrl()}/api/agents/$agentId/export/pdf"
+                val client = com.claudemanager.app.data.api.ApiClient.getRetrofit().callFactory() as okhttp3.OkHttpClient
+                val request = okhttp3.Request.Builder().url(url).build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body ?: run {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            _uiState.update { it.copy(isExporting = false, error = "PDF export returned empty response") }
+                        }
+                        return@launch
+                    }
+                    val cacheDir = java.io.File(context.cacheDir, "downloads")
+                    cacheDir.mkdirs()
+                    val agentTitle = _uiState.value.agent?.title?.replace(Regex("[^a-zA-Z0-9_-]"), "_") ?: "agent"
+                    val filename = "${agentTitle}_export.pdf"
+                    val file = java.io.File(cacheDir, filename)
+                    file.outputStream().use { out ->
+                        body.byteStream().use { it.copyTo(out) }
+                    }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { it.copy(isExporting = false) }
+                        try {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            _uiState.update { it.copy(error = "PDF saved but no app available to open it") }
+                        }
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { it.copy(isExporting = false, error = "PDF export failed: HTTP ${response.code}") }
+                    }
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { it.copy(isExporting = false, error = "PDF export failed: ${e.message}") }
+                }
+            }
+        }
     }
 
     /**

@@ -4,6 +4,11 @@ import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,8 +30,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -97,6 +105,7 @@ fun ConversationPanel(
     onUploadFile: (Uri) -> Unit,
     draftMessage: String = "",
     onDraftChanged: (String) -> Unit = {},
+    lastUploadedFileName: String? = null,
     modifier: Modifier = Modifier
 ) {
     var messageText by remember { mutableStateOf(draftMessage) }
@@ -199,37 +208,76 @@ fun ConversationPanel(
         // Divider
         HorizontalDivider(color = LumiCard, thickness = 1.dp)
 
-        // Upload indicator
-        if (uploadingFileName != null) {
+        // Upload indicator — shows file being uploaded with name, icon, and progress
+        if (uploadingFileName != null && isUploading) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(LumiPurple500.copy(alpha = 0.1f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.InsertDriveFile,
+                    contentDescription = null,
+                    tint = LumiPurple500,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = uploadingFileName!!,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = LumiPurple500,
+                        trackColor = LumiPurple500.copy(alpha = 0.2f)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Uploading...",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LumiOnSurfaceSecondary
+                )
+            }
+        }
+
+        // Post-upload confirmation chip — briefly shows uploaded filename
+        AnimatedVisibility(
+            visible = lastUploadedFileName != null,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it }
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(LumiSuccess.copy(alpha = 0.12f))
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.AttachFile,
+                    imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
-                    tint = LumiPurple500,
-                    modifier = Modifier.size(14.dp)
+                    tint = LumiSuccess,
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (isUploading) "Uploading: $uploadingFileName" else uploadingFileName!!,
+                    text = "Uploaded: ${lastUploadedFileName ?: ""}",
                     style = MaterialTheme.typography.bodySmall,
                     color = LumiOnSurface,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    overflow = TextOverflow.Ellipsis
                 )
-                if (isUploading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        color = LumiPurple500,
-                        strokeWidth = 2.dp
-                    )
-                }
             }
         }
 
