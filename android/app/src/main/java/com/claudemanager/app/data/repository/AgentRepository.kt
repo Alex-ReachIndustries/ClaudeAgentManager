@@ -38,7 +38,7 @@ class AgentRepository {
      */
     suspend fun getAgents(): Result<List<Agent>> = apiCall {
         api.getAgents()
-    }
+    }.map { it.data }
 
     /**
      * Fetch a single agent by ID.
@@ -88,7 +88,7 @@ class AgentRepository {
      */
     suspend fun getUpdates(agentId: String): Result<List<AgentUpdate>> = apiCall {
         api.getUpdates(agentId)
-    }
+    }.map { it.data }
 
     // ── Messages ─────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ class AgentRepository {
      */
     suspend fun getMessages(agentId: String): Result<List<AgentMessage>> = apiCall {
         api.getMessages(agentId)
-    }
+    }.map { it.data }
 
     /**
      * Send a message to an agent. The message is queued for delivery on the
@@ -179,7 +179,7 @@ class AgentRepository {
      */
     suspend fun getFiles(agentId: String): Result<List<FileInfo>> = apiCall {
         api.getFiles(agentId)
-    }
+    }.map { it.data }
 
     /**
      * Build the download URL for a specific file. This URL can be opened

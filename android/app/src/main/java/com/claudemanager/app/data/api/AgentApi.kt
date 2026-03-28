@@ -1,5 +1,6 @@
 package com.claudemanager.app.data.api
 
+import com.google.gson.annotations.SerializedName
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
@@ -25,6 +26,13 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
+/** Paginated response wrapper for list endpoints */
+data class PaginatedResponse<T>(
+    @SerializedName("data") val data: List<T>,
+    @SerializedName("next_cursor") val nextCursor: String? = null,
+    @SerializedName("has_more") val hasMore: Boolean = false
+)
+
 /**
  * Retrofit interface defining all ClaudeManager backend API endpoints.
  * All methods are suspend functions for Kotlin coroutine support.
@@ -43,7 +51,7 @@ interface AgentApi {
      * Includes computed fields: pending_message_count, unread_update_count, latest_summary.
      */
     @GET("api/agents")
-    suspend fun getAgents(): Response<List<Agent>>
+    suspend fun getAgents(): Response<PaginatedResponse<Agent>>
 
     /**
      * Get a single agent by ID, with computed fields.
@@ -86,7 +94,7 @@ interface AgentApi {
      * Get all updates for an agent, ordered by timestamp ascending.
      */
     @GET("api/agents/{id}/updates")
-    suspend fun getUpdates(@Path("id") agentId: String): Response<List<AgentUpdate>>
+    suspend fun getUpdates(@Path("id") agentId: String): Response<PaginatedResponse<AgentUpdate>>
 
     // ── Messages ─────────────────────────────────────────────────────────
 
@@ -94,7 +102,7 @@ interface AgentApi {
      * Get all messages for an agent, ordered by created_at ascending.
      */
     @GET("api/agents/{id}/messages")
-    suspend fun getMessages(@Path("id") agentId: String): Response<List<AgentMessage>>
+    suspend fun getMessages(@Path("id") agentId: String): Response<PaginatedResponse<AgentMessage>>
 
     /**
      * Send a message to an agent (queues it for delivery on next poll).
@@ -111,7 +119,7 @@ interface AgentApi {
      * List file metadata for an agent (without binary data).
      */
     @GET("api/agents/{id}/files")
-    suspend fun getFiles(@Path("id") agentId: String): Response<List<FileInfo>>
+    suspend fun getFiles(@Path("id") agentId: String): Response<PaginatedResponse<FileInfo>>
 
     /**
      * Upload a file attachment to an agent.
