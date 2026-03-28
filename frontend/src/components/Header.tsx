@@ -1,10 +1,14 @@
+import { useNavigate } from 'react-router-dom';
+import { Settings } from 'lucide-react';
 import type { Agent } from '../types';
+import NotificationToggle from './NotificationToggle';
 
 interface HeaderProps {
   agents: Agent[];
 }
 
 function Header({ agents }: HeaderProps) {
+  const navigate = useNavigate();
   const activeCount = agents.filter((a) => a.status === 'active').length;
 
   return (
@@ -38,6 +42,14 @@ function Header({ agents }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate('/settings')}
+          className="p-2 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors"
+          title="Settings"
+        >
+          <Settings size={18} />
+        </button>
+        <NotificationToggle />
         <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-900 rounded-full border border-dark-800">
           <div
             className={`w-2 h-2 rounded-full ${activeCount > 0 ? 'bg-green-400 animate-pulse' : 'bg-dark-600'}`}

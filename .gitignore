@@ -1,9 +1,17 @@
 node_modules/
 dist/
 .claude/
+claudeadmin/
 *.db
 *.db-wal
 *.db-shm
 .env
 .DS_Store
 Thumbs.db
+*.log
+debug.log
+*.png
+.playwright-mcp/
+certs/
+android/output/
+android/app/build/

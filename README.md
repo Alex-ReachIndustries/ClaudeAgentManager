@@ -48,9 +48,9 @@ cd ClaudeAgentManager
 docker compose up -d --build
 ```
 
-Verify: `curl http://localhost:8080/api/health` → `{"status":"ok"}`
+Verify: `curl https://msi.tail06903c.ts.net/api/health` → `{"status":"ok"}`
 
-Open the dashboard: [http://localhost:8080](http://localhost:8080)
+Open the dashboard: [https://msi.tail06903c.ts.net](https://msi.tail06903c.ts.net)
 
 ### Start the Host Launcher
 
@@ -79,7 +79,7 @@ Or manually:
 
 1. Save the server URL:
    ```bash
-   echo 'http://localhost:8080' > ~/.claude/agent-server-url
+   echo 'https://msi.tail06903c.ts.net' > ~/.claude/agent-server-url
    ```
 
 2. Create skill files at `~/.claude/commands/session-init.md` and `~/.claude/commands/agent-checkin.md` (content provided by the bootstrap endpoint)
@@ -98,7 +98,8 @@ Access the Agent Manager dashboard from your phone or any device on any network 
 - **No port forwarding** — works through NAT and firewalls
 - **Peer-to-peer** — your traffic goes directly between devices, not through Tailscale's servers
 - **Always on** — runs as a system service, starts on boot
-- **MagicDNS** — access your machine by hostname (e.g. `http://msi:8080`) instead of IP
+- **MagicDNS** — access your machine by hostname (e.g. `https://msi.tail06903c.ts.net`) instead of IP
+- **HTTPS** — `tailscale serve` provides trusted TLS certificates automatically
 
 ### Setup
 
@@ -112,11 +113,18 @@ Access the Agent Manager dashboard from your phone or any device on any network 
 
 3. **Sign in to both devices** with the same account (Google, GitHub, etc.)
 
-4. **Access the dashboard** from your phone at:
+4. **Enable HTTPS** in the [Tailscale admin console](https://login.tailscale.com/admin/dns) under DNS settings
+
+5. **Start Tailscale Serve** to proxy HTTPS to the local Docker frontend:
+   ```bash
+   tailscale serve --bg 8080
    ```
-   http://<your-tailscale-hostname>:8080
+
+6. **Access the dashboard** from your phone at:
    ```
-   Find your hostname with `tailscale status` — it'll show something like `100.x.y.z  msi`. With MagicDNS enabled (default), you can use `http://msi:8080`.
+   https://<your-tailscale-hostname>.tail06903c.ts.net
+   ```
+   Find your hostname with `tailscale status`. Tailscale Serve provides trusted Let's Encrypt TLS certificates automatically.
 
 ### Verify
 
