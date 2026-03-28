@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Configuration for ClaudeManager.
+
+    Allows cleartext HTTP traffic for all domains. This is intentional because
+    the app communicates with the backend server over Tailscale, which provides
+    WireGuard encryption at the network level, making TLS redundant.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

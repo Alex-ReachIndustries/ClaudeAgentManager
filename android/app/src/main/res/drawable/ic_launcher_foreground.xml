@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive icon foreground for ClaudeManager.
+    108dp viewport per adaptive icon spec (18dp safe zone on each side,
+    so the visible area is 72dp centered within the 108dp canvas).
+
+    Design: Abstract diamond/hexagonal shape with "CM" feel, in Lumi purple.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Background purple circle -->
+    <path
+        android:fillColor="#8B5CF6"
+        android:pathData="M54,27C68.91,27 81,39.09 81,54C81,68.91 68.91,81 54,81C39.09,81 27,68.91 27,54C27,39.09 39.09,27 54,27Z" />
+
+    <!-- Inner abstract shape: stylized terminal/bracket -->
+    <!-- Left bracket < -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,42L38,54L48,66L51,63.5L43.5,54L51,44.5Z"
+        android:strokeWidth="0" />
+
+    <!-- Right bracket > -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,42L70,54L60,66L57,63.5L64.5,54L57,44.5Z"
+        android:strokeWidth="0" />
+
+    <!-- Center underscore/cursor -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M49,56H59V59H49Z" />
+</vector>

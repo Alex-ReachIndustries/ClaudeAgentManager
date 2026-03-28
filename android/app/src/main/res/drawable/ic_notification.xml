@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Notification icon: a simple robot/bot head.
+    Must be monochrome white for proper notification tinting on Android.
+    24dp x 24dp viewport.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+
+    <!-- Robot head outline (rounded rectangle) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17.5,9.5C17.5,9.22 17.28,9 17,9H7C6.72,9 6.5,9.22 6.5,9.5V17.5C6.5,17.78 6.72,18 7,18H17C17.28,18 17.5,17.78 17.5,17.5V9.5ZM16,16.5H8V10.5H16V16.5Z" />
+
+    <!-- Left eye -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M10,13m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0" />
+
+    <!-- Right eye -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,13m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0" />
+
+    <!-- Antenna -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M11.5,9V7H12.5V9H11.5Z" />
+
+    <!-- Antenna dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,6.5m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0" />
+
+    <!-- Left ear -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5,11.5H6.5V15.5H5V11.5Z" />
+
+    <!-- Right ear -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17.5,11.5H19V15.5H17.5V11.5Z" />
+</vector>
