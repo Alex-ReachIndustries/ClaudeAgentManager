@@ -55,7 +55,7 @@ export function getDb(): Database.Database {
       agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       filename TEXT NOT NULL,
       mimetype TEXT NOT NULL,
-      data BLOB NOT NULL,
+      data BLOB,
       size INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -277,12 +277,12 @@ export function getDb(): Database.Database {
 function migrateFilesToDisk(db: Database.Database): void {
   try {
     const rows = db.prepare(
-      "SELECT id, agent_id, filename, data FROM files WHERE data IS NOT NULL AND file_path IS NULL"
+      "SELECT id, agent_id, filename, data FROM files WHERE data IS NOT NULL AND length(data) > 0 AND file_path IS NULL"
     ).all() as { id: number; agent_id: string; filename: string; data: Buffer }[];
 
     if (rows.length === 0) return;
 
-    const updateStmt = db.prepare("UPDATE files SET file_path = ?, data = NULL WHERE id = ?");
+    const updateStmt = db.prepare("UPDATE files SET file_path = ?, data = '' WHERE id = ?");
 
     for (const row of rows) {
       const dir = path.join(process.cwd(), "data", "files", row.agent_id);

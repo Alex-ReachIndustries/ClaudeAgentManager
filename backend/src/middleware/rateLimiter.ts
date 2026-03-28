@@ -3,7 +3,7 @@ import type { Request } from "express";
 
 /** Extract agent ID from URL params for per-agent limiting */
 function agentKey(req: Request): string {
-  return (req.params as Record<string, string>).id || req.ip || "unknown";
+  return (req.params as Record<string, string>).id || "unknown";
 }
 
 /** Agent updates: 60 requests per minute per agent */
@@ -14,6 +14,7 @@ export const agentUpdateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Rate limit exceeded", retryAfter: 60 },
+  validate: { xForwardedForHeader: false },
 });
 
 /** File uploads: 20 per hour per agent */
@@ -24,6 +25,7 @@ export const fileUploadLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Rate limit exceeded", retryAfter: 3600 },
+  validate: { xForwardedForHeader: false },
 });
 
 /** Launch requests: 10 per 5 minutes per IP */
