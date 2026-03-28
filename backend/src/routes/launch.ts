@@ -9,6 +9,7 @@ import { broadcast } from "../sse.js";
 import { launchLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
 import { launchRequestSchema } from "../schemas.js";
+import { logger } from "../logger.js";
 
 const router = Router();
 
@@ -37,7 +38,7 @@ router.post("/", launchLimiter, validate(launchRequestSchema), (req: Request, re
     broadcast("launch-request-created", request);
     res.status(201).json({ ok: true, request });
   } catch (err) {
-    console.error("Error creating launch request:", err);
+    logger.error({ err }, "Error creating launch request");
     res.status(500).json({ error: "Failed to create launch request" });
   }
 });
@@ -56,7 +57,7 @@ router.get("/", (req: Request, res: Response) => {
       res.json([...pending, ...claimed]);
     }
   } catch (err) {
-    console.error("Error listing launch requests:", err);
+    logger.error({ err }, "Error listing launch requests");
     res.status(500).json({ error: "Failed to list launch requests" });
   }
 });
@@ -85,7 +86,7 @@ router.patch("/:id", (req: Request, res: Response) => {
     broadcast("launch-request-updated", updated);
     res.json({ ok: true, request: updated });
   } catch (err) {
-    console.error("Error updating launch request:", err);
+    logger.error({ err }, "Error updating launch request");
     res.status(500).json({ error: "Failed to update launch request" });
   }
 });

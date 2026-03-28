@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { getSetting, setSetting, getAllPushSubscriptions, removePushSubscription } from "./db.js";
+import { logger } from "./logger.js";
 
 let initialized = false;
 
@@ -15,7 +16,7 @@ export function initPush(): void {
     privateKey = keys.privateKey;
     setSetting("vapid_public_key", publicKey);
     setSetting("vapid_private_key", privateKey);
-    console.log("Generated new VAPID keys");
+    logger.info("Generated new VAPID keys");
   }
 
   webpush.setVapidDetails(
@@ -25,7 +26,7 @@ export function initPush(): void {
   );
 
   initialized = true;
-  console.log("Web Push initialized");
+  logger.info("Web Push initialized");
 }
 
 export function getVapidPublicKey(): string {
@@ -62,9 +63,9 @@ export async function sendPushToAll(title: string, body: string, url?: string): 
       const err = result.reason as { statusCode?: number };
       if (err.statusCode === 410 || err.statusCode === 404) {
         removePushSubscription(subscriptions[i].endpoint);
-        console.log("Removed expired push subscription");
+        logger.info("Removed expired push subscription");
       } else {
-        console.error("Push notification failed:", result.reason);
+        logger.error({ err: result.reason }, "Push notification failed");
       }
     }
   }

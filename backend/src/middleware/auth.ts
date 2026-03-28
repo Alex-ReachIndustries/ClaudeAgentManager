@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
 import { getSetting, setSetting } from "../db.js";
+import { logger } from "../logger.js";
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === "true";
 
@@ -9,7 +10,7 @@ export function getApiKey(): string {
   if (!key) {
     key = crypto.randomBytes(32).toString("hex");
     setSetting("api_key", key);
-    console.log(`\n  API Key generated: ${key}\n  Save this for client configuration.\n`);
+    logger.info(`API Key generated: ${key}`);
   }
   return key;
 }

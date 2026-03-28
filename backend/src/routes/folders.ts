@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { logger } from "../logger.js";
 
 const router = Router();
 
@@ -97,7 +98,7 @@ router.get("/", (req: Request, res: Response) => {
       folders,
     });
   } catch (err) {
-    console.error("Error browsing folders:", err);
+    logger.error({ err }, "Error browsing folders");
     res.status(500).json({ error: "Failed to browse folders" });
   }
 });

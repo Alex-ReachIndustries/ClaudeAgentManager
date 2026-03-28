@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
+import { logger } from "./logger.js";
 
 let db: Database.Database | null = null;
 
@@ -103,6 +104,56 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE launch_requests ADD COLUMN target_pid INTEGER"); } catch { /* exists */ }
   // Backfill last_activity_at from last_update_at where null
   try { db.exec("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL"); } catch { /* ignore */ }
+
+  // Feature 5: Computed field caching columns
+  try { db.exec("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN unread_update_count INTEGER DEFAULT 0"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN latest_summary TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN latest_message TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN last_message_at TEXT"); } catch { /* exists */ }
+
+  // Feature 6: External file storage column
+  try { db.exec("ALTER TABLE files ADD COLUMN file_path TEXT"); } catch { /* exists */ }
+
+  // Feature 5: Triggers for computed field caching
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS after_message_insert AFTER INSERT ON messages
+      BEGIN
+        UPDATE agents SET
+          pending_message_count = pending_message_count + 1,
+          latest_message = NEW.content,
+          last_message_at = NEW.created_at
+        WHERE id = NEW.agent_id;
+      END
+    `);
+  } catch { /* exists */ }
+
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS after_update_insert AFTER INSERT ON updates
+      BEGIN
+        UPDATE agents SET
+          unread_update_count = unread_update_count + 1,
+          latest_summary = COALESCE(NEW.summary, (SELECT latest_summary FROM agents WHERE id = NEW.agent_id))
+        WHERE id = NEW.agent_id;
+      END
+    `);
+  } catch { /* exists */ }
+
+  // Feature 5: Backfill computed fields (runs once — only for agents that have data but counts are 0)
+  try {
+    db.exec(`
+      UPDATE agents SET
+        pending_message_count = (SELECT COUNT(*) FROM messages WHERE messages.agent_id = agents.id AND messages.status = 'pending'),
+        unread_update_count = (SELECT COUNT(*) FROM updates WHERE updates.agent_id = agents.id AND (agents.last_read_at IS NULL OR updates.timestamp > agents.last_read_at)),
+        latest_summary = (SELECT summary FROM updates WHERE updates.agent_id = agents.id ORDER BY timestamp DESC LIMIT 1),
+        latest_message = (SELECT content FROM messages WHERE messages.agent_id = agents.id ORDER BY created_at DESC LIMIT 1),
+        last_message_at = (SELECT MAX(created_at) FROM messages WHERE messages.agent_id = agents.id)
+      WHERE EXISTS (SELECT 1 FROM messages WHERE messages.agent_id = agents.id)
+         OR EXISTS (SELECT 1 FROM updates WHERE updates.agent_id = agents.id)
+    `);
+  } catch { /* ignore */ }
 
   // Migration: add 'archived' to agents status CHECK constraint
   // SQLite doesn't support ALTER CHECK, so we recreate the table if needed
@@ -216,39 +267,81 @@ export function getDb(): Database.Database {
     db.pragma("foreign_keys = ON");
   }
 
+  // Feature 6: Migrate existing BLOBs to filesystem
+  migrateFilesToDisk(db);
+
   return db;
+}
+
+/** One-time migration: extract existing file BLOBs to disk */
+function migrateFilesToDisk(db: Database.Database): void {
+  try {
+    const rows = db.prepare(
+      "SELECT id, agent_id, filename, data FROM files WHERE data IS NOT NULL AND file_path IS NULL"
+    ).all() as { id: number; agent_id: string; filename: string; data: Buffer }[];
+
+    if (rows.length === 0) return;
+
+    const updateStmt = db.prepare("UPDATE files SET file_path = ?, data = NULL WHERE id = ?");
+
+    for (const row of rows) {
+      const dir = path.join(process.cwd(), "data", "files", row.agent_id);
+      fs.mkdirSync(dir, { recursive: true });
+      const filePath = path.join(dir, `${row.id}_${row.filename}`);
+      fs.writeFileSync(filePath, row.data);
+      updateStmt.run(filePath, row.id);
+    }
+
+    logger.info({ count: rows.length }, "Migrated file BLOBs to disk");
+  } catch (err) {
+    logger.error({ err }, "Error migrating files to disk");
+  }
+}
+
+// --- Paginated result type ---
+
+export interface PaginatedResult<T> {
+  data: T[];
+  next_cursor: number | string | null;
+  has_more: boolean;
 }
 
 // --- Prepared statement helpers ---
 
-export function getAllAgents() {
+export function getAllAgents(limit: number = 50, cursor?: string): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
-  const stmt = db.prepare(`
-    SELECT
-      a.*,
-      (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') AS pending_message_count,
-      (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) AS unread_update_count,
-      (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary,
-      (SELECT m.content FROM messages m WHERE m.agent_id = a.id ORDER BY m.created_at DESC LIMIT 1) AS latest_message,
-      (SELECT MAX(m.created_at) FROM messages m WHERE m.agent_id = a.id) AS last_message_at
-    FROM agents a
-    ORDER BY a.last_update_at DESC
-  `);
-  return stmt.all();
+  if (cursor) {
+    const stmt = db.prepare(`
+      SELECT * FROM agents
+      WHERE last_update_at < ?
+      ORDER BY last_update_at DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(cursor, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].last_update_at as string : null,
+      has_more: rows.length === limit,
+    };
+  } else {
+    const stmt = db.prepare(`
+      SELECT * FROM agents
+      ORDER BY last_update_at DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].last_update_at as string : null,
+      has_more: rows.length === limit,
+    };
+  }
 }
 
 export function getAgent(id: string) {
   const db = getDb();
   const stmt = db.prepare(`
-    SELECT
-      a.*,
-      (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') AS pending_message_count,
-      (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) AS unread_update_count,
-      (SELECT u.summary FROM updates u WHERE u.agent_id = a.id ORDER BY u.timestamp DESC LIMIT 1) AS latest_summary,
-      (SELECT m.content FROM messages m WHERE m.agent_id = a.id ORDER BY m.created_at DESC LIMIT 1) AS latest_message,
-      (SELECT MAX(m.created_at) FROM messages m WHERE m.agent_id = a.id) AS last_message_at
-    FROM agents a
-    WHERE a.id = ?
+    SELECT * FROM agents WHERE id = ?
   `);
   return stmt.get(id) as Record<string, unknown> | undefined;
 }
@@ -293,6 +386,8 @@ export function updateAgent(
   if (fields.last_read_at !== undefined) {
     setClauses.push("last_read_at = ?");
     values.push(fields.last_read_at);
+    // Also reset unread_update_count when marking as read
+    setClauses.push("unread_update_count = 0");
   }
   if (fields.cwd !== undefined) {
     setClauses.push("cwd = ?");
@@ -322,12 +417,29 @@ export function deleteAgent(id: string) {
   return stmt.run(id);
 }
 
-export function getUpdates(agentId: string) {
+export function getUpdates(agentId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
-  const stmt = db.prepare(`
-    SELECT * FROM updates WHERE agent_id = ? ORDER BY timestamp ASC
-  `);
-  return stmt.all(agentId);
+  if (before) {
+    const stmt = db.prepare(`
+      SELECT * FROM updates WHERE agent_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(agentId, before, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  } else {
+    const stmt = db.prepare(`
+      SELECT * FROM updates WHERE agent_id = ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(agentId, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  }
 }
 
 export function addUpdate(
@@ -369,10 +481,14 @@ export function getPendingMessages(agentId: string) {
     SET status = 'delivered', delivered_at = datetime('now')
     WHERE agent_id = ? AND status = 'pending'
   `);
+  const resetPendingCount = db.prepare(`
+    UPDATE agents SET pending_message_count = 0 WHERE id = ?
+  `);
 
   const transaction = db.transaction(() => {
     const messages = selectPending.all(agentId);
     markDelivered.run(agentId);
+    resetPendingCount.run(agentId);
     return messages;
   });
 
@@ -397,20 +513,45 @@ export function addMessage(agentId: string, content: string) {
 
 export function acknowledgeMessages(agentId: string) {
   const db = getDb();
-  const stmt = db.prepare(`
+  const ackStmt = db.prepare(`
     UPDATE messages
     SET status = 'acknowledged', acknowledged_at = datetime('now')
     WHERE agent_id = ? AND status = 'delivered'
   `);
-  return stmt.run(agentId);
+  const resetCount = db.prepare(`
+    UPDATE agents SET pending_message_count = 0 WHERE id = ?
+  `);
+  const transaction = db.transaction(() => {
+    const result = ackStmt.run(agentId);
+    resetCount.run(agentId);
+    return result;
+  });
+  return transaction();
 }
 
-export function getMessages(agentId: string) {
+export function getMessages(agentId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
-  const stmt = db.prepare(`
-    SELECT * FROM messages WHERE agent_id = ? ORDER BY created_at ASC
-  `);
-  return stmt.all(agentId);
+  if (before) {
+    const stmt = db.prepare(`
+      SELECT * FROM messages WHERE agent_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(agentId, before, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  } else {
+    const stmt = db.prepare(`
+      SELECT * FROM messages WHERE agent_id = ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(agentId, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  }
 }
 
 export function touchAgentHeartbeat(agentId: string) {
@@ -425,13 +566,13 @@ export function archiveInactiveAgents(inactiveMinutes: number = 30): string[] {
   const db = getDb();
 
   // Find agents that are active/idle but haven't been heard from in > N minutes
-  // Skip agents that have pending messages or unread updates
+  // Skip agents that have pending messages or unread updates (using denormalized columns)
   const findInactive = db.prepare(`
     SELECT a.id FROM agents a
     WHERE a.status IN ('active', 'idle', 'working', 'waiting-for-input')
       AND a.last_update_at < datetime('now', ? || ' minutes')
-      AND (SELECT COUNT(*) FROM messages m WHERE m.agent_id = a.id AND m.status = 'pending') = 0
-      AND (SELECT COUNT(*) FROM updates u WHERE u.agent_id = a.id AND (a.last_read_at IS NULL OR u.timestamp > a.last_read_at)) = 0
+      AND a.pending_message_count = 0
+      AND a.unread_update_count = 0
   `);
   const archiveOne = db.prepare(`
     UPDATE agents SET status = 'archived', last_update_at = datetime('now') WHERE id = ?
@@ -460,34 +601,57 @@ export function addFile(
   agentId: string,
   filename: string,
   mimetype: string,
-  data: Buffer,
+  filePath: string,
   size: number,
   source: string = "user",
   description: string = ""
 ) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO files (agent_id, filename, mimetype, data, size, source, description) VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO files (agent_id, filename, mimetype, data, size, source, description, file_path) VALUES (?, ?, ?, '', ?, ?, ?, ?)
   `);
-  return stmt.run(agentId, filename, mimetype, data, size, source, description);
+  return stmt.run(agentId, filename, mimetype, size, source, description, filePath);
 }
 
 export function getFile(agentId: string, fileId: number) {
   const db = getDb();
   const stmt = db.prepare(`
-    SELECT * FROM files WHERE id = ? AND agent_id = ?
+    SELECT id, agent_id, filename, mimetype, size, source, description, file_path, created_at FROM files WHERE id = ? AND agent_id = ?
   `);
   return stmt.get(fileId, agentId) as
-    | { id: number; agent_id: string; filename: string; mimetype: string; data: Buffer; size: number; created_at: string }
+    | { id: number; agent_id: string; filename: string; mimetype: string; size: number; source: string; description: string; file_path: string | null; created_at: string }
     | undefined;
 }
 
-export function getFilesMeta(agentId: string) {
+export function getFilesMeta(agentId: string, limit: number = 50, before?: number): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
-  const stmt = db.prepare(`
-    SELECT id, agent_id, filename, mimetype, size, source, description, created_at FROM files WHERE agent_id = ? ORDER BY created_at ASC
-  `);
-  return stmt.all(agentId);
+  if (before) {
+    const stmt = db.prepare(`
+      SELECT id, agent_id, filename, mimetype, size, source, description, file_path, created_at FROM files WHERE agent_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(agentId, before, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  } else {
+    const stmt = db.prepare(`
+      SELECT id, agent_id, filename, mimetype, size, source, description, file_path, created_at FROM files WHERE agent_id = ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(agentId, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  }
+}
+
+export function deleteAgentFiles(agentId: string): string[] {
+  const db = getDb();
+  const rows = db.prepare("SELECT file_path FROM files WHERE agent_id = ? AND file_path IS NOT NULL").all(agentId) as { file_path: string }[];
+  return rows.map((r) => r.file_path);
 }
 
 // --- Launch requests ---

@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
 import {
   getAllAgents,
   getAgent,
@@ -17,6 +19,7 @@ import {
   addFile,
   getFile,
   getFilesMeta,
+  deleteAgentFiles,
   createLaunchRequest,
 } from "../db.js";
 import { broadcast } from "../sse.js";
@@ -24,8 +27,24 @@ import { sendPushToAll } from "../push.js";
 import { agentUpdateLimiter, fileUploadLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
 import { updateSchema, messageSchema, agentPatchSchema } from "../schemas.js";
+import { logger } from "../logger.js";
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+// Disk storage for file uploads
+const storage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    const agentId = req.params.id;
+    const id = Array.isArray(agentId) ? agentId[0] : agentId;
+    const dir = path.join(process.cwd(), "data", "files", id);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    // Prefix with timestamp to avoid collisions
+    const prefix = Date.now().toString(36);
+    cb(null, `${prefix}_${file.originalname}`);
+  },
+});
+const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
 const router = Router();
 
@@ -35,13 +54,23 @@ const param = (req: Request, name: string): string => {
   return Array.isArray(v) ? v[0] : v;
 };
 
+/** Parse an integer query param with a default and max cap */
+function parseIntQuery(value: unknown, defaultVal: number, max: number): number {
+  if (value === undefined || value === null) return defaultVal;
+  const n = parseInt(String(value), 10);
+  if (isNaN(n) || n < 1) return defaultVal;
+  return Math.min(n, max);
+}
+
 // GET / — list all agents
-router.get("/", (_req: Request, res: Response) => {
+router.get("/", (req: Request, res: Response) => {
   try {
-    const agents = getAllAgents();
-    res.json(agents);
+    const limit = parseIntQuery(req.query.limit, 50, 100);
+    const cursor = req.query.cursor as string | undefined;
+    const result = getAllAgents(limit, cursor);
+    res.json(result);
   } catch (err) {
-    console.error("Error listing agents:", err);
+    logger.error({ err }, "Error listing agents");
     res.status(500).json({ error: "Failed to list agents" });
   }
 });
@@ -305,7 +334,7 @@ Respond to the user. Also invoke /agent-checkin with a proper status update.`,
       },
     });
   } catch (err) {
-    console.error("Error generating bootstrap:", err);
+    logger.error({ err }, "Error generating bootstrap");
     res.status(500).json({ error: "Failed to generate bootstrap" });
   }
 });
@@ -320,7 +349,7 @@ router.get("/:id", (req: Request, res: Response) => {
     }
     res.json(agent);
   } catch (err) {
-    console.error("Error getting agent:", err);
+    logger.error({ err }, "Error getting agent");
     res.status(500).json({ error: "Failed to get agent" });
   }
 });
@@ -394,13 +423,13 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     const agentTitle = (updatedAgent as Record<string, unknown>)?.title as string || "Untitled Agent";
     const pushBody = summary || (typeof content === "string" ? content : JSON.stringify(content));
     sendPushToAll(agentTitle, pushBody, `/agent/${id}`).catch((err) =>
-      console.error("Push notification error:", err)
+      logger.error({ err }, "Push notification error")
     );
 
     const pendingMessages = getPendingMessages(id);
     res.json({ ok: true, pendingMessages });
   } catch (err) {
-    console.error("Error posting update:", err);
+    logger.error({ err }, "Error posting update");
     res.status(500).json({ error: "Failed to post update" });
   }
 });
@@ -435,7 +464,7 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
 
     res.json(updatedAgent);
   } catch (err) {
-    console.error("Error updating agent:", err);
+    logger.error({ err }, "Error updating agent");
     res.status(500).json({ error: "Failed to update agent" });
   }
 });
@@ -457,7 +486,7 @@ router.post("/:id/read", (req: Request, res: Response) => {
 
     res.json({ ok: true });
   } catch (err) {
-    console.error("Error marking agent read:", err);
+    logger.error({ err }, "Error marking agent read");
     res.status(500).json({ error: "Failed to mark agent read" });
   }
 });
@@ -487,7 +516,7 @@ router.post("/:id/close", (req: Request, res: Response) => {
 
     res.json({ ok: true, terminated: !!pid, pid: pid || null });
   } catch (err) {
-    console.error("Error closing agent:", err);
+    logger.error({ err }, "Error closing agent");
     res.status(500).json({ error: "Failed to close agent" });
   }
 });
@@ -502,12 +531,21 @@ router.delete("/:id", (req: Request, res: Response) => {
       return;
     }
 
+    // Clean up files on disk
+    const filePaths = deleteAgentFiles(id);
+    for (const fp of filePaths) {
+      try { fs.unlinkSync(fp); } catch { /* ignore */ }
+    }
+    // Remove agent files directory
+    const filesDir = path.join(process.cwd(), "data", "files", id);
+    try { fs.rmSync(filesDir, { recursive: true, force: true }); } catch { /* ignore */ }
+
     deleteAgent(id);
     broadcast("agent-deleted", { id });
 
     res.json({ ok: true });
   } catch (err) {
-    console.error("Error deleting agent:", err);
+    logger.error({ err }, "Error deleting agent");
     res.status(500).json({ error: "Failed to delete agent" });
   }
 });
@@ -522,10 +560,12 @@ router.get("/:id/updates", (req: Request, res: Response) => {
       return;
     }
 
-    const updates = getUpdates(id);
-    res.json(updates);
+    const limit = parseIntQuery(req.query.limit, 100, 200);
+    const before = req.query.before ? parseInt(String(req.query.before), 10) : undefined;
+    const result = getUpdates(id, limit, before);
+    res.json(result);
   } catch (err) {
-    console.error("Error getting updates:", err);
+    logger.error({ err }, "Error getting updates");
     res.status(500).json({ error: "Failed to get updates" });
   }
 });
@@ -547,7 +587,7 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
 
     res.json({ ok: true });
   } catch (err) {
-    console.error("Error queuing message:", err);
+    logger.error({ err }, "Error queuing message");
     res.status(500).json({ error: "Failed to queue message" });
   }
 });
@@ -593,11 +633,13 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       const messages = getMessagesByStatus(id, statusFilter);
       res.json(messages);
     } else {
-      const messages = getMessages(id);
-      res.json(messages);
+      const limit = parseIntQuery(req.query.limit, 100, 200);
+      const before = req.query.before ? parseInt(String(req.query.before), 10) : undefined;
+      const result = getMessages(id, limit, before);
+      res.json(result);
     }
   } catch (err) {
-    console.error("Error getting messages:", err);
+    logger.error({ err }, "Error getting messages");
     res.status(500).json({ error: "Failed to get messages" });
   }
 });
@@ -612,8 +654,8 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
       return;
     }
 
-    const updates = getUpdates(id);
-    const msgs = getMessages(id);
+    const updatesResult = getUpdates(id, 10000);
+    const msgsResult = getMessages(id, 10000);
 
     // Parse projects/todos from metadata
     let projects: unknown[] = [];
@@ -626,8 +668,8 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
 
     const payload = {
       agent,
-      updates,
-      messages: msgs,
+      updates: updatesResult.data,
+      messages: msgsResult.data,
       projects,
       todos,
     };
@@ -642,7 +684,7 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
 
     if (!pdfRes.ok) {
       const errText = await pdfRes.text();
-      console.error("PDF generation failed:", errText);
+      logger.error({ errText }, "PDF generation failed");
       res.status(500).json({ error: "PDF generation failed", detail: errText });
       return;
     }
@@ -652,7 +694,7 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
     res.setHeader("Content-Disposition", `attachment; filename="Agent_Report_${id.slice(0, 8)}.pdf"`);
     res.send(pdfBuffer);
   } catch (err) {
-    console.error("Error generating PDF:", err);
+    logger.error({ err }, "Error generating PDF");
     res.status(500).json({ error: "Failed to generate PDF" });
   }
 });
@@ -675,7 +717,7 @@ router.post("/:id/files", fileUploadLimiter, upload.single("file"), (req: Reques
 
     const source = (req.body?.source as string) || "user";
     const description = (req.body?.description as string) || "";
-    const result = addFile(id, file.originalname, file.mimetype, file.buffer, file.size, source, description);
+    const result = addFile(id, file.originalname, file.mimetype, file.path, file.size, source, description);
     res.json({
       ok: true,
       file: {
@@ -688,7 +730,7 @@ router.post("/:id/files", fileUploadLimiter, upload.single("file"), (req: Reques
       },
     });
   } catch (err) {
-    console.error("Error uploading file:", err);
+    logger.error({ err }, "Error uploading file");
     res.status(500).json({ error: "Failed to upload file" });
   }
 });
@@ -703,10 +745,12 @@ router.get("/:id/files", (req: Request, res: Response) => {
       return;
     }
 
-    const files = getFilesMeta(id);
-    res.json(files);
+    const limit = parseIntQuery(req.query.limit, 50, 100);
+    const before = req.query.before ? parseInt(String(req.query.before), 10) : undefined;
+    const result = getFilesMeta(id, limit, before);
+    res.json(result);
   } catch (err) {
-    console.error("Error listing files:", err);
+    logger.error({ err }, "Error listing files");
     res.status(500).json({ error: "Failed to list files" });
   }
 });
@@ -722,12 +766,15 @@ router.get("/:id/files/:fileId", (req: Request, res: Response) => {
       return;
     }
 
-    res.setHeader("Content-Type", file.mimetype);
-    res.setHeader("Content-Disposition", `inline; filename="${file.filename}"`);
-    res.setHeader("Content-Length", file.size);
-    res.send(file.data);
+    if (file.file_path && fs.existsSync(file.file_path)) {
+      res.setHeader("Content-Type", file.mimetype);
+      res.setHeader("Content-Disposition", `inline; filename="${file.filename}"`);
+      res.sendFile(path.resolve(file.file_path));
+    } else {
+      res.status(404).json({ error: "File data not found on disk" });
+    }
   } catch (err) {
-    console.error("Error downloading file:", err);
+    logger.error({ err }, "Error downloading file");
     res.status(500).json({ error: "Failed to download file" });
   }
 });

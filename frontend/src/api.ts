@@ -39,7 +39,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export async function fetchAgents(): Promise<Agent[]> {
-  return request<Agent[]>('/agents');
+  const result = await request<{ data: Agent[] } | Agent[]>('/agents');
+  // Handle both paginated and legacy response formats
+  return Array.isArray(result) ? result : result.data;
 }
 
 export async function fetchAgent(id: string): Promise<Agent> {
@@ -47,7 +49,8 @@ export async function fetchAgent(id: string): Promise<Agent> {
 }
 
 export async function fetchUpdates(agentId: string): Promise<AgentUpdate[]> {
-  const updates = await request<AgentUpdate[]>(`/agents/${agentId}/updates`);
+  const result = await request<{ data: AgentUpdate[] } | AgentUpdate[]>(`/agents/${agentId}/updates`);
+  const updates = Array.isArray(result) ? result : result.data;
   if (!updates) return [];
   return updates.map((u) => {
     let content = u.content;
@@ -63,7 +66,8 @@ export async function fetchUpdates(agentId: string): Promise<AgentUpdate[]> {
 }
 
 export async function fetchMessages(agentId: string): Promise<AgentMessage[]> {
-  return request<AgentMessage[]>(`/agents/${agentId}/messages`);
+  const result = await request<{ data: AgentMessage[] } | AgentMessage[]>(`/agents/${agentId}/messages`);
+  return Array.isArray(result) ? result : result.data;
 }
 
 export async function sendMessage(agentId: string, content: string): Promise<AgentMessage> {
