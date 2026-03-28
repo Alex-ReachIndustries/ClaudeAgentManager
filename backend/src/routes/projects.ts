@@ -189,7 +189,7 @@ router.post("/:id/start", (req: Request, res: Response) => {
       return;
     }
 
-    if (project.status !== "pending" && project.status !== "paused") {
+    if (project.status !== "pending" && project.status !== "paused" && project.status !== "active") {
       res.status(400).json({ error: `Cannot start project in '${project.status}' status` });
       return;
     }
