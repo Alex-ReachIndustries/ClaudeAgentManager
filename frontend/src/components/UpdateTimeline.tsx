@@ -2,6 +2,7 @@ import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft } from 'lu
 import type { AgentUpdate } from '../types';
 import { timeAgo } from '../utils/time';
 import MermaidDiagram from './MermaidDiagram';
+import ErrorBoundary from './ErrorBoundary';
 
 interface UpdateTimelineProps {
   updates: AgentUpdate[];
@@ -109,7 +110,15 @@ function UpdateItem({ update }: { update: AgentUpdate }) {
             {timestamp}
           </div>
           {content.mermaid ? (
-            <MermaidDiagram chart={content.mermaid} />
+            <ErrorBoundary
+              fallback={
+                <div className="bg-dark-900 border border-red-500/30 rounded-lg p-4 text-center">
+                  <p className="text-red-400 text-xs">Diagram rendering failed</p>
+                </div>
+              }
+            >
+              <MermaidDiagram chart={content.mermaid} />
+            </ErrorBoundary>
           ) : (
             <p className="text-sm text-dark-500 italic">No diagram content</p>
           )}

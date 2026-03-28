@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Agent } from '../types';
 import { fetchAgents, subscribeToEvents } from '../api';
+import type { ConnectionState } from '../api';
 
 export function useAgents() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connecting');
 
   const refetch = useCallback(async () => {
     try {
@@ -25,36 +27,39 @@ export function useAgents() {
   }, [refetch]);
 
   useEffect(() => {
-    const unsubscribe = subscribeToEvents((event) => {
-      switch (event.type) {
-        case 'agent-updated':
-          setAgents((prev) => {
-            const idx = prev.findIndex((a) => a.id === event.data.id);
-            if (idx >= 0) {
-              const next = [...prev];
-              next[idx] = event.data;
-              return next;
-            }
-            return [event.data, ...prev];
-          });
-          break;
-        case 'agent-deleted':
-          setAgents((prev) => prev.filter((a) => a.id !== event.data.id));
-          break;
-        case 'message-queued':
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.id === event.data.agent_id
-                ? { ...a, pending_message_count: a.pending_message_count + 1, last_message_at: event.data.created_at }
-                : a,
-            ),
-          );
-          break;
-      }
-    });
+    const unsubscribe = subscribeToEvents(
+      (event) => {
+        switch (event.type) {
+          case 'agent-updated':
+            setAgents((prev) => {
+              const idx = prev.findIndex((a) => a.id === event.data.id);
+              if (idx >= 0) {
+                const next = [...prev];
+                next[idx] = event.data;
+                return next;
+              }
+              return [event.data, ...prev];
+            });
+            break;
+          case 'agent-deleted':
+            setAgents((prev) => prev.filter((a) => a.id !== event.data.id));
+            break;
+          case 'message-queued':
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === event.data.agent_id
+                  ? { ...a, pending_message_count: a.pending_message_count + 1, last_message_at: event.data.created_at }
+                  : a,
+              ),
+            );
+            break;
+        }
+      },
+      setConnectionState,
+    );
 
     return unsubscribe;
   }, []);
 
-  return { agents, loading, error, refetch };
+  return { agents, loading, error, refetch, connectionState };
 }

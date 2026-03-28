@@ -38,6 +38,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export async function fetchAnalytics() {
+  return request<{
+    totalAgents: number;
+    activeNow: number;
+    updatesToday: number;
+    messagesToday: number;
+    statusCounts: { status: string; count: number }[];
+  }>('/agents/analytics');
+}
+
 export async function fetchAgents(): Promise<Agent[]> {
   const result = await request<{ data: Agent[] } | Agent[]>('/agents');
   // Handle both paginated and legacy response formats
@@ -176,9 +186,47 @@ export async function rotateApiKey(): Promise<string> {
   return key;
 }
 
-export function subscribeToEvents(onEvent: (event: SSEEvent) => void): () => void {
+// --- SSE connection state tracking ---
+export type ConnectionState = 'connected' | 'connecting' | 'disconnected';
+
+type ConnectionListener = (state: ConnectionState) => void;
+const connectionListeners = new Set<ConnectionListener>();
+
+export function onConnectionChange(listener: ConnectionListener): () => void {
+  connectionListeners.add(listener);
+  return () => { connectionListeners.delete(listener); };
+}
+
+function notifyConnectionState(state: ConnectionState) {
+  connectionListeners.forEach((fn) => fn(state));
+}
+
+export function subscribeToEvents(
+  onEvent: (event: SSEEvent) => void,
+  onConnectionStateChange?: (state: ConnectionState) => void,
+): () => void {
   const tokenParam = apiKey ? `?token=${encodeURIComponent(apiKey)}` : '';
   const es = new EventSource(`${BASE}/events${tokenParam}`);
+
+  const emitState = (state: ConnectionState) => {
+    notifyConnectionState(state);
+    onConnectionStateChange?.(state);
+  };
+
+  // EventSource starts in CONNECTING state
+  emitState('connecting');
+
+  es.onopen = () => {
+    emitState('connected');
+  };
+
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) {
+      emitState('disconnected');
+    } else {
+      emitState('connecting');
+    }
+  };
 
   const handleAgentUpdated = (e: MessageEvent) => {
     onEvent({ type: 'agent-updated', data: JSON.parse(e.data) });
@@ -201,5 +249,6 @@ export function subscribeToEvents(onEvent: (event: SSEEvent) => void): () => voi
     es.removeEventListener('agent-deleted', handleAgentDeleted);
     es.removeEventListener('message-queued', handleMessageQueued);
     es.close();
+    emitState('disconnected');
   };
 }

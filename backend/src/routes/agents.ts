@@ -3,6 +3,7 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import {
+  getDb,
   getAllAgents,
   getAgent,
   createAgent,
@@ -72,6 +73,36 @@ router.get("/", (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "Error listing agents");
     res.status(500).json({ error: "Failed to list agents" });
+  }
+});
+
+// GET /analytics — dashboard analytics summary (must be before /:id)
+router.get("/analytics", (_req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const statusCounts = db.prepare(
+      "SELECT status, COUNT(*) as count FROM agents GROUP BY status"
+    ).all();
+    const totalAgents = db.prepare("SELECT COUNT(*) as count FROM agents").get() as { count: number } | undefined;
+    const activeNow = db.prepare(
+      "SELECT COUNT(*) as count FROM agents WHERE status IN ('active','working','idle','waiting-for-input')"
+    ).get() as { count: number } | undefined;
+    const updatesToday = db.prepare(
+      "SELECT COUNT(*) as count FROM updates WHERE timestamp > datetime('now', '-24 hours')"
+    ).get() as { count: number } | undefined;
+    const messagesToday = db.prepare(
+      "SELECT COUNT(*) as count FROM messages WHERE created_at > datetime('now', '-24 hours')"
+    ).get() as { count: number } | undefined;
+    res.json({
+      totalAgents: totalAgents?.count || 0,
+      activeNow: activeNow?.count || 0,
+      updatesToday: updatesToday?.count || 0,
+      messagesToday: messagesToday?.count || 0,
+      statusCounts,
+    });
+  } catch (err) {
+    logger.error({ err }, "Error getting analytics");
+    res.status(500).json({ error: "Failed to get analytics" });
   }
 });
 

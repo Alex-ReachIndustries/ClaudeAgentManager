@@ -1,15 +1,24 @@
 import { useNavigate } from 'react-router-dom';
 import { Settings } from 'lucide-react';
 import type { Agent } from '../types';
+import type { ConnectionState } from '../api';
 import NotificationToggle from './NotificationToggle';
 
 interface HeaderProps {
   agents: Agent[];
+  connectionState: ConnectionState;
 }
 
-function Header({ agents }: HeaderProps) {
+const connectionConfig: Record<ConnectionState, { color: string; pulse: boolean; label: string }> = {
+  connected: { color: 'bg-green-400', pulse: true, label: 'Connected' },
+  connecting: { color: 'bg-yellow-400', pulse: false, label: 'Connecting' },
+  disconnected: { color: 'bg-red-400', pulse: false, label: 'Disconnected' },
+};
+
+function Header({ agents, connectionState }: HeaderProps) {
   const navigate = useNavigate();
   const activeCount = agents.filter((a) => a.status === 'active').length;
+  const conn = connectionConfig[connectionState];
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-dark-925 border-b border-dark-800 flex items-center justify-between px-6">
@@ -51,9 +60,14 @@ function Header({ agents }: HeaderProps) {
         </button>
         <NotificationToggle />
         <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-900 rounded-full border border-dark-800">
-          <div
-            className={`w-2 h-2 rounded-full ${activeCount > 0 ? 'bg-green-400 animate-pulse' : 'bg-dark-600'}`}
-          />
+          <div className="relative group">
+            <div
+              className={`w-2 h-2 rounded-full ${conn.color} ${conn.pulse ? 'animate-pulse' : ''}`}
+            />
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-300 whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity">
+              SSE: {conn.label}
+            </div>
+          </div>
           <span className="text-sm text-dark-300">
             {agents.length} agent{agents.length !== 1 ? 's' : ''}
           </span>
