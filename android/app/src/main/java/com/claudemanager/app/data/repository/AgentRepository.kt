@@ -10,17 +10,21 @@ import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
+import com.claudemanager.app.data.models.CreateProjectBody
 import com.claudemanager.app.data.models.CreateWebhookBody
 import com.claudemanager.app.data.models.CreateWorkflowBody
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.LaunchRequest
+import com.claudemanager.app.data.models.Project
+import com.claudemanager.app.data.models.ProjectUpdate
 import com.claudemanager.app.data.models.RelayBody
 import com.claudemanager.app.data.models.RetentionRunResult
 import com.claudemanager.app.data.models.RetentionSettingsBody
 import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.SendMessageBody
+import com.claudemanager.app.data.models.SpawnAgentBody
 import com.claudemanager.app.data.models.UpdateAgentBody
 import com.claudemanager.app.data.models.UpdateWebhookBody
 import com.claudemanager.app.data.models.WebhookEntry
@@ -305,6 +309,87 @@ class AgentRepository {
     suspend fun runRetention(): Result<RetentionRunResult> = apiCall {
         api.runRetention()
     }
+
+    // ── Projects ─────────────────────────────────────────────────────────
+
+    /**
+     * Get all projects.
+     */
+    suspend fun getProjects(): Result<List<Project>> = apiCall {
+        api.getProjects()
+    }
+
+    /**
+     * Create a new project.
+     */
+    suspend fun createProject(
+        name: String,
+        description: String,
+        folderPath: String,
+        maxConcurrent: Int = 4
+    ): Result<Project> = apiCall {
+        api.createProject(CreateProjectBody(name, description, folderPath, maxConcurrent))
+    }
+
+    /**
+     * Get a single project by ID.
+     */
+    suspend fun getProject(id: String): Result<Project> = apiCall {
+        api.getProject(id)
+    }
+
+    /**
+     * Get agents assigned to a project.
+     */
+    suspend fun getProjectAgents(id: String): Result<List<Agent>> = apiCall {
+        api.getProjectAgents(id)
+    }
+
+    /**
+     * Get project timeline updates.
+     */
+    suspend fun getProjectUpdates(id: String): Result<List<ProjectUpdate>> = apiCall {
+        api.getProjectUpdates(id)
+    }.map { it.data }
+
+    /**
+     * Start a project.
+     */
+    suspend fun startProject(id: String): Result<Unit> = apiCall {
+        api.startProject(id)
+    }.map { }
+
+    /**
+     * Pause a running project.
+     */
+    suspend fun pauseProject(id: String): Result<Unit> = apiCall {
+        api.pauseProject(id)
+    }.map { }
+
+    /**
+     * Mark a project as complete.
+     */
+    suspend fun completeProject(id: String): Result<Unit> = apiCall {
+        api.completeProject(id)
+    }.map { }
+
+    /**
+     * Delete a project.
+     */
+    suspend fun deleteProject(id: String): Result<Unit> = apiCall {
+        api.deleteProject(id)
+    }.map { }
+
+    /**
+     * Spawn a new agent within a project.
+     */
+    suspend fun spawnProjectAgent(
+        projectId: String,
+        role: String,
+        prompt: String
+    ): Result<Unit> = apiCall {
+        api.spawnProjectAgent(projectId, SpawnAgentBody(role, prompt))
+    }.map { }
 
     // ── Workflows ────────────────────────────────────────────────────────
 

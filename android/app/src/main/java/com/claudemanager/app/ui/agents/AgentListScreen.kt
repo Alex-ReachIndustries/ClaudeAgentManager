@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -105,7 +104,6 @@ import com.claudemanager.app.util.TimeUtils
 fun AgentListScreen(
     onAgentClick: (String) -> Unit,
     onSettingsClick: () -> Unit,
-    onAdminClick: () -> Unit = {},
     startAgentId: String? = null,
     viewModel: AgentListViewModel = viewModel()
 ) {
@@ -145,13 +143,6 @@ fun AgentListScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onAdminClick) {
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            contentDescription = "Admin",
-                            tint = LumiOnSurfaceSecondary
-                        )
-                    }
                     IconButton(onClick = viewModel::refresh) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -541,6 +532,32 @@ private fun AgentCard(agent: Agent, onClick: () -> Unit) {
                     color = LumiOnSurfaceTertiary,
                     modifier = Modifier.padding(start = 20.dp, top = 2.dp)
                 )
+            }
+
+            // Project badge + role
+            if (!agent.projectId.isNullOrBlank()) {
+                Row(
+                    modifier = Modifier.padding(start = 20.dp, top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(LumiPurple500.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = buildString {
+                                append("Project")
+                                if (!agent.role.isNullOrBlank()) {
+                                    append(" \u00B7 ${agent.role}")
+                                }
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiPurple500
+                        )
+                    }
+                }
             }
 
             // Latest activity: show most recent of agent update or user message

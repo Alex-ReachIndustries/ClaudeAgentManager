@@ -58,7 +58,13 @@ data class Agent(
     val cwd: String? = null,
 
     @SerializedName("pid")
-    val pid: Int? = null
+    val pid: Int? = null,
+
+    @SerializedName("project_id")
+    val projectId: String? = null,
+
+    @SerializedName("role")
+    val role: String? = null
 ) {
     /**
      * Whether this agent has unread updates since the last time it was marked read.

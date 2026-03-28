@@ -7,11 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -46,7 +42,7 @@ import com.claudemanager.app.ui.theme.LumiPurple500
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminScreen(
-    onBack: () -> Unit,
+    onBack: () -> Unit = {},
     onWorkflowClick: (String) -> Unit,
     viewModel: AdminViewModel = viewModel()
 ) {
@@ -70,15 +66,6 @@ fun AdminScreen(
                         style = MaterialTheme.typography.titleLarge,
                         color = LumiOnSurface
                     )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Back",
-                            tint = LumiOnSurface
-                        )
-                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = LumiBackground,

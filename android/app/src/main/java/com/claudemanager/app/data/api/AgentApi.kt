@@ -7,17 +7,21 @@ import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
 import com.claudemanager.app.data.models.CreateLaunchResponse
+import com.claudemanager.app.data.models.CreateProjectBody
 import com.claudemanager.app.data.models.CreateWebhookBody
 import com.claudemanager.app.data.models.CreateWorkflowBody
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.OkResponse
+import com.claudemanager.app.data.models.Project
+import com.claudemanager.app.data.models.ProjectUpdate
 import com.claudemanager.app.data.models.RelayBody
 import com.claudemanager.app.data.models.RetentionRunResult
 import com.claudemanager.app.data.models.RetentionSettingsBody
 import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.SendMessageBody
+import com.claudemanager.app.data.models.SpawnAgentBody
 import com.claudemanager.app.data.models.UpdateAgentBody
 import com.claudemanager.app.data.models.UpdateWebhookBody
 import com.claudemanager.app.data.models.WebhookEntry
@@ -256,6 +260,71 @@ interface AgentApi {
      */
     @DELETE("api/workflows/{id}")
     suspend fun deleteWorkflow(@Path("id") id: String): Response<OkResponse>
+
+    // ── Projects ─────────────────────────────────────────────────────────
+
+    /**
+     * List all projects.
+     */
+    @GET("api/projects")
+    suspend fun getProjects(): Response<List<Project>>
+
+    /**
+     * Create a new project.
+     */
+    @POST("api/projects")
+    suspend fun createProject(@Body body: CreateProjectBody): Response<Project>
+
+    /**
+     * Get a single project by ID.
+     */
+    @GET("api/projects/{id}")
+    suspend fun getProject(@Path("id") id: String): Response<Project>
+
+    /**
+     * Get agents assigned to a project.
+     */
+    @GET("api/projects/{id}/agents")
+    suspend fun getProjectAgents(@Path("id") id: String): Response<List<Agent>>
+
+    /**
+     * Get project timeline updates.
+     */
+    @GET("api/projects/{id}/updates")
+    suspend fun getProjectUpdates(@Path("id") id: String): Response<PaginatedResponse<ProjectUpdate>>
+
+    /**
+     * Start a project.
+     */
+    @POST("api/projects/{id}/start")
+    suspend fun startProject(@Path("id") id: String): Response<OkResponse>
+
+    /**
+     * Pause a running project.
+     */
+    @POST("api/projects/{id}/pause")
+    suspend fun pauseProject(@Path("id") id: String): Response<OkResponse>
+
+    /**
+     * Mark a project as complete.
+     */
+    @POST("api/projects/{id}/complete")
+    suspend fun completeProject(@Path("id") id: String): Response<OkResponse>
+
+    /**
+     * Delete a project.
+     */
+    @DELETE("api/projects/{id}")
+    suspend fun deleteProject(@Path("id") id: String): Response<OkResponse>
+
+    /**
+     * Spawn a new agent within a project.
+     */
+    @POST("api/projects/{id}/spawn-agent")
+    suspend fun spawnProjectAgent(
+        @Path("id") id: String,
+        @Body body: SpawnAgentBody
+    ): Response<OkResponse>
 
     // ── Agent Relay ──────────────────────────────────────────────────────
 
