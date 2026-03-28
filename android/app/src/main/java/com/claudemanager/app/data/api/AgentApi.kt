@@ -297,7 +297,7 @@ interface AgentApi {
      * Start a project.
      */
     @POST("api/projects/{id}/start")
-    suspend fun startProject(@Path("id") id: String): Response<OkResponse>
+    suspend fun startProject(@Path("id") id: String, @Body body: Map<String, String> = emptyMap()): Response<OkResponse>
 
     /**
      * Pause a running project.

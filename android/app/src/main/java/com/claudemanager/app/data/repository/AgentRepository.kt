@@ -355,8 +355,8 @@ class AgentRepository {
     /**
      * Start a project.
      */
-    suspend fun startProject(id: String): Result<Unit> = apiCall {
-        api.startProject(id)
+    suspend fun startProject(id: String, initialPrompt: String = ""): Result<Unit> = apiCall {
+        api.startProject(id, mapOf("initial_prompt" to initialPrompt))
     }.map { }
 
     /**

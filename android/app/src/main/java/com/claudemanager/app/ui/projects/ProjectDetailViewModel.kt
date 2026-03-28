@@ -25,7 +25,8 @@ data class ProjectDetailUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val actionMessage: String? = null,
-    val isDeleted: Boolean = false
+    val isDeleted: Boolean = false,
+    val initialPrompt: String = ""
 )
 
 /**
@@ -106,9 +107,13 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     /**
      * Start the project.
      */
-    fun startProject() {
+    fun updateInitialPrompt(text: String) {
+        _uiState.update { it.copy(initialPrompt = text) }
+    }
+
+    fun startProject(initialPrompt: String = "") {
         viewModelScope.launch {
-            repository.startProject(projectId)
+            repository.startProject(projectId, initialPrompt)
                 .onSuccess {
                     _uiState.update { it.copy(actionMessage = "Project started") }
                     silentRefresh()

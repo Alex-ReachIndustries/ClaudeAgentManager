@@ -1,6 +1,8 @@
 package com.claudemanager.app.ui.projects
 
 import androidx.compose.foundation.background
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -209,11 +211,37 @@ fun ProjectDetailScreen(
                         ProjectHeaderCard(project = project)
                     }
 
+                    // Initial prompt input for starting projects
+                    if (project.status == "pending" || project.status == "paused") {
+                        item {
+                            OutlinedTextField(
+                                value = state.initialPrompt,
+                                onValueChange = viewModel::updateInitialPrompt,
+                                label = { Text("Initial Prompt for Project Manager") },
+                                placeholder = { Text("Describe the task...") },
+                                minLines = 3,
+                                maxLines = 6,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = LumiPurple500,
+                                    unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
+                                    cursorColor = LumiPurple500,
+                                    focusedTextColor = LumiOnSurface,
+                                    unfocusedTextColor = LumiOnSurface,
+                                    focusedContainerColor = LumiCard,
+                                    unfocusedContainerColor = LumiCard,
+                                    focusedLabelColor = LumiPurple500,
+                                    unfocusedLabelColor = LumiOnSurfaceTertiary
+                                )
+                            )
+                        }
+                    }
+
                     // Action buttons
                     item {
                         ProjectActionButtons(
                             status = project.status,
-                            onStart = viewModel::startProject,
+                            onStart = { viewModel.startProject(state.initialPrompt) },
                             onPause = viewModel::pauseProject,
                             onComplete = viewModel::completeProject
                         )
