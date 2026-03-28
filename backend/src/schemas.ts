@@ -142,3 +142,34 @@ export const retentionSettingsSchema = z.object({
   retention_enabled: z.boolean().optional(),
   retention_dry_run: z.boolean().optional(),
 });
+
+// --- Project create (POST /projects) ---
+
+export const projectCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(5000).default(""),
+  folder_path: z.string().max(500).default(""),
+  max_concurrent: z.number().int().min(1).max(10).default(4),
+});
+
+// --- Project update (POST /projects/:id/updates) ---
+
+const projectUpdateTypes = [
+  "milestone",
+  "decision",
+  "info",
+  "error",
+] as const;
+
+export const projectUpdateSchema = z.object({
+  type: z.enum(projectUpdateTypes).default("info"),
+  content: z.string().min(1).max(65_536),
+});
+
+// --- Spawn agent (POST /projects/:id/spawn-agent) ---
+
+export const spawnAgentSchema = z.object({
+  role: z.string().min(1).max(100),
+  prompt: z.string().min(1).max(65_536),
+  folder_path: z.string().max(500).optional(),
+});

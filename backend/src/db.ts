@@ -108,6 +108,29 @@ export function getDb(): Database.Database {
       metadata TEXT DEFAULT '{}'
     );
 
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','paused','completed','failed')),
+      pm_agent_id TEXT,
+      folder_path TEXT NOT NULL DEFAULT '',
+      max_concurrent INTEGER DEFAULT 4,
+      created_at TEXT DEFAULT (datetime('now')),
+      started_at TEXT,
+      completed_at TEXT,
+      metadata TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS project_updates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'info',
+      content TEXT NOT NULL,
+      timestamp TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_project_updates_project_id ON project_updates(project_id);
     CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
     CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
     CREATE INDEX IF NOT EXISTS idx_files_agent_id ON files(agent_id);
@@ -126,6 +149,11 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE launch_requests ADD COLUMN target_pid INTEGER"); } catch { /* exists */ }
   // Backfill last_activity_at from last_update_at where null
   try { db.exec("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL"); } catch { /* ignore */ }
+
+  // Project workflow columns on agents
+  try { db.exec("ALTER TABLE agents ADD COLUMN project_id TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN role TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN parent_agent_id TEXT"); } catch { /* exists */ }
 
   // Feature 17: Agent-to-agent messaging source columns
   try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'"); } catch { /* exists */ }
@@ -754,4 +782,115 @@ export function getAllPushSubscriptions(): { endpoint: string; keys_p256dh: stri
     keys_p256dh: string;
     keys_auth: string;
   }[];
+}
+
+// --- Projects ---
+
+export function getAllProjects(): Record<string, unknown>[] {
+  const db = getDb();
+  const projects = db.prepare(`
+    SELECT p.*,
+      (SELECT COUNT(*) FROM agents WHERE project_id = p.id AND status IN ('active','working','idle','waiting-for-input')) as active_agent_count,
+      (SELECT COUNT(*) FROM agents WHERE project_id = p.id) as total_agent_count
+    FROM projects p
+    ORDER BY p.created_at DESC
+  `).all() as Record<string, unknown>[];
+  return projects;
+}
+
+export function getProject(id: string): Record<string, unknown> | undefined {
+  const db = getDb();
+  const project = db.prepare(`
+    SELECT p.*,
+      (SELECT COUNT(*) FROM agents WHERE project_id = p.id AND status IN ('active','working','idle','waiting-for-input')) as active_agent_count,
+      (SELECT COUNT(*) FROM agents WHERE project_id = p.id) as total_agent_count
+    FROM projects p
+    WHERE p.id = ?
+  `).get(id) as Record<string, unknown> | undefined;
+  return project;
+}
+
+export function createProject(id: string, name: string, description: string, folderPath: string, maxConcurrent: number) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO projects (id, name, description, folder_path, max_concurrent)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  return stmt.run(id, name, description, folderPath, maxConcurrent);
+}
+
+export function updateProject(
+  id: string,
+  fields: { name?: string; description?: string; status?: string; pm_agent_id?: string; folder_path?: string; max_concurrent?: number; started_at?: string; completed_at?: string; metadata?: string }
+) {
+  const db = getDb();
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+
+  if (fields.name !== undefined) { setClauses.push("name = ?"); values.push(fields.name); }
+  if (fields.description !== undefined) { setClauses.push("description = ?"); values.push(fields.description); }
+  if (fields.status !== undefined) { setClauses.push("status = ?"); values.push(fields.status); }
+  if (fields.pm_agent_id !== undefined) { setClauses.push("pm_agent_id = ?"); values.push(fields.pm_agent_id); }
+  if (fields.folder_path !== undefined) { setClauses.push("folder_path = ?"); values.push(fields.folder_path); }
+  if (fields.max_concurrent !== undefined) { setClauses.push("max_concurrent = ?"); values.push(fields.max_concurrent); }
+  if (fields.started_at !== undefined) { setClauses.push("started_at = ?"); values.push(fields.started_at); }
+  if (fields.completed_at !== undefined) { setClauses.push("completed_at = ?"); values.push(fields.completed_at); }
+  if (fields.metadata !== undefined) { setClauses.push("metadata = ?"); values.push(fields.metadata); }
+
+  if (setClauses.length === 0) return;
+
+  values.push(id);
+  const sql = `UPDATE projects SET ${setClauses.join(", ")} WHERE id = ?`;
+  return db.prepare(sql).run(...values);
+}
+
+export function deleteProject(id: string) {
+  const db = getDb();
+  return db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+}
+
+export function getProjectUpdates(projectId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {
+  const db = getDb();
+  if (before) {
+    const stmt = db.prepare(`
+      SELECT * FROM project_updates WHERE project_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(projectId, before, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  } else {
+    const stmt = db.prepare(`
+      SELECT * FROM project_updates WHERE project_id = ? ORDER BY id DESC LIMIT ?
+    `);
+    const rows = stmt.all(projectId, limit) as Record<string, unknown>[];
+    return {
+      data: rows,
+      next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+      has_more: rows.length === limit,
+    };
+  }
+}
+
+export function addProjectUpdate(projectId: string, type: string, content: string) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO project_updates (project_id, type, content) VALUES (?, ?, ?)
+  `);
+  return stmt.run(projectId, type, content);
+}
+
+export function getProjectAgents(projectId: string): Record<string, unknown>[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM agents WHERE project_id = ? ORDER BY created_at DESC").all(projectId) as Record<string, unknown>[];
+}
+
+export function getActiveProjectAgentCount(projectId: string): number {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT COUNT(*) as count FROM agents WHERE project_id = ? AND status IN ('active','working','idle','waiting-for-input')"
+  ).get(projectId) as { count: number };
+  return row.count;
 }

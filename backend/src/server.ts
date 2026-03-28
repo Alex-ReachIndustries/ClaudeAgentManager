@@ -11,6 +11,7 @@ import pushRouter from "./routes/push.js";
 import webhooksRouter from "./routes/webhooks.js";
 import workflowsRouter from "./routes/workflows.js";
 import retentionRouter from "./routes/retention.js";
+import projectsRouter from "./routes/projects.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
 import { archiveInactiveAgents, getAgent, getDb } from "./db.js";
 import { initPush } from "./push.js";
@@ -89,6 +90,7 @@ app.use("/api/launch-requests", launchRouter);
 app.use("/api/push", pushRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/api/workflows", workflowsRouter);
+app.use("/api/projects", projectsRouter);
 app.use("/api/retention", retentionRouter);
 
 const server = app.listen(PORT, () => {

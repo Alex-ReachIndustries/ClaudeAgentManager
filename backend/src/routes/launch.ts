@@ -1,9 +1,13 @@
 import { Router, type Request, type Response } from "express";
 import {
+  getDb,
   createLaunchRequest,
   getLaunchRequestsByStatus,
   updateLaunchRequest,
   getLaunchRequest,
+  getAgent,
+  updateAgent,
+  updateProject,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { launchLimiter } from "../middleware/rateLimiter.js";
@@ -74,6 +78,20 @@ router.patch("/:id", (req: Request, res: Response) => {
       return;
     }
 
+    // Check if the existing agent_id contains project metadata (JSON from project start/spawn)
+    const existingRecord = existing as Record<string, unknown>;
+    let projectMeta: { project_id?: string; role?: string; prompt?: string; parent_agent_id?: string } | null = null;
+    if (existingRecord.agent_id && typeof existingRecord.agent_id === "string") {
+      try {
+        const parsed = JSON.parse(existingRecord.agent_id as string);
+        if (parsed && parsed.project_id) {
+          projectMeta = parsed;
+        }
+      } catch {
+        // Not JSON — it's a regular agent_id, ignore
+      }
+    }
+
     const fields: Record<string, string> = {};
     if (status) fields.status = status;
     if (agent_id) fields.agent_id = agent_id;
@@ -81,6 +99,33 @@ router.patch("/:id", (req: Request, res: Response) => {
     if (status === "completed" || status === "failed") fields.completed_at = new Date().toISOString();
 
     updateLaunchRequest(id, fields);
+
+    // If we have project metadata and the real agent_id, link the agent to the project
+    if (projectMeta && agent_id && status === "completed") {
+      try {
+        const agent = getAgent(agent_id);
+        if (agent) {
+          const agentFields: Record<string, unknown> = {};
+          if (projectMeta.project_id) (agentFields as Record<string, string>).project_id = projectMeta.project_id;
+          if (projectMeta.role) (agentFields as Record<string, string>).role = projectMeta.role;
+          if (projectMeta.parent_agent_id) (agentFields as Record<string, string>).parent_agent_id = projectMeta.parent_agent_id;
+
+          // Use raw SQL since updateAgent doesn't know about project fields yet
+          const db = getDb();
+          db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ? WHERE id = ?")
+            .run(projectMeta.project_id || null, projectMeta.role || null, projectMeta.parent_agent_id || null, agent_id);
+
+          // If this is a PM agent, link it to the project
+          if (projectMeta.role === "PM" && projectMeta.project_id) {
+            updateProject(projectMeta.project_id, { pm_agent_id: agent_id });
+          }
+
+          logger.info({ agent_id, projectMeta }, "Linked agent to project from launch request");
+        }
+      } catch (linkErr) {
+        logger.error({ linkErr, agent_id, projectMeta }, "Failed to link agent to project");
+      }
+    }
 
     const updated = getLaunchRequest(id);
     broadcast("launch-request-updated", updated);

@@ -22,6 +22,7 @@ import {
   getFilesMeta,
   deleteAgentFiles,
   createLaunchRequest,
+  updateProject,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
@@ -397,6 +398,52 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     const existing = getAgent(id);
     if (!existing) {
       createAgent(id, title || "Untitled Agent");
+
+      // Check if any completed launch request references this agent with project metadata
+      try {
+        const db = getDb();
+        const launchReqs = db.prepare(
+          "SELECT * FROM launch_requests WHERE agent_id = ? AND status = 'completed' ORDER BY completed_at DESC LIMIT 1"
+        ).all(id) as Record<string, unknown>[];
+
+        // Also check for launch requests that were completed with this agent_id
+        // and still have project linkage data (stored before the agent_id was set)
+        if (launchReqs.length === 0) {
+          // Check if any claimed launch request has JSON metadata and this agent might be linked
+          // This handles the case where the agent registers before the launcher completes the request
+          const claimedReqs = db.prepare(
+            "SELECT * FROM launch_requests WHERE status = 'claimed' ORDER BY claimed_at DESC LIMIT 5"
+          ).all() as Record<string, unknown>[];
+
+          for (const req of claimedReqs) {
+            if (req.agent_id && typeof req.agent_id === "string") {
+              try {
+                const meta = JSON.parse(req.agent_id as string);
+                if (meta && meta.project_id) {
+                  // This launch request has project metadata — link the agent
+                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ? WHERE id = ?")
+                    .run(meta.project_id || null, meta.role || null, meta.parent_agent_id || null, id);
+
+                  if (meta.role === "PM" && meta.project_id) {
+                    updateProject(meta.project_id, { pm_agent_id: id });
+                  }
+
+                  // Update the launch request to replace metadata with real agent_id
+                  db.prepare("UPDATE launch_requests SET agent_id = ?, status = 'completed', completed_at = ? WHERE id = ?")
+                    .run(id, new Date().toISOString(), req.id);
+
+                  logger.info({ agentId: id, projectId: meta.project_id, role: meta.role }, "Linked new agent to project from launch request");
+                  break;
+                }
+              } catch {
+                // Not JSON, skip
+              }
+            }
+          }
+        }
+      } catch (linkErr) {
+        logger.error({ linkErr }, "Error checking project linkage for new agent");
+      }
     }
 
     // Update title, status, workspace, cwd, pid if provided
