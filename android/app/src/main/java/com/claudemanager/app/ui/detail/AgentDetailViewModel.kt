@@ -30,6 +30,15 @@ enum class DetailTab {
 }
 
 /**
+ * Represents a file that has been attached (uploaded) and is pending inclusion in the next message.
+ */
+data class AttachedFile(
+    val id: Long? = null,
+    val filename: String,
+    val isUploading: Boolean = false
+)
+
+/**
  * UI state for the agent detail screen.
  */
 data class AgentDetailUiState(
@@ -47,7 +56,8 @@ data class AgentDetailUiState(
     val otherAgents: List<Agent> = emptyList(),
     val isRelaying: Boolean = false,
     val isExporting: Boolean = false,
-    val lastUploadedFileName: String? = null
+    val lastUploadedFileName: String? = null,
+    val pendingAttachments: List<AttachedFile> = emptyList()
 )
 
 /**
@@ -164,21 +174,51 @@ class AgentDetailViewModel(
     }
 
     fun clearAttachment() {
-        _uiState.update { it.copy(lastUploadedFileName = null) }
+        _uiState.update { it.copy(lastUploadedFileName = null, pendingAttachments = emptyList()) }
+    }
+
+    /**
+     * Remove a single pending attachment by filename.
+     */
+    fun removeAttachment(filename: String) {
+        _uiState.update { state ->
+            state.copy(
+                pendingAttachments = state.pendingAttachments.filter { it.filename != filename }
+            )
+        }
     }
 
     /**
      * Send a message to the agent.
-     * On success, clears the draft. On failure, keeps the draft so the user can retry.
+     * If there are pending attachments, appends "[File attached: name (id=X)]" references.
+     * On success, clears the draft and attachments. On failure, keeps the draft so the user can retry.
      */
     fun sendMessage(content: String) {
-        if (content.isBlank()) return
+        if (content.isBlank() && _uiState.value.pendingAttachments.isEmpty()) return
 
         _uiState.update { it.copy(isSendingMessage = true) }
         viewModelScope.launch {
-            repository.sendMessage(agentId, content)
+            // Build message with attachment references
+            val attachments = _uiState.value.pendingAttachments
+            val fullContent = buildString {
+                append(content)
+                for (att in attachments) {
+                    if (isNotEmpty()) append("\n")
+                    if (att.id != null) {
+                        append("[File attached: ${att.filename} (id=${att.id})]")
+                    } else {
+                        append("[File attached: ${att.filename}]")
+                    }
+                }
+            }
+
+            repository.sendMessage(agentId, fullContent)
                 .onSuccess {
-                    _uiState.update { it.copy(draftMessage = "", lastUploadedFileName = null) }
+                    _uiState.update { it.copy(
+                        draftMessage = "",
+                        lastUploadedFileName = null,
+                        pendingAttachments = emptyList()
+                    ) }
                     refreshMessages()
                 }
                 .onFailure { e ->
@@ -194,7 +234,7 @@ class AgentDetailViewModel(
 
     /**
      * Upload a file attachment to the agent.
-     * On success, briefly shows the uploaded filename for 3 seconds.
+     * On success, adds the file to pendingAttachments for inclusion with the next message.
      */
     fun uploadFile(uri: Uri, context: Context) {
         // Resolve the display name from the URI for the confirmation chip
@@ -209,7 +249,20 @@ class AgentDetailViewModel(
             repository.uploadFile(agentId, uri, context)
                 .onSuccess {
                     refreshFiles()
-                    _uiState.update { it.copy(lastUploadedFileName = displayName) }
+                    // Find the most recently uploaded file to get its ID
+                    val latestFiles = repository.getFiles(agentId).getOrNull() ?: emptyList()
+                    val uploadedFile = latestFiles.find { it.filename == displayName }
+                    val attachment = AttachedFile(
+                        id = uploadedFile?.id,
+                        filename = displayName,
+                        isUploading = false
+                    )
+                    _uiState.update { state ->
+                        state.copy(
+                            lastUploadedFileName = displayName,
+                            pendingAttachments = state.pendingAttachments + attachment
+                        )
+                    }
                 }
                 .onFailure { e ->
                     _uiState.update { it.copy(error = e.message ?: "Failed to upload file") }

@@ -171,7 +171,7 @@ fun AppNavGraph(
         NavHost(
             navController = navController,
             startDestination = startDestination,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
         ) {
             // ── Setup (full screen, no bottom nav) ──────────────────────
             composable(Routes.SETUP) {

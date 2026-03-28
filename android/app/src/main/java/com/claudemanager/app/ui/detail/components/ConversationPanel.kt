@@ -13,6 +13,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,6 +69,7 @@ import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.UpdateContent
 import com.claudemanager.app.data.models.UpdateType
+import com.claudemanager.app.ui.detail.AttachedFile
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
 import com.claudemanager.app.ui.theme.LumiInfo
@@ -95,6 +98,7 @@ private sealed class ConversationItem(val sortTime: Long, val itemKey: String) {
  * User messages appear right-aligned as chat bubbles.
  * A message input bar sits at the bottom.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ConversationPanel(
     updates: List<AgentUpdate>,
@@ -107,6 +111,8 @@ fun ConversationPanel(
     onDraftChanged: (String) -> Unit = {},
     lastUploadedFileName: String? = null,
     onClearAttachment: () -> Unit = {},
+    pendingAttachments: List<AttachedFile> = emptyList(),
+    onRemoveAttachment: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var messageText by remember { mutableStateOf(draftMessage) }
@@ -252,40 +258,50 @@ fun ConversationPanel(
             }
         }
 
-        // Persistent attachment indicator with dismiss button
-        if (lastUploadedFileName != null) {
-            Row(
+        // Pending attachment chips (multiple files supported)
+        if (pendingAttachments.isNotEmpty()) {
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(LumiSuccess.copy(alpha = 0.12f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .background(LumiSuccess.copy(alpha = 0.08f))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.AttachFile,
-                    contentDescription = null,
-                    tint = LumiSuccess,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Attached: ${lastUploadedFileName}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = LumiOnSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = onClearAttachment,
-                    modifier = Modifier.size(20.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Dismiss",
-                        tint = LumiOnSurfaceTertiary,
-                        modifier = Modifier.size(14.dp)
-                    )
+                pendingAttachments.forEach { attachment ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(LumiSuccess.copy(alpha = 0.18f))
+                            .padding(start = 8.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AttachFile,
+                            contentDescription = null,
+                            tint = LumiSuccess,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = attachment.filename,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        IconButton(
+                            onClick = { onRemoveAttachment(attachment.filename) },
+                            modifier = Modifier.size(18.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remove ${attachment.filename}",
+                                tint = LumiOnSurfaceTertiary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -344,9 +360,10 @@ fun ConversationPanel(
 
             Spacer(modifier = Modifier.width(4.dp))
 
+            val canSend = (messageText.isNotBlank() || pendingAttachments.isNotEmpty()) && !isSending
             IconButton(
                 onClick = {
-                    if (messageText.isNotBlank() && !isSending) {
+                    if (canSend) {
                         val textToSend = messageText.trim()
                         messageText = ""
                         onDraftChanged("")
@@ -354,7 +371,7 @@ fun ConversationPanel(
                         onSendMessage(textToSend)
                     }
                 },
-                enabled = messageText.isNotBlank() && !isSending
+                enabled = canSend
             ) {
                 if (isSending) {
                     CircularProgressIndicator(
@@ -366,7 +383,7 @@ fun ConversationPanel(
                     Icon(
                         imageVector = Icons.Default.Send,
                         contentDescription = "Send",
-                        tint = if (messageText.isNotBlank()) LumiPurple500 else LumiOnSurfaceTertiary
+                        tint = if (canSend) LumiPurple500 else LumiOnSurfaceTertiary
                     )
                 }
             }

@@ -392,7 +392,7 @@ private fun CreateProjectDialog(
                 if (showFolderPicker) {
                     com.claudemanager.app.ui.detail.components.FolderPickerDialog(
                         onDismiss = { showFolderPicker = false },
-                        onSelect = { path ->
+                        onFolderSelected = { path ->
                             folderPath = path
                             showFolderPicker = false
                         }
