@@ -45,7 +45,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Edge-to-edge disabled — let system manage bar padding
+        // enableEdgeToEdge()
 
         // Extract deep link agent ID from the launching intent
         startAgentId = extractAgentIdFromIntent(intent)

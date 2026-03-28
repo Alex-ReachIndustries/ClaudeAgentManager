@@ -119,7 +119,6 @@ fun AppNavGraph(
 
     Scaffold(
         containerColor = LumiBackground,
-        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (showBottomNav) {
                 NavigationBar(
