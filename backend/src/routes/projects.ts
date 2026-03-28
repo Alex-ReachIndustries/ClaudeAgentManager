@@ -194,25 +194,28 @@ router.post("/:id/start", (req: Request, res: Response) => {
       return;
     }
 
+    const userPrompt = req.body?.initial_prompt || "";
     const pmPrompt = generatePMPrompt(project);
     const folderPath = (project.folder_path as string) || "";
 
     // Create a launch request for the PM agent
-    // Store project context in the launch request metadata via a special approach:
-    // We insert the launch request and then track the ID so we can link the PM agent later
     const launchResult = createLaunchRequest("new", folderPath);
     const launchRequestId = launchResult.id as number;
 
-    // Store the PM prompt and project linkage in a metadata record on the launch request
-    // We use a convention: store project_id and role in agent_id field temporarily as JSON
-    // Actually, better approach: store in a separate update so we can link after agent creation
-    // For now, add a project update noting the launch
     addProjectUpdate(id, "info", `Project started. PM agent launch request created (ID: ${launchRequestId}).`);
 
-    // Store the project_id mapping for the launch request so agents.ts can pick it up
-    // We'll use the launch_requests table's agent_id field to store metadata temporarily
+    // Store project metadata + prompts in launch request for agent linking
+    // When the PM agent registers, the system will:
+    // 1. Link it to the project (set project_id, role)
+    // 2. Send the PM system prompt as a message
+    // 3. Send the user's initial prompt as a message
     db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
-      .run(JSON.stringify({ project_id: id, role: "PM", prompt: pmPrompt }), launchRequestId);
+      .run(JSON.stringify({
+        project_id: id,
+        role: "PM",
+        pm_prompt: pmPrompt,
+        user_prompt: userPrompt
+      }), launchRequestId);
 
     // Update project status
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);

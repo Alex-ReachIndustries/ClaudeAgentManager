@@ -8,6 +8,7 @@ import {
   getAgent,
   updateAgent,
   updateProject,
+  addMessage,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { launchLimiter } from "../middleware/rateLimiter.js";
@@ -115,9 +116,21 @@ router.patch("/:id", (req: Request, res: Response) => {
           db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ? WHERE id = ?")
             .run(projectMeta.project_id || null, projectMeta.role || null, projectMeta.parent_agent_id || null, agent_id);
 
-          // If this is a PM agent, link it to the project
+          // If this is a PM agent, link it to the project and send prompts via messages
           if (projectMeta.role === "PM" && projectMeta.project_id) {
             updateProject(projectMeta.project_id, { pm_agent_id: agent_id });
+
+            // Send the PM system prompt as a pending message
+            const meta = projectMeta as Record<string, unknown>;
+            if (meta.pm_prompt) {
+              addMessage(agent_id, meta.pm_prompt as string);
+              logger.info({ agent_id }, "Sent PM system prompt via message");
+            }
+            // Send the user's initial prompt as a pending message
+            if (meta.user_prompt) {
+              addMessage(agent_id, meta.user_prompt as string);
+              logger.info({ agent_id }, "Sent user initial prompt via message");
+            }
           }
 
           logger.info({ agent_id, projectMeta }, "Linked agent to project from launch request");
