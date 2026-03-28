@@ -25,7 +25,13 @@ data class AgentMessage(
     val content: String,
 
     @SerializedName("status")
-    val status: MessageStatus = MessageStatus.PENDING
+    val status: MessageStatus = MessageStatus.PENDING,
+
+    @SerializedName("source")
+    val source: String? = null,
+
+    @SerializedName("source_agent_id")
+    val sourceAgentId: String? = null
 )
 
 /**

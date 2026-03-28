@@ -13,6 +13,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.claudemanager.app.data.preferences.AppPreferences
+import com.claudemanager.app.ui.admin.AdminScreen
+import com.claudemanager.app.ui.admin.WorkflowDetailScreen
 import com.claudemanager.app.ui.agents.AgentListScreen
 import com.claudemanager.app.ui.detail.AgentDetailScreen
 import com.claudemanager.app.ui.setup.SetupScreen
@@ -24,8 +26,11 @@ object Routes {
     const val SETUP = "setup"
     const val AGENTS = "agents"
     const val AGENT_DETAIL = "agent/{agentId}"
+    const val ADMIN = "admin"
+    const val WORKFLOW_DETAIL = "workflow/{workflowId}"
 
     fun agentDetail(agentId: String): String = "agent/$agentId"
+    fun workflowDetail(workflowId: String): String = "workflow/$workflowId"
 }
 
 /**
@@ -87,6 +92,9 @@ fun AppNavGraph(
                 onSettingsClick = {
                     navController.navigate(Routes.SETUP)
                 },
+                onAdminClick = {
+                    navController.navigate(Routes.ADMIN)
+                },
                 startAgentId = null // Deep links handled above via LaunchedEffect
             )
         }
@@ -100,6 +108,28 @@ fun AppNavGraph(
             val agentId = backStackEntry.arguments?.getString("agentId") ?: return@composable
             AgentDetailScreen(
                 agentId = agentId,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.ADMIN) {
+            AdminScreen(
+                onBack = { navController.popBackStack() },
+                onWorkflowClick = { workflowId ->
+                    navController.navigate(Routes.workflowDetail(workflowId))
+                }
+            )
+        }
+
+        composable(
+            route = Routes.WORKFLOW_DETAIL,
+            arguments = listOf(
+                navArgument("workflowId") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val workflowId = backStackEntry.arguments?.getString("workflowId") ?: return@composable
+            WorkflowDetailScreen(
+                workflowId = workflowId,
                 onBack = { navController.popBackStack() }
             )
         }

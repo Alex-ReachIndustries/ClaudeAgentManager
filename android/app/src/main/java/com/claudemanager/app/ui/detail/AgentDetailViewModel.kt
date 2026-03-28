@@ -11,6 +11,7 @@ import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
+import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.models.FileInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,7 +43,9 @@ data class AgentDetailUiState(
     val isSendingMessage: Boolean = false,
     val isUploading: Boolean = false,
     val isRefreshing: Boolean = false,
-    val draftMessage: String = ""
+    val draftMessage: String = "",
+    val otherAgents: List<Agent> = emptyList(),
+    val isRelaying: Boolean = false
 )
 
 /**
@@ -340,6 +343,43 @@ class AgentDetailViewModel(
                     _uiState.update { it.copy(error = "Download failed: ${e.message}") }
                 }
             }
+        }
+    }
+
+    // ── Agent Relay ────────────────────────────────────────────────────
+
+    /**
+     * Load the list of other active agents for the relay dialog.
+     */
+    fun loadOtherAgents() {
+        viewModelScope.launch {
+            repository.getAgents().onSuccess { agents ->
+                val others = agents.filter { it.id != agentId && it.isLive }
+                _uiState.update { it.copy(otherAgents = others) }
+            }
+        }
+    }
+
+    /**
+     * Relay a message from this agent to another agent.
+     */
+    fun relayMessage(targetAgentId: String, content: String) {
+        if (content.isBlank()) return
+
+        _uiState.update { it.copy(isRelaying = true) }
+        viewModelScope.launch {
+            repository.relayMessage(agentId, targetAgentId, content)
+                .onSuccess {
+                    _uiState.update { it.copy(isRelaying = false, error = null) }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(
+                            isRelaying = false,
+                            error = e.message ?: "Failed to relay message"
+                        )
+                    }
+                }
         }
     }
 

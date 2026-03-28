@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -104,6 +105,7 @@ import com.claudemanager.app.util.TimeUtils
 fun AgentListScreen(
     onAgentClick: (String) -> Unit,
     onSettingsClick: () -> Unit,
+    onAdminClick: () -> Unit = {},
     startAgentId: String? = null,
     viewModel: AgentListViewModel = viewModel()
 ) {
@@ -143,6 +145,13 @@ fun AgentListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onAdminClick) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = "Admin",
+                            tint = LumiOnSurfaceSecondary
+                        )
+                    }
                     IconButton(onClick = viewModel::refresh) {
                         Icon(
                             imageVector = Icons.Default.Refresh,

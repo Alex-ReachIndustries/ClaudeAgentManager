@@ -10,12 +10,22 @@ import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
+import com.claudemanager.app.data.models.CreateWebhookBody
+import com.claudemanager.app.data.models.CreateWorkflowBody
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.LaunchRequest
+import com.claudemanager.app.data.models.RelayBody
+import com.claudemanager.app.data.models.RetentionRunResult
+import com.claudemanager.app.data.models.RetentionSettingsBody
+import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.SendMessageBody
 import com.claudemanager.app.data.models.UpdateAgentBody
+import com.claudemanager.app.data.models.UpdateWebhookBody
+import com.claudemanager.app.data.models.WebhookEntry
+import com.claudemanager.app.data.models.Workflow
+import com.claudemanager.app.data.models.WorkflowStep
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -222,6 +232,140 @@ class AgentRepository {
             )
         }.map { it.request }
     }
+
+    // ── Webhooks ─────────────────────────────────────────────────────────
+
+    /**
+     * Get all configured webhooks.
+     */
+    suspend fun getWebhooks(): Result<List<WebhookEntry>> = apiCall {
+        api.getWebhooks()
+    }
+
+    /**
+     * Create a new webhook with the given URL and event types.
+     */
+    suspend fun createWebhook(url: String, events: List<String>): Result<WebhookEntry> = apiCall {
+        api.createWebhook(CreateWebhookBody(url, events))
+    }
+
+    /**
+     * Update an existing webhook. Only non-null fields are applied.
+     */
+    suspend fun updateWebhook(
+        id: Int,
+        url: String? = null,
+        events: List<String>? = null,
+        active: Boolean? = null
+    ): Result<WebhookEntry> = apiCall {
+        api.updateWebhook(id, UpdateWebhookBody(url, events, active))
+    }
+
+    /**
+     * Delete a webhook by ID.
+     */
+    suspend fun deleteWebhook(id: Int): Result<Unit> = apiCall {
+        api.deleteWebhook(id)
+    }.map { }
+
+    /**
+     * Send a test event to a webhook to verify connectivity.
+     */
+    suspend fun testWebhook(id: Int): Result<Unit> = apiCall {
+        api.testWebhook(id)
+    }.map { }
+
+    // ── Retention ────────────────────────────────────────────────────────
+
+    /**
+     * Get the current retention policy status, including settings and last run stats.
+     */
+    suspend fun getRetentionStatus(): Result<RetentionStatus> = apiCall {
+        api.getRetentionStatus()
+    }
+
+    /**
+     * Update retention policy settings. Only non-null fields are applied.
+     */
+    suspend fun updateRetentionSettings(
+        archiveDays: Int? = null,
+        updateDays: Int? = null,
+        messageDays: Int? = null,
+        enabled: Boolean? = null,
+        dryRun: Boolean? = null
+    ): Result<Unit> = apiCall {
+        api.updateRetentionSettings(
+            RetentionSettingsBody(archiveDays, updateDays, messageDays, enabled, dryRun)
+        )
+    }.map { }
+
+    /**
+     * Manually trigger a retention cleanup run.
+     */
+    suspend fun runRetention(): Result<RetentionRunResult> = apiCall {
+        api.runRetention()
+    }
+
+    // ── Workflows ────────────────────────────────────────────────────────
+
+    /**
+     * Get all workflows.
+     */
+    suspend fun getWorkflows(): Result<List<Workflow>> = apiCall {
+        api.getWorkflows()
+    }
+
+    /**
+     * Get a single workflow by ID.
+     */
+    suspend fun getWorkflow(id: String): Result<Workflow> = apiCall {
+        api.getWorkflow(id)
+    }
+
+    /**
+     * Create a new workflow with the given name and steps.
+     */
+    suspend fun createWorkflow(name: String, steps: List<WorkflowStep>): Result<Workflow> = apiCall {
+        api.createWorkflow(CreateWorkflowBody(name, steps))
+    }
+
+    /**
+     * Start a workflow.
+     */
+    suspend fun startWorkflow(id: String): Result<Unit> = apiCall {
+        api.startWorkflow(id)
+    }.map { }
+
+    /**
+     * Pause a running workflow.
+     */
+    suspend fun pauseWorkflow(id: String): Result<Unit> = apiCall {
+        api.pauseWorkflow(id)
+    }.map { }
+
+    /**
+     * Delete a workflow.
+     */
+    suspend fun deleteWorkflow(id: String): Result<Unit> = apiCall {
+        api.deleteWorkflow(id)
+    }.map { }
+
+    // ── Agent Relay ──────────────────────────────────────────────────────
+
+    /**
+     * Relay a message from one agent to another.
+     *
+     * @param fromAgentId The agent initiating the relay (source).
+     * @param targetAgentId The agent receiving the relayed message.
+     * @param content The message content to relay.
+     */
+    suspend fun relayMessage(
+        fromAgentId: String,
+        targetAgentId: String,
+        content: String
+    ): Result<Unit> = apiCall {
+        api.relayMessage(fromAgentId, RelayBody(targetAgentId, content))
+    }.map { }
 
     // ── Health Check ─────────────────────────────────────────────────────
 

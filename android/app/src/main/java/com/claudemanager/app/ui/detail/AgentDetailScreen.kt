@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
@@ -38,6 +39,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -49,6 +52,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -104,6 +110,7 @@ fun AgentDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showRelayDialog by remember { mutableStateOf(false) }
     val pullRefreshState = rememberPullRefreshState(
         refreshing = state.isRefreshing,
         onRefresh = viewModel::refreshAll
@@ -201,6 +208,21 @@ fun AgentDetailScreen(
                                         context.startActivity(intent)
                                     }
                                 )
+
+                                // Send to Agent (relay)
+                                if (agent.isLive) {
+                                    DropdownMenuItem(
+                                        text = { Text("Send to Agent") },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Link, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            viewModel.loadOtherAgents()
+                                            showRelayDialog = true
+                                        }
+                                    )
+                                }
 
                                 if (agent.status == AgentStatus.ARCHIVED) {
                                     DropdownMenuItem(
@@ -391,6 +413,19 @@ fun AgentDetailScreen(
             textContentColor = LumiOnSurfaceSecondary
         )
     }
+
+    // Relay to another agent dialog
+    if (showRelayDialog) {
+        RelayDialog(
+            otherAgents = state.otherAgents,
+            isRelaying = state.isRelaying,
+            onDismiss = { showRelayDialog = false },
+            onRelay = { targetId, content ->
+                viewModel.relayMessage(targetId, content)
+                showRelayDialog = false
+            }
+        )
+    }
 }
 
 /**
@@ -540,4 +575,135 @@ class AgentDetailViewModelFactory(
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         return AgentDetailViewModel(application, agentId) as T
     }
+}
+
+/**
+ * Dialog for relaying a message from the current agent to another agent.
+ * Shows a list of other active agents to select as target, plus a message input.
+ */
+@Composable
+private fun RelayDialog(
+    otherAgents: List<com.claudemanager.app.data.models.Agent>,
+    isRelaying: Boolean,
+    onDismiss: () -> Unit,
+    onRelay: (String, String) -> Unit
+) {
+    var selectedAgentId by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Send to Agent") },
+        text = {
+            Column {
+                if (otherAgents.isEmpty()) {
+                    Text(
+                        text = "No other active agents available",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LumiOnSurfaceTertiary
+                    )
+                } else {
+                    Text(
+                        text = "Select target agent",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = LumiOnSurfaceSecondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    LazyColumn(
+                        modifier = Modifier.height(150.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(otherAgents, key = { it.id }) { agent ->
+                            val isSelected = agent.id == selectedAgentId
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (isSelected) LumiPurple500.copy(alpha = 0.15f)
+                                        else LumiCard
+                                    )
+                                    .clickable { selectedAgentId = agent.id }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(agentStatusColor(agent.status))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = agent.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LumiOnSurface,
+                                        maxLines = 1
+                                    )
+                                    if (!agent.workspace.isNullOrBlank()) {
+                                        Text(
+                                            text = agent.workspace!!.substringAfterLast('/').substringAfterLast('\\'),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = LumiOnSurfaceTertiary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = message,
+                        onValueChange = { message = it },
+                        label = { Text("Message") },
+                        placeholder = { Text("Message to relay...") },
+                        minLines = 2,
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LumiPurple500,
+                            unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
+                            cursorColor = LumiPurple500,
+                            focusedTextColor = LumiOnSurface,
+                            unfocusedTextColor = LumiOnSurface,
+                            focusedLabelColor = LumiPurple500,
+                            unfocusedLabelColor = LumiOnSurfaceTertiary
+                        )
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    selectedAgentId?.let { targetId ->
+                        onRelay(targetId, message)
+                    }
+                },
+                enabled = selectedAgentId != null && message.isNotBlank() && !isRelaying
+            ) {
+                if (isRelaying) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = LumiPurple500,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("Send", color = LumiPurple500)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+        containerColor = LumiCard,
+        titleContentColor = LumiOnSurface,
+        textContentColor = LumiOnSurfaceSecondary
+    )
 }

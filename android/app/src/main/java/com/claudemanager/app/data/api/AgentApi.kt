@@ -7,12 +7,21 @@ import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
 import com.claudemanager.app.data.models.CreateLaunchResponse
+import com.claudemanager.app.data.models.CreateWebhookBody
+import com.claudemanager.app.data.models.CreateWorkflowBody
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.OkResponse
+import com.claudemanager.app.data.models.RelayBody
+import com.claudemanager.app.data.models.RetentionRunResult
+import com.claudemanager.app.data.models.RetentionSettingsBody
+import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.SendMessageBody
 import com.claudemanager.app.data.models.UpdateAgentBody
+import com.claudemanager.app.data.models.UpdateWebhookBody
+import com.claudemanager.app.data.models.WebhookEntry
+import com.claudemanager.app.data.models.Workflow
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import retrofit2.Response
@@ -152,4 +161,110 @@ interface AgentApi {
     suspend fun createLaunchRequest(
         @Body body: CreateLaunchRequestBody
     ): Response<CreateLaunchResponse>
+
+    // ── Webhooks ─────────────────────────────────────────────────────────
+
+    /**
+     * List all configured webhooks.
+     */
+    @GET("api/webhooks")
+    suspend fun getWebhooks(): Response<List<WebhookEntry>>
+
+    /**
+     * Create a new webhook.
+     */
+    @POST("api/webhooks")
+    suspend fun createWebhook(@Body body: CreateWebhookBody): Response<WebhookEntry>
+
+    /**
+     * Update an existing webhook.
+     */
+    @PATCH("api/webhooks/{id}")
+    suspend fun updateWebhook(
+        @Path("id") id: Int,
+        @Body body: UpdateWebhookBody
+    ): Response<WebhookEntry>
+
+    /**
+     * Delete a webhook.
+     */
+    @DELETE("api/webhooks/{id}")
+    suspend fun deleteWebhook(@Path("id") id: Int): Response<OkResponse>
+
+    /**
+     * Send a test event to a webhook to verify connectivity.
+     */
+    @POST("api/webhooks/{id}/test")
+    suspend fun testWebhook(@Path("id") id: Int): Response<OkResponse>
+
+    // ── Retention ────────────────────────────────────────────────────────
+
+    /**
+     * Get the current retention policy status, settings, and last run info.
+     */
+    @GET("api/retention/status")
+    suspend fun getRetentionStatus(): Response<RetentionStatus>
+
+    /**
+     * Update retention policy settings.
+     */
+    @PATCH("api/retention/settings")
+    suspend fun updateRetentionSettings(
+        @Body body: RetentionSettingsBody
+    ): Response<OkResponse>
+
+    /**
+     * Manually trigger a retention cleanup run.
+     */
+    @POST("api/retention/run")
+    suspend fun runRetention(): Response<RetentionRunResult>
+
+    // ── Workflows ────────────────────────────────────────────────────────
+
+    /**
+     * List all workflows.
+     */
+    @GET("api/workflows")
+    suspend fun getWorkflows(): Response<List<Workflow>>
+
+    /**
+     * Create a new workflow.
+     */
+    @POST("api/workflows")
+    suspend fun createWorkflow(@Body body: CreateWorkflowBody): Response<Workflow>
+
+    /**
+     * Get a single workflow by ID.
+     */
+    @GET("api/workflows/{id}")
+    suspend fun getWorkflow(@Path("id") id: String): Response<Workflow>
+
+    /**
+     * Start a workflow.
+     */
+    @POST("api/workflows/{id}/start")
+    suspend fun startWorkflow(@Path("id") id: String): Response<OkResponse>
+
+    /**
+     * Pause a running workflow.
+     */
+    @POST("api/workflows/{id}/pause")
+    suspend fun pauseWorkflow(@Path("id") id: String): Response<OkResponse>
+
+    /**
+     * Delete a workflow.
+     */
+    @DELETE("api/workflows/{id}")
+    suspend fun deleteWorkflow(@Path("id") id: String): Response<OkResponse>
+
+    // ── Agent Relay ──────────────────────────────────────────────────────
+
+    /**
+     * Relay a message from one agent to another (agent-to-agent communication).
+     */
+    @POST("api/agents/{id}/relay")
+    suspend fun relayMessage(
+        @Path("id") id: String,
+        @Body body: RelayBody
+    ): Response<OkResponse>
 }

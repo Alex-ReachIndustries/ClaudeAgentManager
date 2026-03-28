@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material3.CircularProgressIndicator
@@ -181,7 +182,13 @@ fun ConversationPanel(
                 items(items, key = { it.itemKey }) { item ->
                     when (item) {
                         is ConversationItem.Update -> UpdateBubble(update = item.update)
-                        is ConversationItem.Message -> SentMessageBubble(message = item.message)
+                        is ConversationItem.Message -> {
+                            if (item.message.source == "agent") {
+                                AgentRelayBubble(message = item.message)
+                            } else {
+                                SentMessageBubble(message = item.message)
+                            }
+                        }
                     }
                 }
 
@@ -452,6 +459,90 @@ private fun SentMessageBubble(message: AgentMessage) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(end = 4.dp)
+        ) {
+            val statusColor = messageStatusColor(message.status)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(statusColor.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = message.status.displayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor
+                )
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = TimeUtils.timeAgo(message.createdAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = LumiOnSurfaceTertiary
+            )
+        }
+    }
+}
+
+/**
+ * Left-aligned message bubble for messages received from another agent via relay.
+ * Styled differently from user messages to distinguish the source.
+ */
+@Composable
+private fun AgentRelayBubble(message: AgentMessage) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = 48.dp),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
+                .background(LumiInfo.copy(alpha = 0.12f))
+                .padding(10.dp)
+        ) {
+            Column {
+                // Source label
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.SmartToy,
+                        contentDescription = "From agent",
+                        tint = LumiInfo,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "From Agent",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiInfo
+                    )
+                    if (message.sourceAgentId != null) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "(${message.sourceAgentId})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LumiOnSurface
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 4.dp)
         ) {
             val statusColor = messageStatusColor(message.status)
             Box(
