@@ -5,7 +5,7 @@
  * Runs on the Windows host (NOT in Docker). Polls the Agent Manager backend
  * for pending launch requests and spawns Claude terminal sessions.
  *
- * Usage: node launcher.js [--server http://localhost:8080]
+ * Usage: node launcher.js [--server https://msi.tail06903c.ts.net]
  */
 
 const { spawn } = require('child_process');
@@ -16,7 +16,13 @@ const os = require('os');
 
 const SERVER_URL = process.argv.includes('--server')
   ? process.argv[process.argv.indexOf('--server') + 1]
-  : 'http://localhost:8080';
+  : 'https://msi.tail06903c.ts.net';
+
+const API_KEY = process.argv.includes('--api-key')
+  ? process.argv[process.argv.indexOf('--api-key') + 1]
+  : (() => {
+      try { return require('fs').readFileSync(path.join(os.homedir(), '.claude', 'agent-manager-key'), 'utf8').trim(); } catch { return ''; }
+    })();
 
 const POLL_INTERVAL = 3000; // 3 seconds
 const fs = require('fs');
@@ -30,7 +36,9 @@ function log(msg) {
 async function fetchJSON(urlStr) {
   return new Promise((resolve, reject) => {
     const mod = urlStr.startsWith('https') ? https : http;
-    mod.get(urlStr, { headers: { 'Content-Type': 'application/json' } }, (res) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (API_KEY) headers['Authorization'] = `Bearer ${API_KEY}`;
+    mod.get(urlStr, { headers }, (res) => {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
@@ -58,6 +66,7 @@ async function patchJSON(urlStr, body) {
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload),
+          ...(API_KEY ? { 'Authorization': `Bearer ${API_KEY}` } : {}),
         },
       },
       (res) => {

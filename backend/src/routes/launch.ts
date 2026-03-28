@@ -6,11 +6,14 @@ import {
   getLaunchRequest,
 } from "../db.js";
 import { broadcast } from "../sse.js";
+import { launchLimiter } from "../middleware/rateLimiter.js";
+import { validate } from "../middleware/validate.js";
+import { launchRequestSchema } from "../schemas.js";
 
 const router = Router();
 
 // POST / — create a new launch request
-router.post("/", (req: Request, res: Response) => {
+router.post("/", launchLimiter, validate(launchRequestSchema), (req: Request, res: Response) => {
   try {
     const { type = "new", folder_path, resume_agent_id } = req.body;
 

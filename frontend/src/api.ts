@@ -2,9 +2,32 @@ import type { Agent, AgentUpdate, AgentMessage, SSEEvent } from './types';
 
 const BASE = '/api';
 
+// --- API Key management ---
+let apiKey: string | null = localStorage.getItem('cm-api-key');
+
+export function getStoredApiKey(): string | null {
+  return apiKey;
+}
+
+export function setApiKey(key: string): void {
+  apiKey = key;
+  localStorage.setItem('cm-api-key', key);
+}
+
+export function clearApiKey(): void {
+  apiKey = null;
+  localStorage.removeItem('cm-api-key');
+}
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  return headers;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(),
     ...options,
   });
   if (!res.ok) {
@@ -74,8 +97,11 @@ export async function uploadFile(
 ): Promise<{ ok: boolean; file: { id: number; filename: string; mimetype: string; size: number } }> {
   const form = new FormData();
   form.append('file', file);
+  const headers: Record<string, string> = {};
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   const res = await fetch(`${BASE}/agents/${agentId}/files`, {
     method: 'POST',
+    headers,
     body: form,
   });
   if (!res.ok) {
@@ -109,8 +135,46 @@ export async function createLaunchRequest(type: 'new' | 'resume', folderPath: st
   });
 }
 
+// --- Push notifications ---
+
+export async function fetchVapidPublicKey(): Promise<string> {
+  const { publicKey } = await request<{ publicKey: string }>('/push/vapid-public-key');
+  return publicKey;
+}
+
+export async function subscribePush(subscription: PushSubscription): Promise<void> {
+  const raw = subscription.toJSON();
+  await request('/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({
+      endpoint: raw.endpoint,
+      keys: raw.keys,
+    }),
+  });
+}
+
+export async function unsubscribePush(endpoint: string): Promise<void> {
+  await request('/push/unsubscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  });
+}
+
+// --- Auth endpoints ---
+export async function fetchApiKey(): Promise<string> {
+  const { apiKey: key } = await request<{ apiKey: string }>('/auth/key');
+  return key;
+}
+
+export async function rotateApiKey(): Promise<string> {
+  const { apiKey: key } = await request<{ apiKey: string }>('/auth/rotate', { method: 'POST' });
+  setApiKey(key);
+  return key;
+}
+
 export function subscribeToEvents(onEvent: (event: SSEEvent) => void): () => void {
-  const es = new EventSource(`${BASE}/events`);
+  const tokenParam = apiKey ? `?token=${encodeURIComponent(apiKey)}` : '';
+  const es = new EventSource(`${BASE}/events${tokenParam}`);
 
   const handleAgentUpdated = (e: MessageEvent) => {
     onEvent({ type: 'agent-updated', data: JSON.parse(e.data) });

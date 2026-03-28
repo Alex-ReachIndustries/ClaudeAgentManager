@@ -20,8 +20,12 @@ import {
   createLaunchRequest,
 } from "../db.js";
 import { broadcast } from "../sse.js";
+import { sendPushToAll } from "../push.js";
+import { agentUpdateLimiter, fileUploadLimiter } from "../middleware/rateLimiter.js";
+import { validate } from "../middleware/validate.js";
+import { updateSchema, messageSchema, agentPatchSchema } from "../schemas.js";
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
 const router = Router();
 
@@ -322,15 +326,10 @@ router.get("/:id", (req: Request, res: Response) => {
 });
 
 // POST /:id/updates — agent posts an update
-router.post("/:id/updates", (req: Request, res: Response) => {
+router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const { type = "text", content, summary, title, progress, projects, todos, workspace, cwd, pid } = req.body;
-
-    if (!content) {
-      res.status(400).json({ error: "content is required" });
-      return;
-    }
 
     // Create agent if it doesn't exist
     const existing = getAgent(id);
@@ -391,6 +390,13 @@ router.post("/:id/updates", (req: Request, res: Response) => {
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);
 
+    // Send push notification with agent title and update summary
+    const agentTitle = (updatedAgent as Record<string, unknown>)?.title as string || "Untitled Agent";
+    const pushBody = summary || (typeof content === "string" ? content : JSON.stringify(content));
+    sendPushToAll(agentTitle, pushBody, `/agent/${id}`).catch((err) =>
+      console.error("Push notification error:", err)
+    );
+
     const pendingMessages = getPendingMessages(id);
     res.json({ ok: true, pendingMessages });
   } catch (err) {
@@ -400,7 +406,7 @@ router.post("/:id/updates", (req: Request, res: Response) => {
 });
 
 // PATCH /:id — update agent metadata
-router.patch("/:id", (req: Request, res: Response) => {
+router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const agent = getAgent(id);
@@ -525,7 +531,7 @@ router.get("/:id/updates", (req: Request, res: Response) => {
 });
 
 // POST /:id/messages — dashboard queues a message
-router.post("/:id/messages", (req: Request, res: Response) => {
+router.post("/:id/messages", validate(messageSchema), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const agent = getAgent(id);
@@ -535,10 +541,6 @@ router.post("/:id/messages", (req: Request, res: Response) => {
     }
 
     const { content } = req.body;
-    if (!content) {
-      res.status(400).json({ error: "content is required" });
-      return;
-    }
 
     addMessage(id, content);
     broadcast("message-queued", { agentId: id, content });
@@ -656,7 +658,7 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
 });
 
 // POST /:id/files — upload a file attachment
-router.post("/:id/files", upload.single("file"), (req: Request, res: Response) => {
+router.post("/:id/files", fileUploadLimiter, upload.single("file"), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const agent = getAgent(id);

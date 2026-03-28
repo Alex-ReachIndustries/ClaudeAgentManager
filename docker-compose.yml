@@ -11,6 +11,7 @@ services:
       - DB_PATH=/app/data/agents.db
       - PDF_SERVICE_URL=http://pdf-generator:8090
       - HOST_HOME_MOUNT=/host-home
+      - AUTH_ENABLED=true
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
       interval: 10s
