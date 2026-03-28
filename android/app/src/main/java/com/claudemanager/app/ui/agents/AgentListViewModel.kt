@@ -20,10 +20,13 @@ import kotlinx.coroutines.launch
  */
 data class AgentListUiState(
     val agents: List<Agent> = emptyList(),
+    val filteredAgents: List<Agent> = emptyList(),
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
-    val connectionState: SSEClient.ConnectionState = SSEClient.ConnectionState.DISCONNECTED
+    val connectionState: SSEClient.ConnectionState = SSEClient.ConnectionState.DISCONNECTED,
+    val searchQuery: String = "",
+    val selectedFilter: AgentStatus? = null // null = All
 )
 
 /**
@@ -32,6 +35,8 @@ data class AgentListUiState(
  * Loads agents from the repository and supports pull-to-refresh.
  * Connection state is observed from the service-level SSE client indirectly
  * by periodically refreshing.
+ *
+ * Supports client-side search and status filtering.
  */
 class AgentListViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -62,6 +67,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             agents = agents,
+                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter),
                             connectionState = SSEClient.ConnectionState.CONNECTED
                         )
                     }
@@ -85,6 +91,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             agents = agents,
+                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter),
                             isLoading = false,
                             error = null,
                             connectionState = SSEClient.ConnectionState.CONNECTED
@@ -114,6 +121,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             agents = agents,
+                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter),
                             isRefreshing = false,
                             error = null,
                             connectionState = SSEClient.ConnectionState.CONNECTED
@@ -130,6 +138,60 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
         }
+    }
+
+    /**
+     * Update the search query and re-filter the agent list.
+     */
+    fun onSearchChanged(query: String) {
+        _uiState.update {
+            it.copy(
+                searchQuery = query,
+                filteredAgents = applyFilters(it.agents, query, it.selectedFilter)
+            )
+        }
+    }
+
+    /**
+     * Update the status filter and re-filter the agent list.
+     * Pass null for "All" (no filter).
+     */
+    fun onFilterChanged(status: AgentStatus?) {
+        _uiState.update {
+            it.copy(
+                selectedFilter = status,
+                filteredAgents = applyFilters(it.agents, it.searchQuery, status)
+            )
+        }
+    }
+
+    /**
+     * Apply search query and status filter to the agent list.
+     * Search matches against title, workspace, and latestSummary (case-insensitive).
+     */
+    private fun applyFilters(
+        agents: List<Agent>,
+        searchQuery: String,
+        statusFilter: AgentStatus?
+    ): List<Agent> {
+        var result = agents
+
+        // Apply status filter
+        if (statusFilter != null) {
+            result = result.filter { it.status == statusFilter }
+        }
+
+        // Apply search query
+        if (searchQuery.isNotBlank()) {
+            val query = searchQuery.lowercase()
+            result = result.filter { agent ->
+                agent.title.lowercase().contains(query) ||
+                        (agent.workspace?.lowercase()?.contains(query) == true) ||
+                        (agent.latestSummary?.lowercase()?.contains(query) == true)
+            }
+        }
+
+        return result
     }
 
     /**

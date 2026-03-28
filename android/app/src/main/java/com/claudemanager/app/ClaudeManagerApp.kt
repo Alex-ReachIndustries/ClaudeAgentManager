@@ -10,6 +10,7 @@ import com.claudemanager.app.data.preferences.AppPreferences
 import com.claudemanager.app.data.repository.AgentRepository
 import com.claudemanager.app.notification.NotificationHelper
 import com.claudemanager.app.service.AgentNotificationService
+import com.claudemanager.app.widget.AgentWidgetWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -76,6 +77,9 @@ class ClaudeManagerApp : Application(), DefaultLifecycleObserver {
                 if (preferences.getNotificationsEnabled()) {
                     AgentNotificationService.start(this@ClaudeManagerApp)
                 }
+
+                // Schedule periodic widget updates
+                AgentWidgetWorker.schedulePeriodicUpdate(this@ClaudeManagerApp)
             } else {
                 Log.d(TAG, "No server URL configured, skipping service start")
             }

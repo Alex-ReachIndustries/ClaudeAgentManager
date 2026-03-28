@@ -113,4 +113,11 @@ dependencies {
 
     // Image Loading
     implementation(libs.coil.compose)
+
+    // Glance (App Widgets)
+    implementation(libs.glance.appwidget)
+    implementation(libs.glance.material3)
+
+    // WorkManager
+    implementation(libs.work.runtime.ktx)
 }

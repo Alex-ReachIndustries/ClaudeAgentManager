@@ -22,7 +22,10 @@ data class SetupUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val isConnected: Boolean = false,
-    val resolvedUrl: String? = null
+    val resolvedUrl: String? = null,
+    val quietHoursEnabled: Boolean = true,
+    val quietHoursStart: Int = 0,
+    val quietHoursEnd: Int = 8
 )
 
 /**
@@ -30,7 +33,7 @@ data class SetupUiState(
  *
  * Handles testing connectivity to the ClaudeManager backend by trying multiple
  * URL combinations (http/https, with/without port) and saving the working URL
- * to preferences.
+ * to preferences. Also manages notification quiet hours settings.
  */
 class SetupViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -45,6 +48,10 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val savedUrl = preferences.getServerUrl()
             val savedKey = preferences.getApiKey()
+            val quietEnabled = preferences.getQuietHoursEnabled()
+            val quietStart = preferences.getQuietHoursStart()
+            val quietEnd = preferences.getQuietHoursEnd()
+
             if (savedUrl.isNotBlank()) {
                 // Extract the address portion from a full URL
                 val address = savedUrl
@@ -52,9 +59,26 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
                     .removePrefix("http://")
                     .removeSuffix(":3001")
                     .removeSuffix("/")
-                _uiState.update { it.copy(serverAddress = address, apiKey = savedKey, isConnected = true, resolvedUrl = savedUrl) }
-            } else if (savedKey.isNotBlank()) {
-                _uiState.update { it.copy(apiKey = savedKey) }
+                _uiState.update {
+                    it.copy(
+                        serverAddress = address,
+                        apiKey = savedKey,
+                        isConnected = true,
+                        resolvedUrl = savedUrl,
+                        quietHoursEnabled = quietEnabled,
+                        quietHoursStart = quietStart,
+                        quietHoursEnd = quietEnd
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        apiKey = savedKey,
+                        quietHoursEnabled = quietEnabled,
+                        quietHoursStart = quietStart,
+                        quietHoursEnd = quietEnd
+                    )
+                }
             }
         }
     }
@@ -68,6 +92,36 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onApiKeyChanged(key: String) {
         _uiState.update { it.copy(apiKey = key) }
+    }
+
+    /**
+     * Update the quiet hours enabled toggle and persist to preferences.
+     */
+    fun onQuietHoursEnabledChanged(enabled: Boolean) {
+        _uiState.update { it.copy(quietHoursEnabled = enabled) }
+        viewModelScope.launch {
+            preferences.setQuietHoursEnabled(enabled)
+        }
+    }
+
+    /**
+     * Update the quiet hours start hour and persist to preferences.
+     */
+    fun onQuietHoursStartChanged(hour: Int) {
+        _uiState.update { it.copy(quietHoursStart = hour) }
+        viewModelScope.launch {
+            preferences.setQuietHoursStart(hour)
+        }
+    }
+
+    /**
+     * Update the quiet hours end hour and persist to preferences.
+     */
+    fun onQuietHoursEndChanged(hour: Int) {
+        _uiState.update { it.copy(quietHoursEnd = hour) }
+        viewModelScope.launch {
+            preferences.setQuietHoursEnd(hour)
+        }
     }
 
     /**

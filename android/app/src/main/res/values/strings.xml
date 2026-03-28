@@ -45,6 +45,10 @@
     <string name="notification_service_text">Monitoring agent activity</string>
     <string name="notification_reply_label">Reply</string>
 
+    <!-- Widget -->
+    <string name="widget_description">Shows active Claude agents with status</string>
+    <string name="widget_name">Agent Status</string>
+
     <!-- General -->
     <string name="error_generic">Something went wrong</string>
     <string name="retry">Retry</string>

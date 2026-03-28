@@ -5,6 +5,7 @@ package com.claudemanager.app.ui.agents
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
@@ -28,21 +30,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -79,6 +87,8 @@ import com.claudemanager.app.util.TimeUtils
  * Agent list screen displaying all active and archived agents.
  *
  * Features:
+ * - Search bar with text filtering (matches title, workspace, summary)
+ * - Horizontally scrollable status filter chips
  * - Pull-to-refresh
  * - Real-time updates via SSE
  * - Active/archived sections (archived collapsed by default)
@@ -101,8 +111,10 @@ fun AgentListScreen(
     var showArchived by remember { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
 
-    val activeAgents = state.agents.filter { it.status != AgentStatus.ARCHIVED }
-    val archivedAgents = state.agents.filter { it.status == AgentStatus.ARCHIVED }
+    // Use filtered agents for display; separate into active/archived
+    val displayAgents = state.filteredAgents
+    val activeAgents = displayAgents.filter { it.status != AgentStatus.ARCHIVED }
+    val archivedAgents = displayAgents.filter { it.status == AgentStatus.ARCHIVED }
     val pullRefreshState = rememberPullRefreshState(
         refreshing = state.isRefreshing,
         onRefresh = viewModel::refresh
@@ -169,119 +181,149 @@ fun AgentListScreen(
                 .padding(padding)
                 .pullRefresh(pullRefreshState)
         ) {
-            if (!state.isLoading && activeAgents.isEmpty() && archivedAgents.isEmpty()) {
-                // Empty state
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.Notifications,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = LumiOnSurfaceTertiary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No agents running",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = LumiOnSurfaceSecondary
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Tap + to launch a new agent",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = LumiOnSurfaceTertiary
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Search bar
+                SearchBar(
+                    query = state.searchQuery,
+                    onQueryChanged = viewModel::onSearchChanged,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Error banner
-                    if (state.error != null) {
-                        item {
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+
+                // Filter chips
+                FilterChipRow(
+                    selectedFilter = state.selectedFilter,
+                    onFilterChanged = viewModel::onFilterChanged,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 8.dp)
+                )
+
+                if (!state.isLoading && activeAgents.isEmpty() && archivedAgents.isEmpty()) {
+                    // Empty state
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = LumiOnSurfaceTertiary
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = state.error!!,
-                                color = LumiError,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(vertical = 8.dp)
+                                text = if (state.searchQuery.isNotBlank() || state.selectedFilter != null)
+                                    "No agents match your filters"
+                                else
+                                    "No agents running",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = LumiOnSurfaceSecondary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (state.searchQuery.isNotBlank() || state.selectedFilter != null)
+                                    "Try adjusting your search or filter"
+                                else
+                                    "Tap + to launch a new agent",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = LumiOnSurfaceTertiary
                             )
                         }
                     }
-
-                    // Active agents section
-                    if (activeAgents.isNotEmpty()) {
-                        item {
-                            SectionHeader(
-                                title = "Active Agents",
-                                count = activeAgents.size
-                            )
-                        }
-                        items(activeAgents, key = { it.id }) { agent ->
-                            AgentCard(
-                                agent = agent,
-                                onClick = { onAgentClick(agent.id) }
-                            )
-                        }
-                    }
-
-                    // Archived agents section (collapsed by default)
-                    if (archivedAgents.isNotEmpty()) {
-                        item {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { showArchived = !showArchived }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Archive,
-                                    contentDescription = null,
-                                    tint = LumiOnSurfaceTertiary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f)
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Error banner
+                        if (state.error != null) {
+                            item {
                                 Text(
-                                    text = "Archived",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = LumiOnSurfaceTertiary
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "(${archivedAgents.size})",
+                                    text = state.error!!,
+                                    color = LumiError,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = LumiOnSurfaceTertiary
-                                )
-                                Spacer(modifier = Modifier.weight(1f))
-                                Icon(
-                                    imageVector = if (showArchived) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = if (showArchived) "Collapse" else "Expand",
-                                    tint = LumiOnSurfaceTertiary,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.padding(vertical = 8.dp)
                                 )
                             }
                         }
 
-                        if (showArchived) {
-                            items(archivedAgents, key = { it.id }) { agent ->
+                        // Active agents section
+                        if (activeAgents.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "Active Agents",
+                                    count = activeAgents.size
+                                )
+                            }
+                            items(activeAgents, key = { it.id }) { agent ->
                                 AgentCard(
                                     agent = agent,
                                     onClick = { onAgentClick(agent.id) }
                                 )
                             }
                         }
-                    }
 
-                    // Bottom spacer for FAB clearance
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
+                        // Archived agents section (collapsed by default)
+                        if (archivedAgents.isNotEmpty()) {
+                            item {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showArchived = !showArchived }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Archive,
+                                        contentDescription = null,
+                                        tint = LumiOnSurfaceTertiary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Archived",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = LumiOnSurfaceTertiary
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "(${archivedAgents.size})",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = LumiOnSurfaceTertiary
+                                    )
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Icon(
+                                        imageVector = if (showArchived) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (showArchived) "Collapse" else "Expand",
+                                        tint = LumiOnSurfaceTertiary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            if (showArchived) {
+                                items(archivedAgents, key = { it.id }) { agent ->
+                                    AgentCard(
+                                        agent = agent,
+                                        onClick = { onAgentClick(agent.id) }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Bottom spacer for FAB clearance
+                        item { Spacer(modifier = Modifier.height(80.dp)) }
+                    }
                 }
             }
 
@@ -303,6 +345,124 @@ fun AgentListScreen(
                 viewModel.launchNewAgent(path)
             }
         )
+    }
+}
+
+/**
+ * Search bar with search icon and clear button.
+ */
+@Composable
+private fun SearchBar(
+    query: String,
+    onQueryChanged: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChanged,
+        modifier = modifier,
+        placeholder = {
+            Text(
+                "Search agents...",
+                color = LumiOnSurfaceTertiary
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Search",
+                tint = LumiOnSurfaceTertiary
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChanged("") }) {
+                    Icon(
+                        imageVector = Icons.Default.Clear,
+                        contentDescription = "Clear search",
+                        tint = LumiOnSurfaceTertiary
+                    )
+                }
+            }
+        },
+        singleLine = true,
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = LumiPurple500,
+            unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
+            cursorColor = LumiPurple500,
+            focusedTextColor = LumiOnSurface,
+            unfocusedTextColor = LumiOnSurface,
+            focusedContainerColor = LumiCard,
+            unfocusedContainerColor = LumiCard
+        )
+    )
+}
+
+/**
+ * Horizontally scrollable row of filter chips for status filtering.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterChipRow(
+    selectedFilter: AgentStatus?,
+    onFilterChanged: (AgentStatus?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scrollState = rememberScrollState()
+
+    // Define filter options: null = All, then each status
+    data class FilterOption(val status: AgentStatus?, val label: String)
+
+    val filters = listOf(
+        FilterOption(null, "All"),
+        FilterOption(AgentStatus.ACTIVE, "Active"),
+        FilterOption(AgentStatus.IDLE, "Idle"),
+        FilterOption(AgentStatus.WORKING, "Working"),
+        FilterOption(AgentStatus.WAITING_FOR_INPUT, "Waiting"),
+        FilterOption(AgentStatus.COMPLETED, "Completed"),
+        FilterOption(AgentStatus.ARCHIVED, "Archived")
+    )
+
+    Row(
+        modifier = modifier.horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        filters.forEach { filter ->
+            val isSelected = selectedFilter == filter.status
+            FilterChip(
+                selected = isSelected,
+                onClick = { onFilterChanged(filter.status) },
+                label = {
+                    Text(
+                        text = filter.label,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                },
+                leadingIcon = if (filter.status != null) {
+                    {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(agentStatusColor(filter.status))
+                        )
+                    }
+                } else null,
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = LumiCard,
+                    labelColor = LumiOnSurfaceSecondary,
+                    selectedContainerColor = LumiPurple500.copy(alpha = 0.2f),
+                    selectedLabelColor = LumiOnSurface
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    borderColor = LumiOnSurfaceTertiary.copy(alpha = 0.3f),
+                    selectedBorderColor = LumiPurple500.copy(alpha = 0.5f),
+                    enabled = true,
+                    selected = isSelected
+                )
+            )
+        }
     }
 }
 

@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
 /**
  * Foreground service that maintains a persistent SSE connection to the backend
@@ -174,11 +175,31 @@ class AgentNotificationService : Service() {
                 val app = application as? ClaudeManagerApp
                 if (app?.isAppInForeground == true) return
 
-                NotificationHelper.showAgentNotification(
-                    this,
-                    agent,
-                    summary
-                )
+                // Check quiet hours -- suppress notification if within quiet window
+                serviceScope.launch {
+                    val preferences = AppPreferences(this@AgentNotificationService)
+                    val quietEnabled = preferences.getQuietHoursEnabled()
+                    if (quietEnabled) {
+                        val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                        val start = preferences.getQuietHoursStart()
+                        val end = preferences.getQuietHoursEnd()
+                        val inQuietHours = if (start < end) {
+                            now in start until end
+                        } else {
+                            now >= start || now < end
+                        }
+                        if (inQuietHours) {
+                            Log.d(TAG, "Quiet hours active ($start:00-$end:00), suppressing notification for ${agent.title}")
+                            return@launch
+                        }
+                    }
+
+                    NotificationHelper.showAgentNotification(
+                        this@AgentNotificationService,
+                        agent,
+                        summary
+                    )
+                }
             }
 
             is SSEEvent.AgentDeleted -> {
