@@ -632,6 +632,39 @@ router.post("/:id/close", (req: Request, res: Response) => {
   }
 });
 
+// POST /:id/resume — resume an archived/suspended agent
+router.post("/:id/resume", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id) as Record<string, unknown> | undefined;
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    if (agent.status !== "archived" && agent.status !== "completed") {
+      res.status(400).json({ error: `Agent is already ${agent.status}, not archived/completed` });
+      return;
+    }
+
+    const folderPath = (agent.cwd as string) || "";
+
+    // Create a resume launch request
+    const launchResult = createLaunchRequest("resume", folderPath, id);
+
+    // Set agent status back to active (will be updated when it reconnects)
+    updateAgent(id, { status: "active" });
+
+    const updatedAgent = getAgent(id);
+    broadcast("agent-updated", updatedAgent);
+
+    res.json({ ok: true, launch_request_id: (launchResult as Record<string, unknown>).id });
+  } catch (err) {
+    logger.error({ err }, "Error resuming agent");
+    res.status(500).json({ error: "Failed to resume agent" });
+  }
+});
+
 // DELETE /:id — delete agent
 router.delete("/:id", (req: Request, res: Response) => {
   try {

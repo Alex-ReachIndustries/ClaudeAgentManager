@@ -90,6 +90,13 @@ class AgentRepository {
     }
 
     /**
+     * Resume an archived/suspended agent with its full conversation history.
+     */
+    suspend fun resumeAgent(id: String): Result<Unit> = apiCall {
+        api.resumeAgent(id)
+    }.map { }
+
+    /**
      * Mark an agent as read (resets unread update count).
      */
     suspend fun markRead(id: String): Result<Unit> = apiCall {

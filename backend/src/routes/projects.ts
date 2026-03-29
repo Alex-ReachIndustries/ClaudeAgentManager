@@ -14,6 +14,7 @@ import {
   createLaunchRequest,
   updateAgent,
   getFilesMeta,
+  addMessage,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { validate } from "../middleware/validate.js";
@@ -62,6 +63,12 @@ UPDATE PROJECT STATUS:
 
 SUSPEND SUB-AGENT:
   POST /api/agents/{sub_agent_id}/close
+  Archives the agent and terminates its process. Agent can be resumed later.
+
+RESUME SUB-AGENT:
+  POST /api/agents/{sub_agent_id}/resume
+  Resumes a previously suspended/archived agent with its full conversation history.
+  Use this instead of spawning a new agent when an agent was previously suspended.
 
 UPLOAD PROJECT FILES:
   POST /api/agents/{your_agent_id}/files (multipart/form-data)
@@ -69,10 +76,14 @@ UPLOAD PROJECT FILES:
 
 Your approach:
 1. Analyze the project goal and break it into phases
-2. Spawn specialized sub-agents for each phase
+2. Spawn specialized sub-agents for each phase (or RESUME existing ones if available)
 3. Monitor their progress and coordinate handoffs
 4. Report milestones to the user via project updates
 5. When all phases complete, mark project as completed
+
+IMPORTANT: Prefer RESUME over SPAWN. If a sub-agent was previously suspended for
+a similar role, resume it instead of creating a new one. Resumed agents retain
+their full conversation history and context, making them more efficient.
 
 CRITICAL — Timeline Updates:
 You MUST keep the project timeline updated. Post updates when:
@@ -192,7 +203,7 @@ router.post("/:id/updates", validate(projectUpdateSchema), (req: Request, res: R
   }
 });
 
-// POST /:id/start — start the project (launch PM agent)
+// POST /:id/start — start the project (launch or resume PM agent)
 router.post("/:id/start", (req: Request, res: Response) => {
   try {
     const db = getDb();
@@ -209,27 +220,59 @@ router.post("/:id/start", (req: Request, res: Response) => {
     }
 
     const userPrompt = req.body?.initial_prompt || "";
-    const pmPrompt = generatePMPrompt(project);
     const folderPath = (project.folder_path as string) || "";
+    const pmAgentId = project.pm_agent_id as string | null;
+    let resumed = false;
 
-    // Create a launch request for the PM agent
-    const launchResult = createLaunchRequest("new", folderPath);
-    const launchRequestId = launchResult.id as number;
+    // If project was paused and has existing PM agent, resume instead of creating new
+    if (pmAgentId && project.status === "paused") {
+      const pmAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(pmAgentId) as Record<string, unknown> | undefined;
+      if (pmAgent && (pmAgent.status === "archived" || pmAgent.status === "completed")) {
+        const pmCwd = (pmAgent.cwd as string) || folderPath;
+        createLaunchRequest("resume", pmCwd, pmAgentId);
+        db.prepare("UPDATE agents SET status = 'active' WHERE id = ?").run(pmAgentId);
 
-    addProjectUpdate(id, "info", `Project started. PM agent launch request created (ID: ${launchRequestId}).`);
+        addProjectUpdate(id, "info", "Project resumed. PM agent being restarted.");
 
-    // Store project metadata + prompts in launch request for agent linking
-    // When the PM agent registers, the system will:
-    // 1. Link it to the project (set project_id, role)
-    // 2. Send the PM system prompt as a message
-    // 3. Send the user's initial prompt as a message
-    db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
-      .run(JSON.stringify({
-        project_id: id,
-        role: "PM",
-        pm_prompt: pmPrompt,
-        user_prompt: userPrompt
-      }), launchRequestId);
+        // Send the user prompt as a message if provided
+        if (userPrompt.trim()) {
+          addMessage(pmAgentId, userPrompt.trim());
+        }
+
+        // Also resume any archived sub-agents from this project
+        const archivedAgents = db.prepare(
+          "SELECT id, cwd FROM agents WHERE project_id = ? AND status = 'archived' AND id != ?"
+        ).all(id, pmAgentId) as Record<string, unknown>[];
+
+        for (const subAgent of archivedAgents) {
+          const subCwd = (subAgent.cwd as string) || folderPath;
+          createLaunchRequest("resume", subCwd, subAgent.id as string);
+          db.prepare("UPDATE agents SET status = 'active' WHERE id = ?").run(subAgent.id);
+        }
+
+        if (archivedAgents.length > 0) {
+          addProjectUpdate(id, "info", `Resuming ${archivedAgents.length} sub-agent(s).`);
+        }
+        resumed = true;
+      }
+    }
+
+    // First start or PM not resumable — create new PM agent
+    if (!resumed) {
+      const pmPrompt = generatePMPrompt(project);
+      const launchResult = createLaunchRequest("new", folderPath);
+      const launchRequestId = launchResult.id as number;
+
+      addProjectUpdate(id, "info", `Project started. PM agent launch request created (ID: ${launchRequestId}).`);
+
+      db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
+        .run(JSON.stringify({
+          project_id: id,
+          role: "PM",
+          pm_prompt: pmPrompt,
+          user_prompt: userPrompt
+        }), launchRequestId);
+    }
 
     // Update project status
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -238,7 +281,7 @@ router.post("/:id/start", (req: Request, res: Response) => {
     const updatedProject = getProject(id);
     broadcast("project-updated", updatedProject);
 
-    res.json({ ok: true, launch_request_id: launchRequestId });
+    res.json({ ok: true, resumed });
   } catch (err) {
     logger.error({ err }, "Error starting project");
     res.status(500).json({ error: "Failed to start project" });

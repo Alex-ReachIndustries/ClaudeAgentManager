@@ -102,6 +102,12 @@ interface AgentApi {
     @POST("api/agents/{id}/close")
     suspend fun closeAgent(@Path("id") id: String): Response<CloseResponse>
 
+    /**
+     * Resume an archived/suspended agent with its full conversation history.
+     */
+    @POST("api/agents/{id}/resume")
+    suspend fun resumeAgent(@Path("id") id: String): Response<OkResponse>
+
     // ── Updates ──────────────────────────────────────────────────────────
 
     /**

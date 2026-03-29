@@ -141,6 +141,10 @@ export async function closeAgent(agentId: string): Promise<{ ok: boolean; termin
   return request<{ ok: boolean; terminated: boolean; pid: number | null }>(`/agents/${agentId}/close`, { method: 'POST' });
 }
 
+export async function resumeAgent(agentId: string): Promise<{ ok: boolean; launch_request_id: number }> {
+  return request<{ ok: boolean; launch_request_id: number }>(`/agents/${agentId}/resume`, { method: 'POST' });
+}
+
 // --- Launch requests ---
 export async function createLaunchRequest(type: 'new' | 'resume', folderPath: string, resumeAgentId?: string): Promise<{ ok: boolean; request: unknown }> {
   return request<{ ok: boolean; request: unknown }>('/launch-requests', {
