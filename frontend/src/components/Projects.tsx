@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Plus, Loader2, FolderKanban, Users, Clock,
-  X,
+  X, Search,
 } from 'lucide-react';
 import { fetchProjects, createProject } from '../api';
 import { timeAgo } from '../utils/time';
@@ -32,6 +32,9 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'status'>('newest');
 
   const load = useCallback(async () => {
     try {
@@ -77,24 +80,88 @@ export default function Projects() {
         />
       )}
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-dark-500">
-          <Loader2 size={20} className="animate-spin mr-2" />
-          Loading projects...
+      {/* Search + filter + sort */}
+      {!loading && projects.length > 0 && (
+        <div className="mb-4 space-y-3">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search projects..."
+              className="w-full pl-9 pr-3 py-2 bg-dark-900 border border-dark-700 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors"
+            />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {['All', 'Active', 'Pending', 'Paused', 'Completed', 'Failed'].map((s) => {
+              const isActive = (s === 'All' && !statusFilter) || s.toLowerCase() === statusFilter;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s === 'All' ? null : s.toLowerCase())}
+                  className={`px-3 py-1 rounded-full text-xs transition-colors ${
+                    isActive
+                      ? 'bg-lumi-600/20 text-lumi-400 border border-lumi-600/30'
+                      : 'bg-dark-800 text-dark-500 border border-dark-700 hover:text-dark-300'
+                  }`}
+                >
+                  {s}
+                </button>
+              );
+            })}
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="ml-auto px-3 py-1 bg-dark-800 border border-dark-700 rounded-lg text-xs text-dark-400 focus:outline-none focus:border-lumi-500"
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="name">Name</option>
+              <option value="status">Status</option>
+            </select>
+          </div>
         </div>
-      ) : error ? (
-        <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-xl text-red-300 text-sm">
-          {error}
-        </div>
-      ) : projects.length === 0 ? (
-        <div className="text-center py-16">
-          <FolderKanban size={40} className="mx-auto text-dark-600 mb-4" />
-          <p className="text-dark-400 mb-2">No projects yet</p>
-          <p className="text-dark-600 text-sm">Create a project to coordinate multiple agents on a shared goal.</p>
-        </div>
-      ) : (
+      )}
+
+      {(() => {
+        let filtered = projects;
+        if (statusFilter) filtered = filtered.filter((p) => p.status?.toLowerCase() === statusFilter);
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          filtered = filtered.filter((p) => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q));
+        }
+        filtered = [...filtered].sort((a, b) => {
+          switch (sortBy) {
+            case 'newest': return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+            case 'oldest': return (a.created_at ?? '').localeCompare(b.created_at ?? '');
+            case 'name': return (a.name ?? '').localeCompare(b.name ?? '');
+            case 'status': return (a.status ?? '').localeCompare(b.status ?? '');
+            default: return 0;
+          }
+        });
+
+        if (loading) return (
+          <div className="flex items-center justify-center py-16 text-dark-500">
+            <Loader2 size={20} className="animate-spin mr-2" />
+            Loading projects...
+          </div>
+        );
+        if (error) return (
+          <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-xl text-red-300 text-sm">
+            {error}
+          </div>
+        );
+        if (filtered.length === 0) return (
+          <div className="text-center py-16">
+            <FolderKanban size={40} className="mx-auto text-dark-600 mb-4" />
+            <p className="text-dark-400 mb-2">{projects.length === 0 ? 'No projects yet' : 'No matching projects'}</p>
+            {projects.length === 0 && <p className="text-dark-600 text-sm">Create a project to coordinate multiple agents on a shared goal.</p>}
+          </div>
+        );
+        return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((proj) => {
+          {filtered.map((proj) => {
             const st = (proj.status ?? 'pending') as ProjectStatus;
             const dot = statusDot[st] ?? 'bg-dark-400';
             const txt = statusText[st] ?? 'text-dark-400';
@@ -154,7 +221,8 @@ export default function Projects() {
             );
           })}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

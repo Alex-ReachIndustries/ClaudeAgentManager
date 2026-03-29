@@ -4,6 +4,7 @@ package com.claudemanager.app.ui.projects
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
@@ -26,11 +28,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -93,64 +100,155 @@ fun ProjectListScreen(
                 .fillMaxSize()
                 .pullRefresh(pullRefreshState)
         ) {
-            if (!state.isLoading && state.projects.isEmpty()) {
-                // Empty state
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.Folder,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = LumiOnSurfaceTertiary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
+            val filteredProjects = viewModel.getFilteredProjects()
+            val statusOptions = listOf("All", "Active", "Pending", "Paused", "Completed", "Failed")
+            var showSortMenu by remember { mutableStateOf(false) }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Search bar
+                item {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = state.searchQuery,
+                        onValueChange = viewModel::setSearchQuery,
+                        placeholder = { Text("Search projects...") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, null, tint = LumiOnSurfaceTertiary)
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LumiPurple500,
+                            unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.3f),
+                            cursorColor = LumiPurple500,
+                            focusedTextColor = LumiOnSurface,
+                            unfocusedTextColor = LumiOnSurface,
+                            focusedContainerColor = LumiCard,
+                            unfocusedContainerColor = LumiCard
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+
+                // Filter chips + sort button
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            statusOptions.forEach { status ->
+                                val isSelected = (status == "All" && state.statusFilter == null) ||
+                                    status.equals(state.statusFilter, ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(
+                                            if (isSelected) LumiPurple500.copy(alpha = 0.2f)
+                                            else LumiCard
+                                        )
+                                        .clickable {
+                                            viewModel.setStatusFilter(
+                                                if (status == "All") null else status.lowercase()
+                                            )
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = status,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isSelected) LumiPurple500 else LumiOnSurfaceTertiary
+                                    )
+                                }
+                            }
+                        }
+
+                        Box {
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(Icons.Default.Sort, "Sort", tint = LumiOnSurfaceTertiary)
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                ProjectSortOption.entries.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                option.label,
+                                                color = if (state.sortOption == option) LumiPurple500
+                                                else LumiOnSurface
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.setSortOption(option)
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Error banner
+                if (state.error != null) {
+                    item {
                         Text(
-                            text = "No projects yet",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = LumiOnSurfaceSecondary
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Tap + to create a new project",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = LumiOnSurfaceTertiary
+                            text = state.error!!,
+                            color = LumiError,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(vertical = 8.dp)
                         )
                     }
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    item { Spacer(modifier = Modifier.height(8.dp)) }
 
-                    // Error banner
-                    if (state.error != null) {
-                        item {
-                            Text(
-                                text = state.error!!,
-                                color = LumiError,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
+                if (filteredProjects.isEmpty() && !state.isLoading) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = LumiOnSurfaceTertiary
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = if (state.projects.isEmpty()) "No projects yet"
+                                    else "No matching projects",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = LumiOnSurfaceSecondary
+                                )
+                            }
                         }
                     }
-
-                    items(state.projects, key = { it.id }) { project ->
+                } else {
+                    items(filteredProjects, key = { it.id }) { project ->
                         ProjectCard(
                             project = project,
                             onClick = { onProjectClick(project.id) }
                         )
                     }
-
-                    // Bottom spacer for FAB clearance
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
+
+                // Bottom spacer for FAB clearance
+                item { Spacer(modifier = Modifier.height(80.dp)) }
             }
 
             PullRefreshIndicator(

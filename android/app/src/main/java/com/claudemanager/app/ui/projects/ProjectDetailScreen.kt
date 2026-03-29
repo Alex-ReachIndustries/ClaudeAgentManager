@@ -144,13 +144,31 @@ fun ProjectDetailScreen(
                     }
                 },
                 actions = {
+                    val projectStatus = state.project?.status?.lowercase() ?: ""
+
+                    // Start button
+                    if (projectStatus in listOf("pending", "created", "paused")) {
+                        IconButton(onClick = { viewModel.startProject(state.initialPrompt) }) {
+                            Icon(Icons.Default.PlayArrow, "Start", tint = LumiSuccess)
+                        }
+                    }
+                    // Pause button
+                    if (projectStatus in listOf("active", "running")) {
+                        IconButton(onClick = { viewModel.pauseProject() }) {
+                            Icon(Icons.Default.Pause, "Pause", tint = LumiWarning)
+                        }
+                    }
+                    // Complete button
+                    if (projectStatus in listOf("active", "running")) {
+                        IconButton(onClick = { viewModel.completeProject() }) {
+                            Icon(Icons.Default.CheckCircle, "Complete", tint = LumiInfo)
+                        }
+                    }
+
+                    // More menu (delete)
                     Box {
                         IconButton(onClick = { showMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "More",
-                                tint = LumiOnSurfaceSecondary
-                            )
+                            Icon(Icons.Default.MoreVert, "More", tint = LumiOnSurfaceSecondary)
                         }
                         DropdownMenu(
                             expanded = showMenu,
@@ -158,13 +176,7 @@ fun ProjectDetailScreen(
                         ) {
                             DropdownMenuItem(
                                 text = { Text("Delete", color = LumiError) },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = null,
-                                        tint = LumiError
-                                    )
-                                },
+                                leadingIcon = { Icon(Icons.Default.Delete, null, tint = LumiError) },
                                 onClick = {
                                     showMenu = false
                                     viewModel.deleteProject()
@@ -213,25 +225,6 @@ fun ProjectDetailScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                // Compact header with status + actions
-                state.project?.let { project ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        ProjectStatusChip(status = project.status)
-                        ProjectActionButtons(
-                            status = project.status,
-                            onStart = { viewModel.startProject(state.initialPrompt) },
-                            onPause = viewModel::pauseProject,
-                            onComplete = viewModel::completeProject
-                        )
-                    }
-                }
-
                 // Tab row
                 androidx.compose.material3.ScrollableTabRow(
                     selectedTabIndex = selectedTab,

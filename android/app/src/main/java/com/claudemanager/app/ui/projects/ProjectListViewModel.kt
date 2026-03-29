@@ -16,12 +16,22 @@ import kotlinx.coroutines.launch
 /**
  * UI state for the project list screen.
  */
+enum class ProjectSortOption(val label: String) {
+    NEWEST("Newest"),
+    OLDEST("Oldest"),
+    NAME("Name"),
+    STATUS("Status")
+}
+
 data class ProjectListUiState(
     val projects: List<Project> = emptyList(),
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
-    val showCreateDialog: Boolean = false
+    val showCreateDialog: Boolean = false,
+    val statusFilter: String? = null,
+    val sortOption: ProjectSortOption = ProjectSortOption.NEWEST,
+    val searchQuery: String = ""
 )
 
 /**
@@ -118,6 +128,50 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
      */
     fun showCreateDialog(show: Boolean) {
         _uiState.update { it.copy(showCreateDialog = show) }
+    }
+
+    fun setStatusFilter(status: String?) {
+        _uiState.update { it.copy(statusFilter = status) }
+    }
+
+    fun setSortOption(option: ProjectSortOption) {
+        _uiState.update { it.copy(sortOption = option) }
+    }
+
+    fun setSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    /**
+     * Get filtered and sorted projects.
+     */
+    fun getFilteredProjects(): List<Project> {
+        val state = _uiState.value
+        var list = state.projects
+
+        // Filter by status
+        state.statusFilter?.let { filter ->
+            list = list.filter { it.status.equals(filter, ignoreCase = true) }
+        }
+
+        // Filter by search
+        if (state.searchQuery.isNotBlank()) {
+            val q = state.searchQuery.lowercase()
+            list = list.filter {
+                it.name.lowercase().contains(q) ||
+                it.description.lowercase().contains(q)
+            }
+        }
+
+        // Sort
+        list = when (state.sortOption) {
+            ProjectSortOption.NEWEST -> list.sortedByDescending { it.createdAt ?: "" }
+            ProjectSortOption.OLDEST -> list.sortedBy { it.createdAt ?: "" }
+            ProjectSortOption.NAME -> list.sortedBy { it.name.lowercase() }
+            ProjectSortOption.STATUS -> list.sortedBy { it.status }
+        }
+
+        return list
     }
 
     /**
