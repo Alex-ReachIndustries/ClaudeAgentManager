@@ -1,6 +1,7 @@
 package com.claudemanager.app.ui.projects
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.foundation.layout.Arrangement
@@ -12,12 +13,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,6 +34,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -65,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.claudemanager.app.data.models.Agent
+import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.Project
 import com.claudemanager.app.data.models.ProjectUpdate
 import com.claudemanager.app.ui.theme.LumiBackground
@@ -91,6 +96,7 @@ import com.claudemanager.app.util.TimeUtils
 fun ProjectDetailScreen(
     projectId: String,
     onBack: () -> Unit,
+    onNavigateToAgent: (String) -> Unit = {},
     viewModel: ProjectDetailViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -259,7 +265,30 @@ fun ProjectDetailScreen(
                         )
                     }
                     item {
-                        AgentRoster(agents = state.agents)
+                        AgentRoster(
+                            agents = state.agents,
+                            pmAgentId = state.project?.pmAgentId,
+                            selectedAgentId = state.selectedAgentId,
+                            onAgentClick = { onNavigateToAgent(it) },
+                            onMessageAgent = { viewModel.selectAgent(it) }
+                        )
+                    }
+                }
+
+                // Communication section
+                if (state.agents.isNotEmpty()) {
+                    item {
+                        CommunicationSection(
+                            agents = state.agents,
+                            pmAgentId = state.project?.pmAgentId,
+                            selectedAgentId = state.selectedAgentId,
+                            onSelectAgent = viewModel::selectAgent,
+                            messages = state.agentMessages,
+                            messageText = state.messageText,
+                            onMessageTextChange = viewModel::updateMessageText,
+                            isSending = state.isSendingMessage,
+                            onSend = viewModel::sendMessage
+                        )
                     }
                 }
 
@@ -505,13 +534,25 @@ private fun ProjectActionButtons(
  * Horizontal LazyRow of agent chips with role and status.
  */
 @Composable
-private fun AgentRoster(agents: List<Agent>) {
+private fun AgentRoster(
+    agents: List<Agent>,
+    pmAgentId: String?,
+    selectedAgentId: String?,
+    onAgentClick: (String) -> Unit,
+    onMessageAgent: (String) -> Unit
+) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 0.dp)
     ) {
         items(agents, key = { it.id }) { agent ->
-            AgentChip(agent = agent)
+            AgentChip(
+                agent = agent,
+                isPM = agent.id == pmAgentId,
+                isSelected = agent.id == selectedAgentId,
+                onClick = { onAgentClick(agent.id) },
+                onMessage = { onMessageAgent(agent.id) }
+            )
         }
     }
 }
@@ -520,38 +561,69 @@ private fun AgentRoster(agents: List<Agent>) {
  * Individual agent chip in the roster.
  */
 @Composable
-private fun AgentChip(agent: Agent) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = LumiCard),
-        shape = RoundedCornerShape(10.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+private fun AgentChip(
+    agent: Agent,
+    isPM: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onMessage: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = LumiCard),
+            shape = RoundedCornerShape(10.dp),
+            border = if (isSelected) {
+                androidx.compose.foundation.BorderStroke(1.dp, LumiPurple500)
+            } else null,
+            modifier = Modifier.clickable(onClick = onClick)
         ) {
-            // Status dot
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(agentStatusColor(agent.status))
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Column {
-                Text(
-                    text = agent.role ?: agent.title,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = LumiOnSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Status dot
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(agentStatusColor(agent.status))
                 )
-                Text(
-                    text = agent.status.displayName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LumiOnSurfaceTertiary
-                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = agent.role ?: agent.title,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LumiOnSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (isPM) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "PM",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LumiPurple500
+                            )
+                        }
+                    }
+                    Text(
+                        text = agent.status.displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                }
             }
         }
+        // Message shortcut below chip
+        Text(
+            text = if (isSelected) "✓ Messaging" else "Message",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isSelected) LumiPurple500 else LumiOnSurfaceTertiary,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .clickable(onClick = onMessage)
+        )
     }
 }
 
@@ -618,6 +690,200 @@ private fun TimelineEntry(update: ProjectUpdate) {
                 style = MaterialTheme.typography.labelSmall,
                 color = LumiOnSurfaceTertiary
             )
+        }
+    }
+}
+
+/**
+ * Communication section for messaging project agents.
+ */
+@Composable
+private fun CommunicationSection(
+    agents: List<Agent>,
+    pmAgentId: String?,
+    selectedAgentId: String?,
+    onSelectAgent: (String?) -> Unit,
+    messages: List<AgentMessage>,
+    messageText: String,
+    onMessageTextChange: (String) -> Unit,
+    isSending: Boolean,
+    onSend: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = LumiCard),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Communication",
+                style = MaterialTheme.typography.titleSmall,
+                color = LumiOnSurfaceSecondary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Agent selector chips
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(agents, key = { it.id }) { agent ->
+                    val isSelected = agent.id == selectedAgentId
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) LumiPurple500.copy(alpha = 0.2f)
+                                else LumiBackground
+                            )
+                            .clickable { onSelectAgent(agent.id) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = buildString {
+                                if (agent.id == pmAgentId) append("⭐ ")
+                                append(agent.role ?: agent.title)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) LumiPurple500 else LumiOnSurfaceSecondary,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            if (selectedAgentId != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Message history
+                val msgListState = rememberLazyListState()
+                val recentMessages = messages.takeLast(20)
+
+                LaunchedEffect(recentMessages.size) {
+                    if (recentMessages.isNotEmpty()) {
+                        msgListState.animateScrollToItem(recentMessages.lastIndex)
+                    }
+                }
+
+                LazyColumn(
+                    state = msgListState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 250.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (recentMessages.isEmpty()) {
+                        item {
+                            Text(
+                                text = "No messages yet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LumiOnSurfaceTertiary,
+                                modifier = Modifier.padding(vertical = 16.dp)
+                            )
+                        }
+                    } else {
+                        items(recentMessages, key = { it.id }) { msg ->
+                            MessageBubble(msg)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Message input
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = messageText,
+                        onValueChange = onMessageTextChange,
+                        placeholder = { Text("Message agent...") },
+                        maxLines = 3,
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LumiPurple500,
+                            unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
+                            cursorColor = LumiPurple500,
+                            focusedTextColor = LumiOnSurface,
+                            unfocusedTextColor = LumiOnSurface,
+                            focusedContainerColor = LumiBackground,
+                            unfocusedContainerColor = LumiBackground
+                        )
+                    )
+                    IconButton(
+                        onClick = onSend,
+                        enabled = !isSending && messageText.isNotBlank()
+                    ) {
+                        if (isSending) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = LumiPurple500,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Send,
+                                contentDescription = "Send",
+                                tint = if (messageText.isNotBlank()) LumiPurple500
+                                else LumiOnSurfaceTertiary
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Select an agent above to send messages.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LumiOnSurfaceTertiary
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A single message bubble in the conversation.
+ */
+@Composable
+private fun MessageBubble(msg: AgentMessage) {
+    val isUser = msg.source == "user"
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    if (isUser) LumiPurple500.copy(alpha = 0.15f)
+                    else LumiBackground
+                )
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .fillMaxWidth(0.85f)
+        ) {
+            Column {
+                Text(
+                    text = msg.content,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LumiOnSurface
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = buildString {
+                        append(if (isUser) "You" else "Agent")
+                        append(" · ")
+                        append(TimeUtils.timeAgo(msg.createdAt))
+                        if (msg.status.displayName != "Executed") {
+                            append(" · ")
+                            append(msg.status.displayName.lowercase())
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LumiOnSurfaceTertiary
+                )
+            }
         }
     }
 }

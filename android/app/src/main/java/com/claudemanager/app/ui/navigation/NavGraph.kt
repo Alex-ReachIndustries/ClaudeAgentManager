@@ -230,7 +230,10 @@ fun AppNavGraph(
                 val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
                 ProjectDetailScreen(
                     projectId = projectId,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    onNavigateToAgent = { agentId ->
+                        navController.navigate(Routes.agentDetail(agentId))
+                    }
                 )
             }
 

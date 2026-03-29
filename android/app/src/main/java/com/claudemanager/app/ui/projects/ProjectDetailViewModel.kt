@@ -26,7 +26,11 @@ data class ProjectDetailUiState(
     val error: String? = null,
     val actionMessage: String? = null,
     val isDeleted: Boolean = false,
-    val initialPrompt: String = ""
+    val initialPrompt: String = "",
+    val selectedAgentId: String? = null,
+    val messageText: String = "",
+    val isSendingMessage: Boolean = false,
+    val agentMessages: List<com.claudemanager.app.data.models.AgentMessage> = emptyList()
 )
 
 /**
@@ -65,13 +69,30 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     private fun silentRefresh() {
         viewModelScope.launch {
             repository.getProject(projectId).onSuccess { project ->
-                _uiState.update { it.copy(project = project) }
+                _uiState.update { st ->
+                    // Auto-select PM agent if nothing selected yet
+                    val sel = if (st.selectedAgentId == null && project.pmAgentId != null) {
+                        project.pmAgentId
+                    } else {
+                        st.selectedAgentId
+                    }
+                    st.copy(project = project, selectedAgentId = sel)
+                }
+                // If PM was auto-selected, load its messages
+                val currentSel = _uiState.value.selectedAgentId
+                if (currentSel != null && _uiState.value.agentMessages.isEmpty()) {
+                    loadAgentMessages(currentSel)
+                }
             }
             repository.getProjectAgents(projectId).onSuccess { agents ->
                 _uiState.update { it.copy(agents = agents) }
             }
             repository.getProjectUpdates(projectId).onSuccess { updates ->
                 _uiState.update { it.copy(updates = updates) }
+            }
+            // Refresh messages for selected agent
+            _uiState.value.selectedAgentId?.let { agentId ->
+                loadAgentMessages(agentId)
             }
         }
     }
@@ -184,5 +205,61 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
      */
     fun clearActionMessage() {
         _uiState.update { it.copy(actionMessage = null) }
+    }
+
+    /**
+     * Select an agent for messaging.
+     */
+    fun selectAgent(agentId: String?) {
+        _uiState.update { it.copy(selectedAgentId = agentId, agentMessages = emptyList()) }
+        if (agentId != null) loadAgentMessages(agentId)
+    }
+
+    /**
+     * Update the message text input.
+     */
+    fun updateMessageText(text: String) {
+        _uiState.update { it.copy(messageText = text) }
+    }
+
+    /**
+     * Send a message to the selected agent.
+     */
+    fun sendMessage() {
+        val agentId = _uiState.value.selectedAgentId ?: return
+        val content = _uiState.value.messageText.trim()
+        if (content.isEmpty()) return
+
+        _uiState.update { it.copy(isSendingMessage = true) }
+        viewModelScope.launch {
+            repository.sendMessage(agentId, content)
+                .onSuccess {
+                    _uiState.update { it.copy(messageText = "", isSendingMessage = false) }
+                    loadAgentMessages(agentId)
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(
+                            isSendingMessage = false,
+                            actionMessage = "Failed to send: ${e.message}"
+                        )
+                    }
+                }
+        }
+    }
+
+    /**
+     * Load messages for the selected agent.
+     */
+    private fun loadAgentMessages(agentId: String) {
+        viewModelScope.launch {
+            repository.getMessages(agentId)
+                .onSuccess { messages ->
+                    // Only update if this is still the selected agent
+                    if (_uiState.value.selectedAgentId == agentId) {
+                        _uiState.update { it.copy(agentMessages = messages) }
+                    }
+                }
+        }
     }
 }

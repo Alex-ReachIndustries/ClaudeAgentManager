@@ -8,8 +8,9 @@ import {
 import {
   fetchProject, fetchProjectAgents, fetchProjectUpdates,
   startProject, pauseProject, completeProject, deleteProject,
-  sendMessage,
+  sendMessage, fetchMessages,
 } from '../api';
+import type { AgentMessage } from '../types';
 import { formatDate, timeAgo } from '../utils/time';
 
 type ProjectStatus = 'pending' | 'active' | 'paused' | 'completed' | 'failed';
@@ -70,8 +71,10 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [pmMessage, setPmMessage] = useState('');
+  const [agentMessage, setAgentMessage] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -88,6 +91,10 @@ export default function ProjectDetail() {
       setAgents(agentsList);
       const updatesList = Array.isArray(updatesData) ? updatesData : (updatesData?.data ?? []);
       setUpdates(updatesList);
+      // Default to PM agent if available and no selection yet
+      if (!selectedAgentId && proj.pm_agent_id) {
+        setSelectedAgentId(proj.pm_agent_id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load project');
     } finally {
@@ -122,18 +129,38 @@ export default function ProjectDetail() {
     }
   };
 
-  const handleSendToPM = async () => {
-    if (!project?.pm_agent_id || !pmMessage.trim()) return;
+  const handleSendToAgent = async () => {
+    if (!selectedAgentId || !agentMessage.trim()) return;
     setSendingMessage(true);
     try {
-      await sendMessage(project.pm_agent_id, pmMessage.trim());
-      setPmMessage('');
+      await sendMessage(selectedAgentId, agentMessage.trim());
+      setAgentMessage('');
+      // Refresh messages
+      loadAgentMessages(selectedAgentId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setSendingMessage(false);
     }
   };
+
+  const loadAgentMessages = useCallback(async (agentId: string) => {
+    try {
+      const msgs = await fetchMessages(agentId);
+      setAgentMessages(msgs);
+    } catch {
+      setAgentMessages([]);
+    }
+  }, []);
+
+  // Load messages when selected agent changes
+  useEffect(() => {
+    if (selectedAgentId) {
+      loadAgentMessages(selectedAgentId);
+      const interval = setInterval(() => loadAgentMessages(selectedAgentId), 15000);
+      return () => clearInterval(interval);
+    }
+  }, [selectedAgentId, loadAgentMessages]);
 
   if (loading) {
     return (
@@ -293,21 +320,38 @@ export default function ProjectDetail() {
           <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
             {agents.map((agent: any) => {
               const aDot = agentStatusDot[agent.status] ?? 'bg-dark-500';
+              const isSelected = agent.id === selectedAgentId;
               return (
-                <button
-                  key={agent.id}
-                  onClick={() => navigate(`/agent/${agent.id}`)}
-                  className="shrink-0 w-48 bg-dark-800 border border-dark-600 rounded-lg p-3 text-left hover:border-dark-500 transition-colors focus:outline-none focus:ring-2 focus:ring-lumi-500/30"
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`w-2 h-2 rounded-full ${aDot} ${['active', 'working'].includes(agent.status) ? 'animate-pulse' : ''}`} />
-                    <span className="text-xs text-dark-400 capitalize">{agent.status}</span>
-                  </div>
-                  {agent.role && (
-                    <p className="text-xs text-lumi-400 font-medium mb-1 truncate">{agent.role}</p>
-                  )}
-                  <p className="text-sm text-dark-200 font-medium truncate">{agent.title || 'Untitled'}</p>
-                </button>
+                <div key={agent.id} className="shrink-0 w-48 flex flex-col gap-1">
+                  <button
+                    onClick={() => navigate(`/agent/${agent.id}`)}
+                    className={`w-full bg-dark-800 border rounded-lg p-3 text-left hover:border-dark-500 transition-colors focus:outline-none focus:ring-2 focus:ring-lumi-500/30 ${
+                      isSelected ? 'border-lumi-500' : 'border-dark-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`w-2 h-2 rounded-full ${aDot} ${['active', 'working'].includes(agent.status) ? 'animate-pulse' : ''}`} />
+                      <span className="text-xs text-dark-400 capitalize">{agent.status}</span>
+                      {agent.id === project.pm_agent_id && (
+                        <span className="text-xs text-lumi-400 ml-auto">PM</span>
+                      )}
+                    </div>
+                    {agent.role && (
+                      <p className="text-xs text-lumi-400 font-medium mb-1 truncate">{agent.role}</p>
+                    )}
+                    <p className="text-sm text-dark-200 font-medium truncate">{agent.title || 'Untitled'}</p>
+                  </button>
+                  <button
+                    onClick={() => setSelectedAgentId(agent.id)}
+                    className={`text-xs py-1 rounded transition-colors ${
+                      isSelected
+                        ? 'text-lumi-400 bg-lumi-600/10'
+                        : 'text-dark-500 hover:text-dark-300'
+                    }`}
+                  >
+                    {isSelected ? '✓ Messaging' : 'Message'}
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -363,36 +407,81 @@ export default function ProjectDetail() {
         </div>
 
         {/* Communication panel */}
-        <div className="bg-dark-900 border border-dark-700 rounded-xl p-6">
-          <h2 className="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-4">Communication</h2>
+        <div className="bg-dark-900 border border-dark-700 rounded-xl p-6 flex flex-col" style={{ maxHeight: '500px' }}>
+          <h2 className="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">Communication</h2>
 
-          {project.pm_agent_id ? (
-            <div>
-              <p className="text-xs text-dark-500 mb-3">
-                Send a message to the PM agent
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={pmMessage}
-                  onChange={(e) => setPmMessage(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendToPM(); } }}
-                  placeholder="Message PM..."
-                  className="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors"
-                />
-                <button
-                  onClick={handleSendToPM}
-                  disabled={sendingMessage || !pmMessage.trim()}
-                  className="px-3 py-2 bg-lumi-600 hover:bg-lumi-500 disabled:opacity-50 text-white rounded-lg transition-colors"
-                >
-                  {sendingMessage ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                </button>
-              </div>
+          {agents.length > 0 ? (
+            <div className="flex flex-col flex-1 min-h-0">
+              {/* Agent selector */}
+              <select
+                value={selectedAgentId ?? ''}
+                onChange={(e) => setSelectedAgentId(e.target.value || null)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500 transition-colors mb-3"
+              >
+                <option value="">Select agent...</option>
+                {agents.map((agent: any) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.id === project.pm_agent_id ? '⭐ PM: ' : ''}
+                    {agent.role || agent.title || agent.id.slice(0, 8)}
+                    {' '}({agent.status})
+                  </option>
+                ))}
+              </select>
+
+              {selectedAgentId ? (
+                <>
+                  {/* Message history */}
+                  <div className="flex-1 overflow-y-auto space-y-2 mb-3 min-h-0" style={{ maxHeight: '280px' }}>
+                    {agentMessages.length === 0 ? (
+                      <p className="text-xs text-dark-600 text-center py-4">No messages yet.</p>
+                    ) : (
+                      agentMessages.slice(-20).map((msg: AgentMessage) => (
+                        <div
+                          key={msg.id}
+                          className={`px-3 py-2 rounded-lg text-sm ${
+                            msg.source === 'user'
+                              ? 'bg-lumi-600/20 border border-lumi-600/30 text-dark-200 ml-4'
+                              : 'bg-dark-800 border border-dark-700 text-dark-300 mr-4'
+                          }`}
+                        >
+                          <p className="break-words">{msg.content}</p>
+                          <p className="text-xs text-dark-600 mt-1">
+                            {msg.source === 'user' ? 'You' : 'Agent'} · {timeAgo(msg.created_at)}
+                            {msg.status === 'pending' && ' · pending'}
+                            {msg.status === 'delivered' && ' · delivered'}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Send input */}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={agentMessage}
+                      onChange={(e) => setAgentMessage(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendToAgent(); } }}
+                      placeholder="Message agent..."
+                      className="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors"
+                    />
+                    <button
+                      onClick={handleSendToAgent}
+                      disabled={sendingMessage || !agentMessage.trim()}
+                      className="px-3 py-2 bg-lumi-600 hover:bg-lumi-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                    >
+                      {sendingMessage ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-dark-500 text-center py-4">Select an agent to send messages.</p>
+              )}
             </div>
           ) : (
             <div className="text-center py-4">
               <AlertTriangle size={20} className="mx-auto text-dark-600 mb-2" />
-              <p className="text-sm text-dark-500">No PM agent assigned yet.</p>
+              <p className="text-sm text-dark-500">No agents assigned yet.</p>
               <p className="text-xs text-dark-600 mt-1">Start the project to spawn a PM agent.</p>
             </div>
           )}
