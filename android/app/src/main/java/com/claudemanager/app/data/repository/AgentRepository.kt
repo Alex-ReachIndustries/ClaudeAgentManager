@@ -18,6 +18,7 @@ import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.LaunchRequest
 import com.claudemanager.app.data.models.Project
+import com.claudemanager.app.data.models.ProjectFile
 import com.claudemanager.app.data.models.ProjectUpdate
 import com.claudemanager.app.data.models.RelayBody
 import com.claudemanager.app.data.models.RetentionRunResult
@@ -351,6 +352,13 @@ class AgentRepository {
     suspend fun getProjectUpdates(id: String): Result<List<ProjectUpdate>> = apiCall {
         api.getProjectUpdates(id)
     }.map { it.data }
+
+    /**
+     * Get files from all agents in a project.
+     */
+    suspend fun getProjectFiles(id: String): Result<List<ProjectFile>> = apiCall {
+        api.getProjectFiles(id)
+    }
 
     /**
      * Start a project.

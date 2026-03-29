@@ -13,6 +13,7 @@ import {
   getActiveProjectAgentCount,
   createLaunchRequest,
   updateAgent,
+  getFilesMeta,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { validate } from "../middleware/validate.js";
@@ -62,12 +63,25 @@ UPDATE PROJECT STATUS:
 SUSPEND SUB-AGENT:
   POST /api/agents/{sub_agent_id}/close
 
+UPLOAD PROJECT FILES:
+  POST /api/agents/{your_agent_id}/files (multipart/form-data)
+  Agents can upload files relevant to the project (reports, artifacts, outputs).
+
 Your approach:
 1. Analyze the project goal and break it into phases
 2. Spawn specialized sub-agents for each phase
 3. Monitor their progress and coordinate handoffs
 4. Report milestones to the user via project updates
 5. When all phases complete, mark project as completed
+
+CRITICAL — Timeline Updates:
+You MUST keep the project timeline updated. Post updates when:
+- A sub-agent is spawned (type: "info")
+- A sub-agent completes a significant task (type: "milestone")
+- You make an important decision (type: "decision")
+- A sub-agent encounters an error (type: "info")
+- A phase transitions or completes (type: "milestone")
+The user monitors progress via the project timeline. Silence = confusion.
 
 Available utility roles: Disk Cleanup, Docker Manager, System Monitor, Build Runner
 
@@ -329,6 +343,41 @@ router.delete("/:id", (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "Error deleting project");
     res.status(500).json({ error: "Failed to delete project" });
+  }
+});
+
+// GET /:id/files — list all files from all project agents
+router.get("/:id/files", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const project = getProject(id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    const agents = getProjectAgents(id);
+    const allFiles: Record<string, unknown>[] = [];
+
+    for (const agent of agents) {
+      const agentId = (agent as Record<string, unknown>).id as string;
+      const agentRole = (agent as Record<string, unknown>).role as string || "Agent";
+      const result = getFilesMeta(agentId, 100);
+      const files = result.data || [];
+      for (const file of files) {
+        allFiles.push({ ...file, agent_role: agentRole });
+      }
+    }
+
+    // Sort by created_at descending
+    allFiles.sort((a, b) =>
+      String(b.created_at || "").localeCompare(String(a.created_at || ""))
+    );
+
+    res.json(allFiles);
+  } catch (err) {
+    logger.error({ err }, "Error listing project files");
+    res.status(500).json({ error: "Failed to list project files" });
   }
 });
 

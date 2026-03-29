@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.Project
+import com.claudemanager.app.data.models.ProjectFile
 import com.claudemanager.app.data.models.ProjectUpdate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ data class ProjectDetailUiState(
     val project: Project? = null,
     val agents: List<Agent> = emptyList(),
     val updates: List<ProjectUpdate> = emptyList(),
+    val files: List<ProjectFile> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val actionMessage: String? = null,
@@ -90,6 +92,9 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
             repository.getProjectUpdates(projectId).onSuccess { updates ->
                 _uiState.update { it.copy(updates = updates) }
             }
+            repository.getProjectFiles(projectId).onSuccess { files ->
+                _uiState.update { it.copy(files = files) }
+            }
             // Refresh messages for selected agent
             _uiState.value.selectedAgentId?.let { agentId ->
                 loadAgentMessages(agentId)
@@ -121,6 +126,11 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
             repository.getProjectUpdates(projectId)
                 .onSuccess { updates ->
                     _uiState.update { it.copy(updates = updates) }
+                }
+
+            repository.getProjectFiles(projectId)
+                .onSuccess { files ->
+                    _uiState.update { it.copy(files = files) }
                 }
         }
     }

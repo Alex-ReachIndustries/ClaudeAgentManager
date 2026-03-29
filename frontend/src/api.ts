@@ -210,6 +210,7 @@ export async function completeProject(id: string) { return request(`/projects/${
 export async function deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }); }
 export async function spawnProjectAgent(id: string, role: string, prompt: string) { return request(`/projects/${id}/spawn-agent`, { method: 'POST', body: JSON.stringify({ role, prompt }) }); }
 export async function addProjectUpdate(id: string, type: string, content: string) { return request(`/projects/${id}/updates`, { method: 'POST', body: JSON.stringify({ type, content }) }); }
+export async function fetchProjectFiles(id: string) { return request<any[]>(`/projects/${id}/files`); }
 
 // --- Workflows ---
 export async function fetchWorkflows() { return request<any[]>('/workflows'); }

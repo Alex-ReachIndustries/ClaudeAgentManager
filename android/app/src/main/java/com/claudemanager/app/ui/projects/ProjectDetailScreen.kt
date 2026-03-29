@@ -71,6 +71,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.Project
+import com.claudemanager.app.data.models.ProjectFile
 import com.claudemanager.app.data.models.ProjectUpdate
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
@@ -204,47 +205,24 @@ fun ProjectDetailScreen(
                 )
             }
         } else {
-            LazyColumn(
+            val tabTitles = listOf("Info", "Agents", "Messages", "Timeline", "Files")
+            var selectedTab by remember { mutableStateOf(0) }
+
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Header card
+                // Compact header with status + actions
                 state.project?.let { project ->
-                    item {
-                        ProjectHeaderCard(project = project)
-                    }
-
-                    // Initial prompt input for starting projects
-                    if (project.status == "pending" || project.status == "paused") {
-                        item {
-                            OutlinedTextField(
-                                value = state.initialPrompt,
-                                onValueChange = viewModel::updateInitialPrompt,
-                                label = { Text("Initial Prompt for Project Manager") },
-                                placeholder = { Text("Describe the task...") },
-                                minLines = 3,
-                                maxLines = 6,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = LumiPurple500,
-                                    unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
-                                    cursorColor = LumiPurple500,
-                                    focusedTextColor = LumiOnSurface,
-                                    unfocusedTextColor = LumiOnSurface,
-                                    focusedContainerColor = LumiCard,
-                                    unfocusedContainerColor = LumiCard,
-                                    focusedLabelColor = LumiPurple500,
-                                    unfocusedLabelColor = LumiOnSurfaceTertiary
-                                )
-                            )
-                        }
-                    }
-
-                    // Action buttons
-                    item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        ProjectStatusChip(status = project.status)
                         ProjectActionButtons(
                             status = project.status,
                             onStart = { viewModel.startProject(state.initialPrompt) },
@@ -254,30 +232,135 @@ fun ProjectDetailScreen(
                     }
                 }
 
-                // Agent roster
-                if (state.agents.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Agents",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = LumiOnSurfaceSecondary,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-                    item {
-                        AgentRoster(
-                            agents = state.agents,
-                            pmAgentId = state.project?.pmAgentId,
-                            selectedAgentId = state.selectedAgentId,
-                            onAgentClick = { onNavigateToAgent(it) },
-                            onMessageAgent = { viewModel.selectAgent(it) }
+                // Tab row
+                androidx.compose.material3.ScrollableTabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = LumiBackground,
+                    contentColor = LumiPurple500,
+                    edgePadding = 16.dp,
+                    divider = {}
+                ) {
+                    tabTitles.forEachIndexed { index, title ->
+                        val count = when (index) {
+                            1 -> state.agents.size
+                            3 -> state.updates.size
+                            4 -> state.files.size
+                            else -> 0
+                        }
+                        androidx.compose.material3.Tab(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index },
+                            text = {
+                                Text(
+                                    text = if (count > 0) "$title ($count)" else title,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            },
+                            selectedContentColor = LumiPurple500,
+                            unselectedContentColor = LumiOnSurfaceTertiary
                         )
                     }
                 }
 
-                // Communication section
-                if (state.agents.isNotEmpty()) {
-                    item {
+                // Tab content
+                when (selectedTab) {
+                    // ── Info tab ──
+                    0 -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            state.project?.let { project ->
+                                item { ProjectHeaderCard(project = project) }
+
+                                if (project.status == "pending" || project.status == "paused") {
+                                    item {
+                                        OutlinedTextField(
+                                            value = state.initialPrompt,
+                                            onValueChange = viewModel::updateInitialPrompt,
+                                            label = { Text("Initial Prompt for Project Manager") },
+                                            placeholder = { Text("Describe the task...") },
+                                            minLines = 3,
+                                            maxLines = 6,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = LumiPurple500,
+                                                unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
+                                                cursorColor = LumiPurple500,
+                                                focusedTextColor = LumiOnSurface,
+                                                unfocusedTextColor = LumiOnSurface,
+                                                focusedContainerColor = LumiCard,
+                                                unfocusedContainerColor = LumiCard,
+                                                focusedLabelColor = LumiPurple500,
+                                                unfocusedLabelColor = LumiOnSurfaceTertiary
+                                            )
+                                        )
+                                    }
+                                }
+
+                                // Project details card
+                                item {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = LumiCard),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            if (project.folderPath.isNotBlank()) {
+                                                DetailRow("Path", project.folderPath)
+                                            }
+                                            DetailRow("Max Concurrent", "${project.maxConcurrent}")
+                                            DetailRow("Agents", "${project.activeAgentCount ?: 0} active / ${project.totalAgentCount ?: 0} total")
+                                            DetailRow("Files", "${state.files.size}")
+                                            project.pmAgentId?.let {
+                                                DetailRow("PM Agent", it.take(8) + "...")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Agents tab ──
+                    1 -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            if (state.agents.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "No agents assigned yet.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LumiOnSurfaceTertiary,
+                                        modifier = Modifier.padding(vertical = 32.dp)
+                                    )
+                                }
+                            } else {
+                                items(state.agents, key = { it.id }) { agent ->
+                                    AgentListCard(
+                                        agent = agent,
+                                        isPM = agent.id == state.project?.pmAgentId,
+                                        onClick = { onNavigateToAgent(agent.id) },
+                                        onMessage = {
+                                            viewModel.selectAgent(agent.id)
+                                            selectedTab = 2 // Switch to Messages tab
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Messages tab ──
+                    2 -> {
                         CommunicationSection(
                             agents = state.agents,
                             pmAgentId = state.project?.pmAgentId,
@@ -287,28 +370,63 @@ fun ProjectDetailScreen(
                             messageText = state.messageText,
                             onMessageTextChange = viewModel::updateMessageText,
                             isSending = state.isSendingMessage,
-                            onSend = viewModel::sendMessage
+                            onSend = viewModel::sendMessage,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                         )
                     }
-                }
 
-                // Project timeline
-                if (state.updates.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Timeline",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = LumiOnSurfaceSecondary,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
+                    // ── Timeline tab ──
+                    3 -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            if (state.updates.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "No updates yet.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LumiOnSurfaceTertiary,
+                                        modifier = Modifier.padding(vertical = 32.dp)
+                                    )
+                                }
+                            } else {
+                                items(state.updates, key = { it.id }) { update ->
+                                    TimelineEntry(update = update)
+                                }
+                            }
+                        }
                     }
-                    items(state.updates, key = { it.id }) { update ->
-                        TimelineEntry(update = update)
+
+                    // ── Files tab ──
+                    4 -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            if (state.files.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "No files shared by agents yet.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LumiOnSurfaceTertiary,
+                                        modifier = Modifier.padding(vertical = 32.dp)
+                                    )
+                                }
+                            } else {
+                                items(state.files, key = { it.id }) { file ->
+                                    FileCard(file = file)
+                                }
+                            }
+                        }
                     }
                 }
-
-                // Bottom spacer
-                item { Spacer(modifier = Modifier.height(16.dp)) }
             }
         }
     }
@@ -695,6 +813,159 @@ private fun TimelineEntry(update: ProjectUpdate) {
 }
 
 /**
+ * A row showing a label + value in the info tab.
+ */
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = LumiOnSurfaceTertiary
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = LumiOnSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 16.dp)
+        )
+    }
+}
+
+/**
+ * Agent card for the Agents tab with navigation and message shortcuts.
+ */
+@Composable
+private fun AgentListCard(
+    agent: Agent,
+    isPM: Boolean,
+    onClick: () -> Unit,
+    onMessage: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = LumiCard),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(agentStatusColor(agent.status))
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = agent.role ?: agent.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LumiOnSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isPM) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "PM",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiPurple500
+                        )
+                    }
+                }
+                Text(
+                    text = agent.status.displayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LumiOnSurfaceTertiary
+                )
+            }
+            IconButton(onClick = onMessage) {
+                Icon(
+                    imageVector = Icons.Default.Send,
+                    contentDescription = "Message",
+                    tint = LumiOnSurfaceTertiary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * File card for the Files tab.
+ */
+@Composable
+private fun FileCard(file: ProjectFile) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = LumiCard),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = null,
+                tint = LumiOnSurfaceTertiary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file.filename,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LumiOnSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = file.agentRole ?: "Agent",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                    Text(
+                        text = "${file.size / 1024} KB",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                    file.createdAt?.let {
+                        Text(
+                            text = TimeUtils.timeAgo(it),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                    }
+                }
+                file.description?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * Communication section for messaging project agents.
  */
 @Composable
@@ -707,20 +978,10 @@ private fun CommunicationSection(
     messageText: String,
     onMessageTextChange: (String) -> Unit,
     isSending: Boolean,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = LumiCard),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Communication",
-                style = MaterialTheme.typography.titleSmall,
-                color = LumiOnSurfaceSecondary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+    Column(modifier = modifier.fillMaxSize()) {
 
             // Agent selector chips
             LazyRow(
@@ -842,6 +1103,8 @@ private fun CommunicationSection(
         }
     }
 }
+
+// Remove old AgentRoster since we now use AgentListCard in the Agents tab
 
 /**
  * A single message bubble in the conversation.

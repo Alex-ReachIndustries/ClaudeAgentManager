@@ -312,6 +312,12 @@ interface AgentApi {
     suspend fun completeProject(@Path("id") id: String): Response<OkResponse>
 
     /**
+     * Get files from all agents in a project.
+     */
+    @GET("api/projects/{id}/files")
+    suspend fun getProjectFiles(@Path("id") id: String): Response<List<ProjectFile>>
+
+    /**
      * Delete a project.
      */
     @DELETE("api/projects/{id}")

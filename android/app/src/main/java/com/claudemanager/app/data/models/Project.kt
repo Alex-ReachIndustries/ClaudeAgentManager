@@ -65,6 +65,38 @@ data class ProjectUpdate(
 )
 
 /**
+ * A file shared by an agent within a project.
+ */
+data class ProjectFile(
+    @SerializedName("id")
+    val id: Int,
+
+    @SerializedName("agent_id")
+    val agentId: String,
+
+    @SerializedName("agent_role")
+    val agentRole: String?,
+
+    @SerializedName("filename")
+    val filename: String,
+
+    @SerializedName("mimetype")
+    val mimetype: String?,
+
+    @SerializedName("size")
+    val size: Long,
+
+    @SerializedName("source")
+    val source: String?,
+
+    @SerializedName("description")
+    val description: String?,
+
+    @SerializedName("created_at")
+    val createdAt: String?
+)
+
+/**
  * Request body for creating a new project.
  */
 data class CreateProjectBody(
