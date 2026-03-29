@@ -443,23 +443,29 @@ export default function ProjectDetail() {
                       {agentMessages.length === 0 ? (
                         <p className="text-xs text-dark-600 text-center py-8">No messages yet.</p>
                       ) : (
-                        agentMessages.slice(-30).map((msg: AgentMessage) => (
+                        agentMessages.slice(-30).map((msg: AgentMessage) => {
+                          const isUser = msg.source === 'user';
+                          const isRelay = !!msg.source_agent_id;
+                          return (
                           <div
                             key={msg.id}
                             className={`px-3 py-2 rounded-lg text-sm ${
-                              msg.source === 'user'
+                              isUser
                                 ? 'bg-lumi-600/20 border border-lumi-600/30 text-dark-200 ml-8'
-                                : 'bg-dark-800 border border-dark-700 text-dark-300 mr-8'
+                                : isRelay
+                                  ? 'bg-blue-900/20 border border-blue-700/30 text-dark-200 mr-8'
+                                  : 'bg-dark-800 border border-dark-700 text-dark-300 mr-8'
                             }`}
                           >
                             <p className="break-words">{msg.content}</p>
                             <p className="text-xs text-dark-600 mt-1">
-                              {msg.source === 'user' ? 'You' : 'Agent'} · {timeAgo(msg.created_at)}
+                              {isUser ? 'You' : isRelay ? `Agent ${msg.source_agent_id?.slice(0, 8)}` : 'Agent'} · {timeAgo(msg.created_at)}
                               {msg.status === 'pending' && ' · pending'}
                               {msg.status === 'delivered' && ' · delivered'}
                             </p>
                           </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
 

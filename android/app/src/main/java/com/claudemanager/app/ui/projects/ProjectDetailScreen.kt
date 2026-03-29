@@ -1102,6 +1102,7 @@ private fun CommunicationSection(
 @Composable
 private fun MessageBubble(msg: AgentMessage) {
     val isUser = msg.source == "user"
+    val isRelay = msg.sourceAgentId != null
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -1110,8 +1111,11 @@ private fun MessageBubble(msg: AgentMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
                 .background(
-                    if (isUser) LumiPurple500.copy(alpha = 0.15f)
-                    else LumiBackground
+                    when {
+                        isUser -> LumiPurple500.copy(alpha = 0.15f)
+                        isRelay -> LumiInfo.copy(alpha = 0.15f)
+                        else -> LumiBackground
+                    }
                 )
                 .padding(horizontal = 12.dp, vertical = 8.dp)
                 .fillMaxWidth(0.85f)
@@ -1125,7 +1129,11 @@ private fun MessageBubble(msg: AgentMessage) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = buildString {
-                        append(if (isUser) "You" else "Agent")
+                        when {
+                            isUser -> append("You")
+                            isRelay -> append("Agent ${msg.sourceAgentId?.take(8)}")
+                            else -> append("Agent")
+                        }
                         append(" · ")
                         append(TimeUtils.timeAgo(msg.createdAt))
                         if (msg.status.displayName != "Executed") {
@@ -1134,7 +1142,7 @@ private fun MessageBubble(msg: AgentMessage) {
                         }
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = LumiOnSurfaceTertiary
+                    color = if (isRelay) LumiInfo else LumiOnSurfaceTertiary
                 )
             }
         }
