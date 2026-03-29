@@ -85,10 +85,17 @@ IMPORTANT: Prefer RESUME over SPAWN. If a sub-agent was previously suspended for
 a similar role, resume it instead of creating a new one. Resumed agents retain
 their full conversation history and context, making them more efficient.
 
+CRITICAL — Terminate Completed Agents:
+When a sub-agent finishes its task, you MUST call SUSPEND SUB-AGENT (POST /close)
+to terminate its process and free system resources. Do NOT leave completed agents
+running. Suspend them immediately after confirming their work is done.
+You can always RESUME them later if needed.
+
 CRITICAL — Timeline Updates:
 You MUST keep the project timeline updated. Post updates when:
 - A sub-agent is spawned (type: "info")
 - A sub-agent completes a significant task (type: "milestone")
+- A sub-agent is suspended after completing work (type: "info")
 - You make an important decision (type: "decision")
 - A sub-agent encounters an error (type: "info")
 - A phase transitions or completes (type: "milestone")
