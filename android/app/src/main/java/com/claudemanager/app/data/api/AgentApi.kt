@@ -15,6 +15,7 @@ import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.OkResponse
 import com.claudemanager.app.data.models.Project
+import com.claudemanager.app.data.models.ProjectFile
 import com.claudemanager.app.data.models.ProjectUpdate
 import com.claudemanager.app.data.models.RelayBody
 import com.claudemanager.app.data.models.RetentionRunResult

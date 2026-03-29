@@ -1102,9 +1102,6 @@ private fun CommunicationSection(
             }
         }
     }
-}
-
-// Remove old AgentRoster since we now use AgentListCard in the Agents tab
 
 /**
  * A single message bubble in the conversation.
