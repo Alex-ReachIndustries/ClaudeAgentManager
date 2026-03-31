@@ -211,7 +211,7 @@ Register with the session UUID:
 \`\`\`bash
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<brief task from user message>","summary":"Session started","content":"Session initialized","workspace":"<root folder name of cwd>"}'
+  -d '{"type":"status","title":"<workspace folder> — <task description>","summary":"Session started","content":"Session initialized","workspace":"<root folder name of cwd>"}'
 \`\`\`
 Check \`pendingMessages\` in response. Act on any found.
 
@@ -325,7 +325,7 @@ POST an update to let the server know this agent is alive. This auto-unarchives 
 \`\`\`bash
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<current task>","summary":"Session resumed","content":"Resumed session — reconnecting to Agent Manager","workspace":"<root folder name of cwd>"}'
+  -d '{"type":"status","title":"<workspace folder> — <task description>","summary":"Session resumed","content":"Resumed session — reconnecting to Agent Manager","workspace":"<root folder name of cwd>"}'
 \`\`\`
 Check \`pendingMessages\` in response.
 
