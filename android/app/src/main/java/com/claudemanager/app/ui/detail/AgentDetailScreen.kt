@@ -358,6 +358,7 @@ fun AgentDetailScreen(
                             ConversationPanel(
                                 updates = state.updates,
                                 messages = state.messages,
+                                files = state.files,
                                 isSending = state.isSendingMessage,
                                 isUploading = state.isUploading,
                                 onSendMessage = viewModel::sendMessage,

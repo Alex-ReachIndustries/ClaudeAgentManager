@@ -9,7 +9,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
@@ -41,6 +45,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material3.Surface
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,6 +68,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.claudemanager.app.data.models.AgentMessage
@@ -70,6 +76,7 @@ import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.UpdateContent
 import com.claudemanager.app.data.models.UpdateType
 import com.claudemanager.app.ui.detail.AttachedFile
+import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
 import com.claudemanager.app.ui.theme.LumiInfo
@@ -88,6 +95,7 @@ import com.claudemanager.app.util.TimeUtils
 private sealed class ConversationItem(val sortTime: Long, val itemKey: String) {
     class Update(val update: AgentUpdate, time: Long) : ConversationItem(time, "update-${update.id}")
     class Message(val message: AgentMessage, time: Long) : ConversationItem(time, "msg-${message.id}")
+    class File(val fileInfo: com.claudemanager.app.data.models.FileInfo, time: Long) : ConversationItem(time, "file-${fileInfo.id}")
 }
 
 /**
@@ -103,6 +111,7 @@ private sealed class ConversationItem(val sortTime: Long, val itemKey: String) {
 fun ConversationPanel(
     updates: List<AgentUpdate>,
     messages: List<AgentMessage>,
+    files: List<com.claudemanager.app.data.models.FileInfo> = emptyList(),
     isSending: Boolean,
     isUploading: Boolean,
     onSendMessage: (String) -> Unit,
@@ -148,7 +157,7 @@ fun ConversationPanel(
     }
 
     // Build merged chronological list
-    val items = remember(updates, messages) {
+    val items = remember(updates, messages, files) {
         val merged = mutableListOf<ConversationItem>()
         for (u in updates) {
             val time = TimeUtils.parseIso(u.timestamp)?.time ?: 0L
@@ -157,6 +166,10 @@ fun ConversationPanel(
         for (m in messages) {
             val time = TimeUtils.parseIso(m.createdAt)?.time ?: 0L
             merged.add(ConversationItem.Message(m, time))
+        }
+        for (f in files) {
+            val time = TimeUtils.parseIso(f.createdAt)?.time ?: 0L
+            merged.add(ConversationItem.File(f, time))
         }
         merged.sortBy { it.sortTime }
         merged.toList()
@@ -205,6 +218,7 @@ fun ConversationPanel(
                                 SentMessageBubble(message = item.message)
                             }
                         }
+                        is ConversationItem.File -> FileBubble(fileInfo = item.fileInfo)
                     }
                 }
 
@@ -653,4 +667,122 @@ private fun updateTypeInfo(type: UpdateType): ConvUpdateTypeInfo = when (type) {
     UpdateType.ERROR -> ConvUpdateTypeInfo(Icons.Default.Error, "Error", LumiError)
     UpdateType.STATUS -> ConvUpdateTypeInfo(Icons.Default.SwapHoriz, "Status", LumiWarning)
     UpdateType.DIAGRAM -> ConvUpdateTypeInfo(Icons.Outlined.AccountTree, "Diagram", LumiSuccess)
+}
+
+/**
+ * File attachment bubble in the conversation timeline.
+ * User uploads align right (purple tint), Claude-generated files align left (blue tint).
+ */
+@Composable
+private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo) {
+    val isUser = fileInfo.source == "user"
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = if (isUser) 48.dp else 0.dp,
+                end = if (isUser) 0.dp else 48.dp
+            ),
+        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(
+                topStart = if (isUser) 16.dp else 4.dp,
+                topEnd = if (isUser) 4.dp else 16.dp,
+                bottomStart = 16.dp,
+                bottomEnd = 16.dp
+            ),
+            color = if (isUser) LumiPurple500.copy(alpha = 0.12f) else LumiCard,
+            border = BorderStroke(
+                1.dp,
+                if (isUser) LumiPurple500.copy(alpha = 0.25f) else LumiOnSurfaceTertiary.copy(alpha = 0.2f)
+            ),
+            modifier = Modifier.clickable {
+                // Open download URL in browser
+                val url = "${com.claudemanager.app.ClaudeManagerApp.baseUrl}api/agents/${fileInfo.agentId}/files/${fileInfo.id}"
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                context.startActivity(intent)
+            }
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                // Header: source label + time
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = if (isUser) Icons.Default.Upload else Icons.Default.SmartToy,
+                        contentDescription = null,
+                        tint = if (isUser) LumiPurple500 else LumiInfo,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (isUser) "You uploaded" else "Claude generated",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = TimeUtils.timeAgo(fileInfo.createdAt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // File info row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isUser) LumiPurple500.copy(alpha = 0.08f) else LumiBackground.copy(alpha = 0.5f))
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AttachFile,
+                        contentDescription = "File",
+                        tint = LumiOnSurfaceSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = fileInfo.filename,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LumiOnSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = fileInfo.formattedSize,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Download",
+                        tint = LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Description if present
+                if (!fileInfo.description.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = fileInfo.description!!,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary,
+                        fontStyle = FontStyle.Italic
+                    )
+                }
+            }
+        }
+    }
 }
