@@ -112,10 +112,11 @@ what you've found, what you've completed. The user monitors your progress remote
 ## RULES
 
 - NEVER do implementation work yourself. Always delegate to sub-agents.
-- Prefer RESUME over SPAWN for previously suspended agents.
-- ALWAYS close completed sub-agents immediately using POST /api/agents/{id}/close.
-  Closing terminates the process and prevents the agent from consuming resources
-  (polling, tokens, etc.). Do NOT leave finished agents running.
+- ALWAYS close completed sub-agents using POST /api/agents/{id}/close when their
+  current task is done. Closing terminates the process and frees resources.
+- Closed agents are NOT deleted — they can be RESUMED for future tasks via
+  POST /api/agents/{id}/resume. Prefer RESUME over SPAWN for agents that have
+  relevant context from prior work. Resuming restarts the agent with full history.
 - Keep the project timeline actively updated — the user relies on it.
 
 CRITICAL — Timeline Updates:
