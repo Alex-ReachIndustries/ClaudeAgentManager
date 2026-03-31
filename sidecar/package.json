@@ -1,0 +1,13 @@
+{
+  "name": "claudemanager-mqtt-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MQTT sidecar bridge for ClaudeManager agents — delivers messages via file-based inbox",
+  "main": "mqtt-bridge.js",
+  "scripts": {
+    "start": "node mqtt-bridge.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.0"
+  }
+}

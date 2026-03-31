@@ -32,6 +32,7 @@ import { updateSchema, messageSchema, agentPatchSchema, relaySchema } from "../s
 import { logger } from "../logger.js";
 import { dispatchWebhook } from "../webhook-dispatcher.js";
 import { onAgentStatusChange } from "../workflow-engine.js";
+import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 
 // Disk storage for file uploads
 const storage = multer.diskStorage({
@@ -730,6 +731,9 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
     addMessage(id, content);
     broadcast("message-queued", { agentId: id, content });
 
+    // Publish to MQTT for instant delivery to agent sidecar
+    publishAgentMessage(id, content, "user");
+
     // Dispatch webhook for new message
     dispatchWebhook("message.received", {
       agent: agent as Record<string, unknown>,
@@ -968,6 +972,9 @@ router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) =
     // Create message on target agent with source info
     addMessage(target_agent_id, content, "agent", senderId);
     broadcast("message-queued", { agentId: target_agent_id, content, source: "agent", sourceAgentId: senderId });
+
+    // Publish to MQTT for instant delivery to agent sidecar
+    publishAgentMessage(target_agent_id, content, "agent", senderId);
 
     // Dispatch webhook for message received on target
     dispatchWebhook("message.received", {

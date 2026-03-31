@@ -12,6 +12,12 @@ services:
       - PDF_SERVICE_URL=http://pdf-generator:8090
       - HOST_HOME_MOUNT=/host-home
       - AUTH_ENABLED=true
+      - MQTT_URL=mqtt://mqtt:1883
+      - MQTT_USERNAME=backend
+      - MQTT_PASSWORD=${MQTT_BACKEND_PASSWORD:-claudemanager}
+    depends_on:
+      mqtt:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
       interval: 10s
@@ -29,6 +35,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  mqtt:
+    build: ./mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mqtt-data:/mosquitto/data
+    environment:
+      - MQTT_BACKEND_PASSWORD=${MQTT_BACKEND_PASSWORD:-claudemanager}
+      - MQTT_AGENT_PASSWORD=${MQTT_AGENT_PASSWORD:-agentsidecar}
+      - MQTT_DASHBOARD_PASSWORD=${MQTT_DASHBOARD_PASSWORD:-dashboard}
+    restart: unless-stopped
+
   pdf-generator:
     build: ./printingpress-api
     volumes:
@@ -38,3 +57,4 @@ services:
 
 volumes:
   agent-data:
+  mqtt-data:

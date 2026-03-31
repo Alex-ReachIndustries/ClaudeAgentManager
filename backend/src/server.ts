@@ -18,6 +18,7 @@ import { initPush } from "./push.js";
 import { initWebhookDispatcher } from "./webhook-dispatcher.js";
 import { initWorkflowEngine } from "./workflow-engine.js";
 import { startRetentionScheduler } from "./retention.js";
+import { initMqtt } from "./mqtt.js";
 import { authMiddleware, getApiKey } from "./middleware/auth.js";
 import { startBackupScheduler } from "./backup.js";
 
@@ -116,6 +117,9 @@ const server = app.listen(PORT, () => {
 
   // Start retention scheduler
   startRetentionScheduler();
+
+  // Initialize MQTT bridge (non-blocking — continues if broker unavailable)
+  initMqtt();
 
   // Periodic sweep: archive agents inactive for >30 minutes, every 5 minutes
   setInterval(() => {
