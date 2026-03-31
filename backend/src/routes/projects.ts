@@ -128,7 +128,6 @@ The user monitors progress REMOTELY. Silence = confusion. Update frequently.
 
 Begin by analyzing the task and creating your execution plan.`;
 }
-}
 
 // GET / — list all projects (with computed agent counts)
 router.get("/", (_req: Request, res: Response) => {
