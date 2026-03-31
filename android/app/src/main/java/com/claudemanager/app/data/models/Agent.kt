@@ -63,6 +63,9 @@ data class Agent(
     @SerializedName("project_id")
     val projectId: String? = null,
 
+    @SerializedName("project_name")
+    val projectName: String? = null,
+
     @SerializedName("role")
     val role: String? = null
 ) {

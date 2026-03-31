@@ -366,9 +366,10 @@ export function getAllAgents(limit: number = 50, cursor?: string): PaginatedResu
   const db = getDb();
   if (cursor) {
     const stmt = db.prepare(`
-      SELECT * FROM agents
-      WHERE last_update_at < ?
-      ORDER BY last_update_at DESC
+      SELECT a.*, p.name as project_name FROM agents a
+      LEFT JOIN projects p ON a.project_id = p.id
+      WHERE a.last_update_at < ?
+      ORDER BY a.last_update_at DESC
       LIMIT ?
     `);
     const rows = stmt.all(cursor, limit) as Record<string, unknown>[];
@@ -379,8 +380,9 @@ export function getAllAgents(limit: number = 50, cursor?: string): PaginatedResu
     };
   } else {
     const stmt = db.prepare(`
-      SELECT * FROM agents
-      ORDER BY last_update_at DESC
+      SELECT a.*, p.name as project_name FROM agents a
+      LEFT JOIN projects p ON a.project_id = p.id
+      ORDER BY a.last_update_at DESC
       LIMIT ?
     `);
     const rows = stmt.all(limit) as Record<string, unknown>[];

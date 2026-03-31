@@ -133,6 +133,12 @@ router.patch("/:id", (req: Request, res: Response) => {
             }
           }
 
+          // If this is a sub-agent, send its task prompt as a message
+          if (projectMeta.role !== "PM" && projectMeta.prompt) {
+            addMessage(agent_id, projectMeta.prompt);
+            logger.info({ agent_id, role: projectMeta.role }, "Sent sub-agent task prompt via message");
+          }
+
           logger.info({ agent_id, projectMeta }, "Linked agent to project from launch request");
         }
       } catch (linkErr) {

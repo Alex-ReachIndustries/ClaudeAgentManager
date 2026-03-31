@@ -17,6 +17,7 @@ export interface Agent {
   last_message_at: string | null;
   last_activity_at: string | null;
   project_id?: string;
+  project_name?: string;
   role?: string;
   parent_agent_id?: string;
 }

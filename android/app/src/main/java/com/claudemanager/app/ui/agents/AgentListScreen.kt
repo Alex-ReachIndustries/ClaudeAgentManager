@@ -548,7 +548,7 @@ private fun AgentCard(agent: Agent, onClick: () -> Unit) {
                     ) {
                         Text(
                             text = buildString {
-                                append("Project")
+                                append(agent.projectName ?: "Project")
                                 if (!agent.role.isNullOrBlank()) {
                                     append(" \u00B7 ${agent.role}")
                                 }
