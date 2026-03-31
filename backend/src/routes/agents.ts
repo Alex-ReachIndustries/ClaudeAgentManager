@@ -614,8 +614,9 @@ router.post("/:id/close", (req: Request, res: Response) => {
 
     const pid = (agent as Record<string, unknown>).pid as number | null;
 
-    // Archive the agent
-    updateAgent(id, { status: "archived" });
+    // Mark as completed (not archived) — completed agents don't auto-reactivate on poll/update,
+    // unlike archived agents which auto-unarchive when the process is still alive
+    updateAgent(id, { status: "completed" });
 
     // Create terminate request for the launcher to kill the process
     if (pid) {
