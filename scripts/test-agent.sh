@@ -83,4 +83,4 @@ post_update "status" '{"status":"completed","detail":"Task finished successfully
 
 echo ""
 echo "=== Test agent finished ==="
-echo "Check the dashboard at https://msi.tail06903c.ts.net"
+echo "Check the dashboard at ${SERVER_URL:-http://localhost:8080}"

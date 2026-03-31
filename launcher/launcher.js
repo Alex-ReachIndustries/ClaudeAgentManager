@@ -5,7 +5,12 @@
  * Runs on the Windows host (NOT in Docker). Polls the Agent Manager backend
  * for pending launch requests and spawns Claude terminal sessions.
  *
- * Usage: node launcher.js [--server https://msi.tail06903c.ts.net]
+ * Usage: node launcher.js [--server https://your-host.tailnet.ts.net]
+ *
+ * Server URL resolution order:
+ *   1. --server CLI argument
+ *   2. SERVER_URL environment variable
+ *   3. http://localhost:8080 (default)
  */
 
 const { spawn } = require('child_process');
@@ -16,7 +21,7 @@ const os = require('os');
 
 const SERVER_URL = process.argv.includes('--server')
   ? process.argv[process.argv.indexOf('--server') + 1]
-  : 'https://msi.tail06903c.ts.net';
+  : (process.env.SERVER_URL || 'http://localhost:8080');
 
 const API_KEY = process.argv.includes('--api-key')
   ? process.argv[process.argv.indexOf('--api-key') + 1]

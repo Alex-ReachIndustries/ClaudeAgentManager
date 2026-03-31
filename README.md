@@ -48,9 +48,9 @@ cd ClaudeAgentManager
 docker compose up -d --build
 ```
 
-Verify: `curl https://msi.tail06903c.ts.net/api/health` → `{"status":"ok"}`
+Verify: `curl http://localhost:8080/api/health` → `{"status":"ok"}`
 
-Open the dashboard: [https://msi.tail06903c.ts.net](https://msi.tail06903c.ts.net)
+Open the dashboard: [http://localhost:8080](http://localhost:8080) (or your Tailscale URL if configured)
 
 ### Start the Host Launcher
 
@@ -79,7 +79,7 @@ Or manually:
 
 1. Save the server URL:
    ```bash
-   echo 'https://msi.tail06903c.ts.net' > ~/.claude/agent-server-url
+   echo 'http://localhost:8080' > ~/.claude/agent-server-url  # or your Tailscale URL
    ```
 
 2. Create skill files at `~/.claude/commands/session-init.md` and `~/.claude/commands/agent-checkin.md` (content provided by the bootstrap endpoint)
@@ -98,7 +98,7 @@ Access the Agent Manager dashboard from your phone or any device on any network 
 - **No port forwarding** — works through NAT and firewalls
 - **Peer-to-peer** — your traffic goes directly between devices, not through Tailscale's servers
 - **Always on** — runs as a system service, starts on boot
-- **MagicDNS** — access your machine by hostname (e.g. `https://msi.tail06903c.ts.net`) instead of IP
+- **MagicDNS** — access your machine by hostname (e.g. `https://your-host.tailnet.ts.net`) instead of IP
 - **HTTPS** — `tailscale serve` provides trusted TLS certificates automatically
 
 ### Setup
@@ -171,7 +171,7 @@ Backup: `docker cp claudemanager-backend-1:/app/data/agents.db ./backup.db`
 
 ## PDF Generation
 
-PDF reports are generated via a PrintingPress-based service. The PDF generator requires the [PrintingPress](https://github.com/Alex-ReachIndustries/PrintingPress) repository mounted at `/c/Users/kuron/Documents/PrintingPress` (configurable in `docker-compose.yml`). If you don't need PDF export, the service can be removed from docker-compose without affecting other functionality.
+PDF reports are generated via a PrintingPress-based service. The PDF generator requires the [PrintingPress](https://github.com/Alex-ReachIndustries/PrintingPress) repository cloned locally. Set the `PRINTINGPRESS_PATH` variable in your `.env` file to point to it. If you don't need PDF export, the service can be removed from docker-compose without affecting other functionality.
 
 ## Documentation
 

@@ -5,7 +5,7 @@ services:
       - "3001:3001"
     volumes:
       - agent-data:/app/data
-      - /c/Users/kuron:/host-home:ro
+      - ${HOST_HOME_PATH}:/host-home:ro
     environment:
       - PORT=3001
       - DB_PATH=/app/data/agents.db
@@ -32,8 +32,8 @@ services:
   pdf-generator:
     build: ./printingpress-api
     volumes:
-      - /c/Users/kuron/Documents/PrintingPress:/app
-      - /c/Users/kuron/Documents/PrintingPress/api_wrapper.py:/app/api_wrapper.py
+      - ${PRINTINGPRESS_PATH}:/app
+      - ${PRINTINGPRESS_PATH}/api_wrapper.py:/app/api_wrapper.py
     restart: unless-stopped
 
 volumes:
