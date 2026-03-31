@@ -43,6 +43,17 @@ export interface AgentMessage {
   source_agent_id?: string;
 }
 
+export interface AgentFile {
+  id: number;
+  agent_id: string;
+  filename: string;
+  mimetype: string;
+  size: number;
+  source: 'user' | 'claude';
+  description: string;
+  created_at: string;
+}
+
 export interface ProjectPhase {
   name: string;
   status: 'pending' | 'in-progress' | 'completed';

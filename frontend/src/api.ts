@@ -202,6 +202,9 @@ export async function fetchRetentionStatus() { return request<any>('/retention/s
 export async function updateRetentionSettings(settings: any) { return request('/retention/settings', { method: 'PATCH', body: JSON.stringify(settings) }); }
 export async function runRetention() { return request<any>('/retention/run', { method: 'POST' }); }
 
+// --- Files ---
+export async function fetchAgentFiles(agentId: string) { return request<any[]>(`/agents/${agentId}/files`); }
+
 // --- Projects ---
 export async function fetchProjects() { return request<any[]>('/projects'); }
 export async function createProject(data: {name: string, description: string, folder_path: string, max_concurrent?: number}) { return request('/projects', { method: 'POST', body: JSON.stringify(data) }); }

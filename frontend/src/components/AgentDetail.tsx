@@ -2,7 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, closeAgent } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, closeAgent, fetchAgentFiles } from '../api';
+import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
 import MessagePanel from './MessagePanel';
@@ -29,6 +30,16 @@ function AgentDetail() {
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [files, setFiles] = useState<AgentFile[]>([]);
+
+  // Fetch files for inline timeline display
+  useEffect(() => {
+    if (id) {
+      fetchAgentFiles(id).then((data) => {
+        setFiles(Array.isArray(data) ? data : []);
+      }).catch(() => {});
+    }
+  }, [id, agent?.update_count]);
 
   // Mark agent as read when viewing detail page
   useEffect(() => {
@@ -228,7 +239,7 @@ function AgentDetail() {
         </div>
         {/* Timeline — last on mobile, main area on desktop */}
         <div className="lg:col-span-2 order-3 lg:order-1">
-          <UpdateTimeline updates={updates} />
+          <UpdateTimeline updates={updates} files={files} />
         </div>
       </div>
     </div>

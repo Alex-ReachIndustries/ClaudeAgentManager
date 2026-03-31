@@ -1,15 +1,26 @@
-import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft } from 'lucide-react';
-import type { AgentUpdate } from '../types';
+import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft, Download, Bot, User, Paperclip } from 'lucide-react';
+import type { AgentUpdate, AgentFile } from '../types';
 import { timeAgo } from '../utils/time';
 import MermaidDiagram from './MermaidDiagram';
 import ErrorBoundary from './ErrorBoundary';
 
 interface UpdateTimelineProps {
   updates: AgentUpdate[];
+  files?: AgentFile[];
 }
 
-function UpdateTimeline({ updates }: UpdateTimelineProps) {
-  if (updates.length === 0) {
+type TimelineEntry =
+  | { kind: 'update'; ts: string; data: AgentUpdate }
+  | { kind: 'file'; ts: string; data: AgentFile };
+
+function UpdateTimeline({ updates, files = [] }: UpdateTimelineProps) {
+  // Merge updates and files into a single chronological timeline
+  const entries: TimelineEntry[] = [
+    ...updates.map((u): TimelineEntry => ({ kind: 'update', ts: u.timestamp, data: u })),
+    ...files.map((f): TimelineEntry => ({ kind: 'file', ts: f.created_at, data: f })),
+  ].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+  if (entries.length === 0) {
     return (
       <div className="bg-dark-900 border border-dark-800 rounded-xl p-8 text-center">
         <Activity size={24} className="text-dark-600 mx-auto mb-3" />
@@ -26,15 +37,74 @@ function UpdateTimeline({ updates }: UpdateTimelineProps) {
         </h2>
       </div>
       <div className="max-h-[calc(100vh-320px)] overflow-y-auto p-4 space-y-3">
-        {[...updates].reverse().map((update, idx) => (
+        {entries.map((entry, idx) => (
           <div
-            key={update.id}
+            key={entry.kind === 'update' ? `u-${entry.data.id}` : `f-${(entry.data as AgentFile).id}`}
             className="animate-in fade-in slide-in-from-top-1"
-            style={{ animationDelay: `${idx * 30}ms`, animationFillMode: 'both' }}
+            style={{ animationDelay: `${Math.min(idx, 20) * 30}ms`, animationFillMode: 'both' }}
           >
-            <UpdateItem update={update} />
+            {entry.kind === 'update' ? (
+              <UpdateItem update={entry.data as AgentUpdate} />
+            ) : (
+              <FileItem file={entry.data as AgentFile} />
+            )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileItem({ file }: { file: AgentFile }) {
+  const isUser = file.source === 'user';
+  const downloadUrl = `/api/agents/${file.agent_id}/files/${file.id}`;
+
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[80%] p-3 rounded-lg border ${
+          isUser
+            ? 'bg-lumi-950/30 border-lumi-800/40 rounded-br-sm'
+            : 'bg-dark-850 border-dark-800/50 rounded-bl-sm'
+        }`}
+      >
+        <div className="flex items-center gap-2 mb-1.5">
+          {isUser ? (
+            <User size={14} className="text-lumi-400 shrink-0" />
+          ) : (
+            <Bot size={14} className="text-blue-400 shrink-0" />
+          )}
+          <span className="text-xs font-medium text-dark-400">
+            {isUser ? 'You uploaded' : 'Claude generated'}
+          </span>
+          <span className="text-xs text-dark-600 ml-auto">{timeAgo(file.created_at)}</span>
+        </div>
+        <a
+          href={downloadUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`flex items-center gap-2 p-2 rounded-md transition-colors ${
+            isUser
+              ? 'bg-lumi-950/40 hover:bg-lumi-900/40'
+              : 'bg-dark-800/60 hover:bg-dark-800'
+          }`}
+        >
+          <Paperclip size={14} className="text-dark-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-dark-200 truncate">{file.filename}</p>
+            <p className="text-xs text-dark-500">{formatSize(file.size)}</p>
+          </div>
+          <Download size={14} className="text-dark-500 shrink-0" />
+        </a>
+        {file.description && (
+          <p className="text-xs text-dark-500 mt-1.5 italic">{file.description}</p>
+        )}
       </div>
     </div>
   );
