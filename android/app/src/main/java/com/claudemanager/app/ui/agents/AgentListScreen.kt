@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Card
@@ -191,15 +192,24 @@ fun AgentListScreen(
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 )
 
-                // Filter chips
-                FilterChipRow(
-                    selectedFilter = state.selectedFilter,
-                    onFilterChanged = viewModel::onFilterChanged,
+                // Filter chips + sort selector
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
-                        .padding(bottom = 8.dp)
-                )
+                        .padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChipRow(
+                        selectedFilter = state.selectedFilter,
+                        onFilterChanged = viewModel::onFilterChanged,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SortChipRow(
+                        selectedSort = state.sortOption,
+                        onSortChanged = viewModel::onSortChanged
+                    )
+                }
 
                 if (!state.isLoading && activeAgents.isEmpty() && archivedAgents.isEmpty()) {
                     // Empty state
@@ -660,6 +670,67 @@ private fun Badge(text: String, color: androidx.compose.ui.graphics.Color) {
             style = MaterialTheme.typography.labelSmall,
             color = color
         )
+    }
+}
+
+/**
+ * Sort option selector — compact dropdown using a FilterChip with a sort icon.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SortChipRow(
+    selectedSort: SortOption,
+    onSortChanged: (SortOption) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        FilterChip(
+            selected = true,
+            onClick = { expanded = !expanded },
+            label = {
+                Text(
+                    text = selectedSort.label,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Sort,
+                    contentDescription = "Sort",
+                    modifier = Modifier.size(16.dp)
+                )
+            },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = LumiPurple500.copy(alpha = 0.2f),
+                selectedLabelColor = LumiOnSurface
+            ),
+            border = FilterChipDefaults.filterChipBorder(
+                selectedBorderColor = LumiPurple500.copy(alpha = 0.5f),
+                borderColor = LumiOnSurfaceTertiary.copy(alpha = 0.3f),
+                enabled = true,
+                selected = true
+            )
+        )
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            SortOption.entries.forEach { option ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = option.label,
+                            color = if (option == selectedSort) LumiPurple500 else LumiOnSurface
+                        )
+                    },
+                    onClick = {
+                        onSortChanged(option)
+                        expanded = false
+                    }
+                )
+            }
+        }
     }
 }
 

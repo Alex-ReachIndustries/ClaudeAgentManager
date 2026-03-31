@@ -15,6 +15,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+enum class SortOption(val label: String) {
+    ACTIVITY("Last Activity"),
+    CREATED("Created"),
+    UPDATES("Updates"),
+    NAME("Name A-Z")
+}
+
 /**
  * UI state for the agent list screen.
  */
@@ -26,7 +33,8 @@ data class AgentListUiState(
     val error: String? = null,
     val connectionState: SSEClient.ConnectionState = SSEClient.ConnectionState.DISCONNECTED,
     val searchQuery: String = "",
-    val selectedFilter: AgentStatus? = null // null = All
+    val selectedFilter: AgentStatus? = null, // null = All
+    val sortOption: SortOption = SortOption.ACTIVITY
 )
 
 /**
@@ -67,7 +75,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             agents = agents,
-                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter),
+                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter, it.sortOption),
                             connectionState = SSEClient.ConnectionState.CONNECTED
                         )
                     }
@@ -91,7 +99,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             agents = agents,
-                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter),
+                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter, it.sortOption),
                             isLoading = false,
                             error = null,
                             connectionState = SSEClient.ConnectionState.CONNECTED
@@ -121,7 +129,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             agents = agents,
-                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter),
+                            filteredAgents = applyFilters(agents, it.searchQuery, it.selectedFilter, it.sortOption),
                             isRefreshing = false,
                             error = null,
                             connectionState = SSEClient.ConnectionState.CONNECTED
@@ -147,7 +155,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update {
             it.copy(
                 searchQuery = query,
-                filteredAgents = applyFilters(it.agents, query, it.selectedFilter)
+                filteredAgents = applyFilters(it.agents, query, it.selectedFilter, it.sortOption)
             )
         }
     }
@@ -160,19 +168,32 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update {
             it.copy(
                 selectedFilter = status,
-                filteredAgents = applyFilters(it.agents, it.searchQuery, status)
+                filteredAgents = applyFilters(it.agents, it.searchQuery, status, it.sortOption)
             )
         }
     }
 
     /**
-     * Apply search query and status filter to the agent list.
+     * Update the sort option and re-sort the agent list.
+     */
+    fun onSortChanged(sort: SortOption) {
+        _uiState.update {
+            it.copy(
+                sortOption = sort,
+                filteredAgents = applyFilters(it.agents, it.searchQuery, it.selectedFilter, sort)
+            )
+        }
+    }
+
+    /**
+     * Apply search query, status filter, and sorting to the agent list.
      * Search matches against title, workspace, and latestSummary (case-insensitive).
      */
     private fun applyFilters(
         agents: List<Agent>,
         searchQuery: String,
-        statusFilter: AgentStatus?
+        statusFilter: AgentStatus?,
+        sortOption: SortOption = SortOption.ACTIVITY
     ): List<Agent> {
         var result = agents
 
@@ -189,6 +210,14 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                         (agent.workspace?.lowercase()?.contains(query) == true) ||
                         (agent.latestSummary?.lowercase()?.contains(query) == true)
             }
+        }
+
+        // Apply sorting
+        result = when (sortOption) {
+            SortOption.ACTIVITY -> result.sortedByDescending { it.lastActivityAt ?: it.lastUpdateAt }
+            SortOption.CREATED -> result.sortedByDescending { it.createdAt }
+            SortOption.UPDATES -> result.sortedByDescending { it.updateCount }
+            SortOption.NAME -> result.sortedBy { it.title.lowercase() }
         }
 
         return result
