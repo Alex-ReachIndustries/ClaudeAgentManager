@@ -701,7 +701,7 @@ private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo) {
             ),
             modifier = Modifier.clickable {
                 // Open download URL in browser
-                val url = "${com.claudemanager.app.ClaudeManagerApp.baseUrl}api/agents/${fileInfo.agentId}/files/${fileInfo.id}"
+                val url = "${com.claudemanager.app.data.api.ApiClient.getBaseUrl()}/api/agents/${fileInfo.agentId}/files/${fileInfo.id}"
                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                 context.startActivity(intent)
             }
