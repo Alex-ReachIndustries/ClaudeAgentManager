@@ -65,8 +65,9 @@ SPAWN SUB-AGENT:
   what specifically they should do, acceptance criteria, and where to find/put files.
 
 MESSAGE SUB-AGENT:
-  POST /api/agents/{sub_agent_id}/relay
-  Body: { "target_agent_id": "{target}", "content": "..." }
+  POST /api/agents/{your_agent_id}/relay
+  Body: { "target_agent_id": "{sub_agent_id}", "content": "..." }
+  NOTE: The URL uses YOUR agent ID (the sender). The target goes in the body.
 
 VIEW SUB-AGENT OUTPUT:
   GET /api/agents/{sub_agent_id}/updates

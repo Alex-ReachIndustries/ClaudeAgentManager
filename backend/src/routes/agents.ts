@@ -958,6 +958,12 @@ router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) =
       return;
     }
 
+    // Prevent agents from messaging themselves
+    if (senderId === target_agent_id) {
+      res.status(400).json({ error: "Agent cannot send a message to itself" });
+      return;
+    }
+
     // Create message on target agent with source info
     addMessage(target_agent_id, content, "agent", senderId);
     broadcast("message-queued", { agentId: target_agent_id, content, source: "agent", sourceAgentId: senderId });
