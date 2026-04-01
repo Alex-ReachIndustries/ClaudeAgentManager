@@ -39,7 +39,6 @@ function getApiKey() {
 }
 
 async function fetchJSON(url, options = {}) {
-  const { default: fetch } = await import('node-fetch');
   const res = await fetch(url, {
     ...options,
     headers: {
