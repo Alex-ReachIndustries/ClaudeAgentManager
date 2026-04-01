@@ -1,67 +1,23 @@
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { getSetting, setSetting } from "../db.js";
 import { logger } from "../logger.js";
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === "true";
-const BACKUP_PATH = path.join(process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : "/app/data", "api-key.backup");
-
-function writeBackupKey(key: string): void {
-  try {
-    fs.writeFileSync(BACKUP_PATH, key, "utf-8");
-  } catch (err) {
-    logger.warn(`Failed to write API key backup: ${err}`);
-  }
-}
-
-function readBackupKey(): string | undefined {
-  try {
-    const key = fs.readFileSync(BACKUP_PATH, "utf-8").trim();
-    return key || undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 export function getApiKey(): string {
-  // 1. Environment variable takes precedence
-  const envKey = process.env.API_KEY?.trim();
-  if (envKey) {
-    const dbKey = getSetting("api_key");
-    if (dbKey !== envKey) {
-      setSetting("api_key", envKey);
-      writeBackupKey(envKey);
-      logger.info("API key set from environment variable");
-    }
-    return envKey;
-  }
-
-  // 2. Check DB (normal path when DB exists)
   let key = getSetting("api_key");
-  if (key) return key;
-
-  // 3. Restore from backup file
-  key = readBackupKey();
-  if (key) {
+  if (!key) {
+    key = crypto.randomBytes(32).toString("hex");
     setSetting("api_key", key);
-    logger.info("API key restored from backup file");
-    return key;
+    logger.info(`API Key generated: ${key}`);
   }
-
-  // 4. Generate new key (first-ever start)
-  key = crypto.randomBytes(32).toString("hex");
-  setSetting("api_key", key);
-  writeBackupKey(key);
-  logger.info(`API Key generated: ${key}`);
   return key;
 }
 
 export function rotateApiKey(): string {
   const key = crypto.randomBytes(32).toString("hex");
   setSetting("api_key", key);
-  writeBackupKey(key);
   return key;
 }
 

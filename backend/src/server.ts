@@ -21,7 +21,6 @@ import { startRetentionScheduler } from "./retention.js";
 import { initMqtt, setMqttHandlers } from "./mqtt.js";
 import { authMiddleware, getApiKey } from "./middleware/auth.js";
 import { startBackupScheduler } from "./backup.js";
-import { startRecoveryScheduler } from "./recovery.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -119,9 +118,6 @@ const server = app.listen(PORT, () => {
   // Start retention scheduler
   startRetentionScheduler();
 
-  // Start dead-agent recovery scheduler
-  startRecoveryScheduler();
-
   // Initialize MQTT bridge (non-blocking — continues if broker unavailable)
   initMqtt();
 
@@ -132,8 +128,7 @@ const server = app.listen(PORT, () => {
         touchAgentHeartbeat(agentId);
         // Auto-unarchive if needed
         const agent = getAgent(agentId);
-        const status = agent && (agent as Record<string, unknown>).status;
-        if (status === "archived" || status === "recovering") {
+        if (agent && (agent as Record<string, unknown>).status === "archived") {
           updateAgent(agentId, { status: "active" });
           broadcast("agent-updated", getAgent(agentId));
         }

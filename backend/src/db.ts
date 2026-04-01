@@ -161,10 +161,6 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE messages ADD COLUMN source_agent_id TEXT"); } catch { /* exists */ }
 
-  // Auto-recovery columns
-  try { db.exec("ALTER TABLE agents ADD COLUMN recovery_count INTEGER DEFAULT 0"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN max_recovery_attempts INTEGER DEFAULT 3"); } catch { /* exists */ }
-
   // Feature 5: Computed field caching columns
   try { db.exec("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE agents ADD COLUMN unread_update_count INTEGER DEFAULT 0"); } catch { /* exists */ }
@@ -251,10 +247,8 @@ export function getDb(): Database.Database {
   // Migration: add 'working' and 'waiting-for-input' to agents status CHECK constraint
   const agentTableNow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
   if (agentTableNow && !agentTableNow.sql.includes("'working'")) {
-    const cols2 = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
-    const colNames2 = cols2.map((c) => c.name).join(", ");
-    const knownCols2 = ["id","title","status","created_at","last_update_at","update_count","metadata","poll_delay_until","workspace","last_read_at"];
-    const extraColDefs2 = cols2.filter((c) => !knownCols2.includes(c.name)).map((c) => `${c.name} TEXT`).join(",\n        ");
+    const cols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).join(", ");
     db.pragma("foreign_keys = OFF");
     db.exec(`DROP TABLE IF EXISTS agents_new`);
     db.exec(`
@@ -269,42 +263,8 @@ export function getDb(): Database.Database {
         poll_delay_until TEXT,
         workspace TEXT,
         last_read_at TEXT
-        ${extraColDefs2 ? ", " + extraColDefs2 : ""}
       );
-      INSERT INTO agents_new (${colNames2}) SELECT ${colNames2} FROM agents;
-      DROP TABLE agents;
-      ALTER TABLE agents_new RENAME TO agents;
-    `);
-    db.pragma("foreign_keys = ON");
-  }
-
-  // Migration: add 'recovering' and 'failed' to agents status CHECK constraint
-  const agentTableRecovery = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
-  if (agentTableRecovery && !agentTableRecovery.sql.includes("'recovering'")) {
-    const cols3 = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
-    const colNames3 = cols3.map((c) => c.name).join(", ");
-    const knownCols3 = ["id","title","status","created_at","last_update_at","update_count","metadata","poll_delay_until","workspace","last_read_at","last_activity_at","recovery_count","max_recovery_attempts"];
-    const extraColDefs3 = cols3.filter((c) => !knownCols3.includes(c.name)).map((c) => `${c.name} TEXT`).join(",\n        ");
-    db.pragma("foreign_keys = OFF");
-    db.exec(`DROP TABLE IF EXISTS agents_new`);
-    db.exec(`
-      CREATE TABLE agents_new (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL DEFAULT 'Untitled Agent',
-        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived','recovering','failed')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
-        update_count INTEGER NOT NULL DEFAULT 0,
-        metadata TEXT DEFAULT '{}',
-        poll_delay_until TEXT,
-        workspace TEXT,
-        last_read_at TEXT,
-        last_activity_at TEXT,
-        recovery_count INTEGER DEFAULT 0,
-        max_recovery_attempts INTEGER DEFAULT 3
-        ${extraColDefs3 ? ", " + extraColDefs3 : ""}
-      );
-      INSERT INTO agents_new (${colNames3}) SELECT ${colNames3} FROM agents;
+      INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
       DROP TABLE agents;
       ALTER TABLE agents_new RENAME TO agents;
     `);
@@ -685,33 +645,6 @@ export function archiveInactiveAgents(inactiveMinutes: number = 30): string[] {
   });
 
   return transaction();
-}
-
-export function detectDeadAgents(inactiveMinutes: number = 5): Record<string, unknown>[] {
-  const db = getDb();
-  const stmt = db.prepare(`
-    SELECT * FROM agents
-    WHERE status IN ('active', 'working')
-      AND last_activity_at < datetime('now', ? || ' minutes')
-      AND pid IS NOT NULL
-  `);
-  return stmt.all(`-${inactiveMinutes}`) as Record<string, unknown>[];
-}
-
-export function setAgentRecovering(agentId: string): void {
-  const db = getDb();
-  db.prepare(`
-    UPDATE agents
-    SET status = 'recovering', recovery_count = recovery_count + 1
-    WHERE id = ?
-  `).run(agentId);
-}
-
-export function setAgentFailed(agentId: string): void {
-  const db = getDb();
-  db.prepare(`
-    UPDATE agents SET status = 'failed' WHERE id = ?
-  `).run(agentId);
 }
 
 export function getMessagesByStatus(agentId: string, status: string) {
