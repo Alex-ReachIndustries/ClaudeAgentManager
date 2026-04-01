@@ -161,6 +161,10 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE messages ADD COLUMN source_agent_id TEXT"); } catch { /* exists */ }
 
+  // Auto-recovery columns
+  try { db.exec("ALTER TABLE agents ADD COLUMN recovery_count INTEGER DEFAULT 0"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN max_recovery_attempts INTEGER DEFAULT 3"); } catch { /* exists */ }
+
   // Feature 5: Computed field caching columns
   try { db.exec("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE agents ADD COLUMN unread_update_count INTEGER DEFAULT 0"); } catch { /* exists */ }
@@ -256,6 +260,33 @@ export function getDb(): Database.Database {
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL DEFAULT 'Untitled Agent',
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
+        update_count INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        poll_delay_until TEXT,
+        workspace TEXT,
+        last_read_at TEXT
+      );
+      INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
+      DROP TABLE agents;
+      ALTER TABLE agents_new RENAME TO agents;
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
+  // Migration: add 'recovering' and 'failed' to agents status CHECK constraint
+  const agentTableRecovery = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
+  if (agentTableRecovery && !agentTableRecovery.sql.includes("'recovering'")) {
+    const cols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).join(", ");
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS agents_new`);
+    db.exec(`
+      CREATE TABLE agents_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT 'Untitled Agent',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived','recovering','failed')),
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
         update_count INTEGER NOT NULL DEFAULT 0,
@@ -645,6 +676,33 @@ export function archiveInactiveAgents(inactiveMinutes: number = 30): string[] {
   });
 
   return transaction();
+}
+
+export function detectDeadAgents(inactiveMinutes: number = 5): Record<string, unknown>[] {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT * FROM agents
+    WHERE status IN ('active', 'working')
+      AND last_activity_at < datetime('now', ? || ' minutes')
+      AND pid IS NOT NULL
+  `);
+  return stmt.all(`-${inactiveMinutes}`) as Record<string, unknown>[];
+}
+
+export function setAgentRecovering(agentId: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE agents
+    SET status = 'recovering', recovery_count = recovery_count + 1
+    WHERE id = ?
+  `).run(agentId);
+}
+
+export function setAgentFailed(agentId: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE agents SET status = 'failed' WHERE id = ?
+  `).run(agentId);
 }
 
 export function getMessagesByStatus(agentId: string, status: string) {

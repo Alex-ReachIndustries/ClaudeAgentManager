@@ -645,8 +645,8 @@ router.post("/:id/resume", (req: Request, res: Response) => {
       return;
     }
 
-    if (agent.status !== "archived" && agent.status !== "completed") {
-      res.status(400).json({ error: `Agent is already ${agent.status}, not archived/completed` });
+    if (agent.status !== "archived" && agent.status !== "completed" && agent.status !== "failed") {
+      res.status(400).json({ error: `Agent is already ${agent.status}, not archived/completed/failed` });
       return;
     }
 
