@@ -93,10 +93,11 @@ class MqttEventClient {
 
             client!!.connectWith()
                 .cleanSession(true)
+                .keepAlive(60)
                 .send()
                 .whenComplete { _, throwable ->
                     if (throwable != null) {
-                        Log.w(TAG, "MQTT connection failed: ${throwable.message}")
+                        Log.w(TAG, "MQTT connection failed: ${throwable.message}", throwable)
                         _connectionState.value = ConnectionState.DISCONNECTED
                         client = null
                     } else {
