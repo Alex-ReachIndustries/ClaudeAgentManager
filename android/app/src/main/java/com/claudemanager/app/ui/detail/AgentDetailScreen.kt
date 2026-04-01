@@ -166,6 +166,22 @@ fun AgentDetailScreen(
                     }
                 },
                 actions = {
+                    // Ctrl+C button
+                    IconButton(onClick = { viewModel.sendSignal("ctrl-c") }) {
+                        Icon(
+                            imageVector = Icons.Default.StopCircle,
+                            contentDescription = "Send Ctrl+C",
+                            tint = LumiError
+                        )
+                    }
+                    // Enter button
+                    IconButton(onClick = { viewModel.sendSignal("enter") }) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardReturn,
+                            contentDescription = "Send Enter",
+                            tint = LumiOnSurfaceSecondary
+                        )
+                    }
                     Box {
                         IconButton(onClick = { showOverflowMenu = true }) {
                             Icon(
@@ -180,28 +196,6 @@ fun AgentDetailScreen(
                         ) {
                             val agent = state.agent
                             if (agent != null) {
-                                // Ctrl+C — send interrupt signal
-                                DropdownMenuItem(
-                                    text = { Text("Send Ctrl+C") },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.StopCircle, contentDescription = null, tint = LumiError)
-                                    },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        viewModel.sendSignal("ctrl-c")
-                                    }
-                                )
-                                // Enter key
-                                DropdownMenuItem(
-                                    text = { Text("Send Enter") },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.KeyboardReturn, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        viewModel.sendSignal("enter")
-                                    }
-                                )
                                 // Resume (for archived/completed agents)
                                 if (!agent.isLive) {
                                     DropdownMenuItem(
