@@ -412,6 +412,7 @@ fun ConversationPanel(
 private fun UpdateBubble(update: AgentUpdate) {
     val content = update.parsedContent()
     val typeInfo = updateTypeInfo(update.type)
+    var expanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -423,6 +424,7 @@ private fun UpdateBubble(update: AgentUpdate) {
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                 .background(LumiCard)
+                .clickable { expanded = !expanded }
                 .padding(10.dp)
         ) {
             Column {
@@ -450,14 +452,20 @@ private fun UpdateBubble(update: AgentUpdate) {
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Content
+                // Content — tap to expand/collapse
                 when (content) {
                     is UpdateContent.Text -> {
+                        // Show summary first, full content when expanded
+                        val displayText = if (expanded && !content.text.isNullOrBlank()) {
+                            (update.summary ?: "") + "\n\n" + content.text
+                        } else {
+                            update.summary ?: content.text
+                        }
                         Text(
-                            text = update.summary ?: content.text,
+                            text = displayText,
                             style = MaterialTheme.typography.bodyMedium,
                             color = LumiOnSurface,
-                            maxLines = 6,
+                            maxLines = if (expanded) Int.MAX_VALUE else 4,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -494,7 +502,7 @@ private fun UpdateBubble(update: AgentUpdate) {
                             text = content.message,
                             style = MaterialTheme.typography.bodyMedium,
                             color = LumiError,
-                            maxLines = 4,
+                            maxLines = if (expanded) Int.MAX_VALUE else 4,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
