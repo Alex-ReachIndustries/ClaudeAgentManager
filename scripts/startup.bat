@@ -32,9 +32,13 @@ echo [%time%] Backend healthy.
 
 REM Start the launcher in background
 echo [%time%] Starting launcher...
-start /min "ClaudeManager Launcher" cmd /c "cd /d C:\Users\kuron\Research\ClaudeManager\launcher && node launcher.js"
+start /min "ClaudeManager Launcher" cmd /c "cd /d C:\Users\kuron\Research\ClaudeManager\launcher && set SERVER_URL=http://localhost:3001 && node launcher.js"
 
-REM Wait a moment for launcher to initialize
+REM Start the watchdog (auto-resumes dead agents)
+echo [%time%] Starting watchdog...
+start /min "ClaudeManager Watchdog" cmd /c "cd /d C:\Users\kuron\Research\ClaudeManager && set SERVER_URL=http://localhost:3001 && node scripts/watchdog.js"
+
+REM Wait a moment for services to initialize
 timeout /t 5 /nobreak >nul
 
 REM Launch Cam — the system manager agent
