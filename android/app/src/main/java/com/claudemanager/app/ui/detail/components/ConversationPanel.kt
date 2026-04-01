@@ -507,10 +507,23 @@ private fun UpdateBubble(update: AgentUpdate) {
                         )
                     }
                     is UpdateContent.Status -> {
+                        val statusText = update.summary ?: content.status
+                        // Try to extract detail from the raw content JSON
+                        val detail = try {
+                            val json = com.google.gson.JsonParser.parseString(update.content)
+                            if (json.isJsonObject) json.asJsonObject.get("detail")?.asString
+                                ?: json.asJsonObject.get("content")?.asString
+                                ?: json.asJsonObject.get("text")?.asString
+                            else null
+                        } catch (_: Exception) { null }
+
                         Text(
-                            text = content.status,
+                            text = if (expanded && detail != null && detail != statusText)
+                                "$statusText\n\n$detail" else statusText,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = LumiOnSurface
+                            color = LumiOnSurface,
+                            maxLines = if (expanded) Int.MAX_VALUE else 4,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     is UpdateContent.Diagram -> {
