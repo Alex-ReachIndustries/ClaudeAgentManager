@@ -4,7 +4,7 @@ import {
   ArrowLeft, Plus, Loader2, FolderKanban, Users, Clock,
   X, Search,
 } from 'lucide-react';
-import { fetchProjects, createProject } from '../api';
+import { fetchProjects, createProject, startProject } from '../api';
 import { timeAgo } from '../utils/time';
 import FolderPicker from './FolderPicker';
 
@@ -77,6 +77,7 @@ export default function Projects() {
         <CreateProjectDialog
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); load(); }}
+          navigate={navigate}
         />
       )}
 
@@ -232,30 +233,37 @@ export default function Projects() {
 interface CreateDialogProps {
   onClose: () => void;
   onCreated: () => void;
+  navigate: (path: string) => void;
 }
 
-function CreateProjectDialog({ onClose, onCreated }: CreateDialogProps) {
+function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps) {
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [task, setTask] = useState('');
   const [folderPath, setFolderPath] = useState('');
   const [showFolderPicker, setShowFolderPicker] = useState(false);
-  const [maxConcurrent, setMaxConcurrent] = useState(4);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !task.trim()) return;
     setSubmitting(true);
     setError(null);
     try {
-      await createProject({
+      // Create the project
+      const project = await createProject({
         name: name.trim(),
-        description: description.trim(),
+        description: task.trim(),
         folder_path: folderPath.trim(),
-        max_concurrent: maxConcurrent,
-      });
+      }) as { id: string };
+
+      // Auto-start with a crafted PM prompt based on the task
+      const pmPrompt = `Project: ${name.trim()}\n\nTask: ${task.trim()}\n\nAnalyse this task, break it into phases, and begin execution by spawning the appropriate sub-agents.`;
+      await startProject(project.id, pmPrompt);
+
       onCreated();
+      // Navigate to project detail
+      navigate(`/projects/${project.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project');
     } finally {
@@ -293,13 +301,14 @@ function CreateProjectDialog({ onClose, onCreated }: CreateDialogProps) {
           </div>
 
           <div>
-            <label className="block text-xs text-dark-400 mb-1">Description</label>
+            <label className="block text-xs text-dark-400 mb-1">Task *</label>
             <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={task}
+              onChange={(e) => setTask(e.target.value)}
+              required
               rows={3}
               className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors resize-none"
-              placeholder="What this project is about..."
+              placeholder="Describe what this project should accomplish..."
             />
           </div>
 
@@ -329,18 +338,6 @@ function CreateProjectDialog({ onClose, onCreated }: CreateDialogProps) {
             onClose={() => setShowFolderPicker(false)}
           />
 
-          <div>
-            <label className="block text-xs text-dark-400 mb-1">Max Concurrent Agents</label>
-            <input
-              type="number"
-              value={maxConcurrent}
-              onChange={(e) => setMaxConcurrent(parseInt(e.target.value, 10) || 1)}
-              min={1}
-              max={20}
-              className="w-24 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500 transition-colors"
-            />
-          </div>
-
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
@@ -351,15 +348,15 @@ function CreateProjectDialog({ onClose, onCreated }: CreateDialogProps) {
             </button>
             <button
               type="submit"
-              disabled={submitting || !name.trim()}
+              disabled={submitting || !name.trim() || !task.trim()}
               className="px-4 py-2 bg-lumi-600 hover:bg-lumi-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
             >
               {submitting ? (
                 <span className="flex items-center gap-2">
                   <Loader2 size={14} className="animate-spin" />
-                  Creating...
+                  Starting...
                 </span>
-              ) : 'Create'}
+              ) : 'Create & Start'}
             </button>
           </div>
         </form>

@@ -2,6 +2,7 @@
 
 package com.claudemanager.app.ui.projects
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -85,6 +86,15 @@ fun ProjectListScreen(
     viewModel: ProjectListViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+
+    // Navigate to newly created project
+    LaunchedEffect(state.navigateToProjectId) {
+        state.navigateToProjectId?.let { projectId ->
+            onProjectClick(projectId)
+            viewModel.clearNavigation()
+        }
+    }
+
     val pullRefreshState = rememberPullRefreshState(
         refreshing = state.isRefreshing,
         onRefresh = viewModel::refresh
@@ -425,7 +435,7 @@ private fun CreateProjectDialog(
     onCreate: (name: String, description: String, folderPath: String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
+    var task by remember { mutableStateOf("") }
     var folderPath by remember { mutableStateOf("") }
     var showFolderPicker by remember { mutableStateOf(false) }
 
@@ -460,9 +470,10 @@ private fun CreateProjectDialog(
                     colors = textFieldColors
                 )
                 OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("Description") },
+                    value = task,
+                    onValueChange = { task = it },
+                    label = { Text("Task") },
+                    placeholder = { Text("Describe what this project should accomplish...") },
                     minLines = 2,
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth(),
@@ -500,10 +511,10 @@ private fun CreateProjectDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onCreate(name, description, folderPath) },
-                enabled = name.isNotBlank() && folderPath.isNotBlank()
+                onClick = { onCreate(name, task, folderPath) },
+                enabled = name.isNotBlank() && task.isNotBlank() && folderPath.isNotBlank()
             ) {
-                Text("Create", color = LumiPurple500)
+                Text("Create & Start", color = LumiPurple500)
             }
         },
         dismissButton = {

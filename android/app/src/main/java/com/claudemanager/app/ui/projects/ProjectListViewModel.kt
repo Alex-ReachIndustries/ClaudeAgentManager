@@ -31,7 +31,8 @@ data class ProjectListUiState(
     val showCreateDialog: Boolean = false,
     val statusFilter: String? = null,
     val sortOption: ProjectSortOption = ProjectSortOption.NEWEST,
-    val searchQuery: String = ""
+    val searchQuery: String = "",
+    val navigateToProjectId: String? = null
 )
 
 /**
@@ -177,20 +178,26 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     /**
      * Create a new project.
      */
-    fun createProject(name: String, description: String, folderPath: String) {
+    fun createProject(name: String, task: String, folderPath: String) {
         viewModelScope.launch {
             repository.createProject(
                 name = name,
-                description = description,
+                description = task,
                 folderPath = folderPath
-            ).onSuccess {
-                _uiState.update { it.copy(showCreateDialog = false) }
-                refresh()
+            ).onSuccess { project ->
+                // Auto-start with crafted PM prompt
+                val pmPrompt = "Project: $name\n\nTask: $task\n\nAnalyse this task, break it into phases, and begin execution by spawning the appropriate sub-agents."
+                repository.startProject(project.id, pmPrompt)
+                _uiState.update { it.copy(showCreateDialog = false, navigateToProjectId = project.id) }
             }.onFailure { e ->
                 _uiState.update {
                     it.copy(error = e.message ?: "Failed to create project")
                 }
             }
         }
+    }
+
+    fun clearNavigation() {
+        _uiState.update { it.copy(navigateToProjectId = null) }
     }
 }
