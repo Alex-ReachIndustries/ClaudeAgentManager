@@ -66,6 +66,7 @@ class AgentNotificationService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var sseClient: SSEClient? = null
+    private var mqttClient: com.claudemanager.app.data.mqtt.MqttEventClient? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -103,6 +104,8 @@ class AgentNotificationService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        mqttClient?.cancel()
+        mqttClient = null
         sseClient?.cancel()
         sseClient = null
         serviceScope.cancel()
@@ -128,32 +131,78 @@ class AgentNotificationService : Service() {
                 return@launch
             }
 
-            val client = SSEClient()
-            sseClient = client
+            // Try MQTT first, fall back to SSE
+            val mqtt = com.claudemanager.app.data.mqtt.MqttEventClient()
+            mqttClient = mqtt
+            mqtt.connect()
 
-            // Observe connection state and update the foreground notification
-            launch {
-                client.connectionState.collectLatest { state ->
-                    val stateLabel = when (state) {
-                        SSEClient.ConnectionState.CONNECTED -> "Connected"
-                        SSEClient.ConnectionState.CONNECTING -> "Connecting"
-                        SSEClient.ConnectionState.DISCONNECTED -> "Disconnected"
+            // Wait briefly to see if MQTT connects
+            kotlinx.coroutines.delay(3000)
+
+            if (mqtt.isConnected()) {
+                Log.d(TAG, "Using MQTT for real-time events")
+                updateServiceNotification("Connected (MQTT)")
+
+                // Observe MQTT connection state
+                launch {
+                    mqtt.connectionState.collectLatest { state ->
+                        val stateLabel = when (state) {
+                            com.claudemanager.app.data.mqtt.MqttEventClient.ConnectionState.CONNECTED -> "Connected (MQTT)"
+                            com.claudemanager.app.data.mqtt.MqttEventClient.ConnectionState.CONNECTING -> "Connecting (MQTT)"
+                            com.claudemanager.app.data.mqtt.MqttEventClient.ConnectionState.DISCONNECTED -> {
+                                // MQTT disconnected — fall back to SSE
+                                Log.d(TAG, "MQTT disconnected, falling back to SSE")
+                                startSSEFallback()
+                                "Reconnecting"
+                            }
+                        }
+                        updateServiceNotification(stateLabel)
                     }
-                    Log.d(TAG, "SSE connection state: $stateLabel")
-                    updateServiceNotification(stateLabel)
                 }
-            }
 
-            // Observe SSE events and show notifications
-            launch {
-                client.events.collect { event ->
-                    handleSSEEvent(event)
+                // Observe MQTT events
+                launch {
+                    mqtt.events.collect { event ->
+                        handleSSEEvent(event)
+                    }
                 }
+            } else {
+                // MQTT failed — use SSE
+                Log.d(TAG, "MQTT unavailable, using SSE")
+                mqtt.cancel()
+                mqttClient = null
+                startSSEFallback()
             }
-
-            // Initiate connection
-            client.connect()
         }
+    }
+
+    private fun startSSEFallback() {
+        if (sseClient != null) return // Already running
+
+        val client = SSEClient()
+        sseClient = client
+
+        // Observe connection state
+        serviceScope.launch {
+            client.connectionState.collectLatest { state ->
+                val stateLabel = when (state) {
+                    SSEClient.ConnectionState.CONNECTED -> "Connected (SSE)"
+                    SSEClient.ConnectionState.CONNECTING -> "Connecting"
+                    SSEClient.ConnectionState.DISCONNECTED -> "Disconnected"
+                }
+                Log.d(TAG, "SSE connection state: $stateLabel")
+                updateServiceNotification(stateLabel)
+            }
+        }
+
+        // Observe SSE events
+        serviceScope.launch {
+            client.events.collect { event ->
+                handleSSEEvent(event)
+            }
+        }
+
+        client.connect()
     }
 
     /**
