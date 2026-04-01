@@ -120,16 +120,11 @@ router.patch("/:id", (req: Request, res: Response) => {
           if (projectMeta.role === "PM" && projectMeta.project_id) {
             updateProject(projectMeta.project_id, { pm_agent_id: agent_id });
 
-            // Send the PM system prompt as a pending message
+            // Send the PM system prompt as a pending message (includes project name, description, and all capabilities)
             const meta = projectMeta as Record<string, unknown>;
             if (meta.pm_prompt) {
               addMessage(agent_id, meta.pm_prompt as string);
-              logger.info({ agent_id }, "Sent PM system prompt via message");
-            }
-            // Send the user's initial prompt as a pending message
-            if (meta.user_prompt) {
-              addMessage(agent_id, meta.user_prompt as string);
-              logger.info({ agent_id }, "Sent user initial prompt via message");
+              logger.info({ agent_id }, "Sent PM prompt via message");
             }
           }
 
