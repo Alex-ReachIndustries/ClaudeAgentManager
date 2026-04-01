@@ -517,6 +517,9 @@ private fun AgentMetricsPanel(
             color = LumiOnSurfaceSecondary
         )
 
+        // Agent UUID
+        MetricCard(label = "Agent ID", value = agent.id)
+
         // Created date
         MetricCard(label = "Created", value = TimeUtils.formatFull(agent.createdAt))
 

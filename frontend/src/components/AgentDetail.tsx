@@ -126,6 +126,7 @@ function AgentDetail() {
             </span>
           </div>
           <div className="flex items-center gap-4 text-sm text-dark-500 flex-wrap">
+            <span className="font-mono text-xs text-dark-600 select-all">{agent.id}</span>
             <span className="flex items-center gap-1.5">
               <Calendar size={14} />
               Created {formatDate(agent.created_at)}
