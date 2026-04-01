@@ -171,6 +171,9 @@ export function getDb(): Database.Database {
   // Feature 6: External file storage column
   try { db.exec("ALTER TABLE files ADD COLUMN file_path TEXT"); } catch { /* exists */ }
 
+  // Task queue enhancement: priority on messages (higher = more urgent, default 0)
+  try { db.exec("ALTER TABLE messages ADD COLUMN priority INTEGER DEFAULT 0"); } catch { /* exists */ }
+
   // Feature 5: Triggers for computed field caching
   try {
     db.exec(`
@@ -532,7 +535,7 @@ export function getPendingMessages(agentId: string) {
   const db = getDb();
 
   const selectPending = db.prepare(`
-    SELECT * FROM messages WHERE agent_id = ? AND status = 'pending'
+    SELECT * FROM messages WHERE agent_id = ? AND status = 'pending' ORDER BY priority DESC, created_at ASC
   `);
   const markDelivered = db.prepare(`
     UPDATE messages
@@ -553,16 +556,16 @@ export function getPendingMessages(agentId: string) {
   return transaction();
 }
 
-export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string) {
+export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0) {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT INTO messages (agent_id, content, source, source_agent_id) VALUES (?, ?, ?, ?)
+    INSERT INTO messages (agent_id, content, source, source_agent_id, priority) VALUES (?, ?, ?, ?, ?)
   `);
   const touchActivity = db.prepare(`
     UPDATE agents SET last_activity_at = datetime('now') WHERE id = ?
   `);
   const transaction = db.transaction(() => {
-    const result = insert.run(agentId, content, source, sourceAgentId ?? null);
+    const result = insert.run(agentId, content, source, sourceAgentId ?? null, priority);
     touchActivity.run(agentId);
     return result;
   });

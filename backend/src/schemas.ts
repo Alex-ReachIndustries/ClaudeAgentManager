@@ -38,6 +38,7 @@ export const updateSchema = z.object({
 
 export const messageSchema = z.object({
   content: z.string().min(1).max(65_536).trim(),
+  priority: z.number().int().min(0).max(10).default(0),
 });
 
 // --- Agent patch (PATCH /agents/:id) ---

@@ -727,10 +727,10 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
       return;
     }
 
-    const { content } = req.body;
+    const { content, priority } = req.body;
 
-    addMessage(id, content);
-    broadcast("message-queued", { agentId: id, content });
+    addMessage(id, content, "user", undefined, priority || 0);
+    broadcast("message-queued", { agentId: id, content, priority: priority || 0 });
 
     // Publish to MQTT for instant delivery to agent sidecar
     publishAgentMessage(id, content, "user");
@@ -1025,6 +1025,185 @@ router.post("/:id/signal", (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "Error sending signal");
     res.status(500).json({ error: "Failed to send signal" });
+  }
+});
+
+// POST /:id/share-file — share a file from this agent to another agent
+router.post("/:id/share-file", (req: Request, res: Response) => {
+  try {
+    const sourceId = param(req, "id");
+    const { file_id, target_agent_id } = req.body as { file_id?: number; target_agent_id?: string };
+
+    if (!file_id || !target_agent_id) {
+      res.status(400).json({ error: "Provide 'file_id' and 'target_agent_id'" });
+      return;
+    }
+
+    const source = getAgent(sourceId);
+    if (!source) {
+      res.status(404).json({ error: "Source agent not found" });
+      return;
+    }
+
+    const target = getAgent(target_agent_id);
+    if (!target) {
+      res.status(404).json({ error: "Target agent not found" });
+      return;
+    }
+
+    // Get the source file
+    const sourceFile = getFile(sourceId, file_id);
+    if (!sourceFile) {
+      res.status(404).json({ error: "File not found or does not belong to source agent" });
+      return;
+    }
+
+    const sf = sourceFile as Record<string, unknown>;
+
+    // Copy the physical file to the target agent's directory
+    const sourceFilePath = sf.file_path as string;
+    if (!sourceFilePath || !fs.existsSync(sourceFilePath)) {
+      res.status(404).json({ error: "Source file not found on disk" });
+      return;
+    }
+
+    const targetDir = path.join(process.cwd(), "data", "files", target_agent_id);
+    fs.mkdirSync(targetDir, { recursive: true });
+    const targetFileName = `${Date.now().toString(36)}_${sf.filename as string}`;
+    const targetFilePath = path.join(targetDir, targetFileName);
+    fs.copyFileSync(sourceFilePath, targetFilePath);
+
+    // Create file record for the target agent
+    // addFile(agentId, filename, mimetype, filePath, size, source, description)
+    addFile(
+      target_agent_id,
+      sf.filename as string,
+      sf.mimetype as string,
+      targetFilePath,
+      sf.size as number,
+      `shared from ${sourceId}`,
+      "",
+    );
+
+    broadcast("file-shared", {
+      sourceAgentId: sourceId,
+      targetAgentId: target_agent_id,
+      filename: sf.filename,
+    });
+
+    res.json({ ok: true, filename: sf.filename });
+  } catch (err) {
+    logger.error({ err }, "Error sharing file");
+    res.status(500).json({ error: "Failed to share file" });
+  }
+});
+
+// POST /:id/terminal — broadcast terminal output via SSE (ephemeral, not stored)
+router.post("/:id/terminal", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const { output, stream } = req.body as { output?: string; stream?: string };
+    const text = output || stream || "";
+    if (!text) {
+      res.status(400).json({ error: "Provide 'output' or 'stream' field" });
+      return;
+    }
+
+    // Broadcast to SSE clients without persisting to DB
+    broadcast("terminal-output", {
+      agentId: id,
+      output: text,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Also publish to MQTT for real-time delivery
+    publishAgentUpdate(id, { type: "terminal", output: text });
+
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Error broadcasting terminal output");
+    res.status(500).json({ error: "Failed to broadcast terminal output" });
+  }
+});
+
+// POST /:id/cost — report token/cost usage for an agent session
+router.post("/:id/cost", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id) as Record<string, unknown> | undefined;
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const { input_tokens, output_tokens, cost_usd } = req.body as {
+      input_tokens?: number;
+      output_tokens?: number;
+      cost_usd?: number;
+    };
+
+    if (!input_tokens && !output_tokens && !cost_usd) {
+      res.status(400).json({ error: "Provide at least one of: input_tokens, output_tokens, cost_usd" });
+      return;
+    }
+
+    // Accumulate costs in agent metadata
+    let meta: Record<string, unknown> = {};
+    try { meta = JSON.parse((agent.metadata as string) || "{}"); } catch { /* ignore */ }
+
+    const costs = (meta.costs as Record<string, number>) || { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+    if (input_tokens) costs.input_tokens = (costs.input_tokens || 0) + input_tokens;
+    if (output_tokens) costs.output_tokens = (costs.output_tokens || 0) + output_tokens;
+    if (cost_usd) costs.cost_usd = (costs.cost_usd || 0) + cost_usd;
+    meta.costs = costs;
+
+    updateAgent(id, { metadata: JSON.stringify(meta) });
+
+    res.json({ ok: true, costs });
+  } catch (err) {
+    logger.error({ err }, "Error reporting cost");
+    res.status(500).json({ error: "Failed to report cost" });
+  }
+});
+
+// GET /analytics/costs — aggregate cost data across all agents
+router.get("/analytics/costs", (_req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const agents = db.prepare("SELECT id, title, metadata, project_id FROM agents").all() as {
+      id: string; title: string; metadata: string | null; project_id: string | null;
+    }[];
+
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalCost = 0;
+    const agentCosts: { id: string; title: string; project_id: string | null; costs: Record<string, number> }[] = [];
+
+    for (const agent of agents) {
+      let meta: Record<string, unknown> = {};
+      try { meta = JSON.parse(agent.metadata || "{}"); } catch { continue; }
+      const costs = meta.costs as Record<string, number> | undefined;
+      if (costs && (costs.input_tokens || costs.output_tokens || costs.cost_usd)) {
+        totalInput += costs.input_tokens || 0;
+        totalOutput += costs.output_tokens || 0;
+        totalCost += costs.cost_usd || 0;
+        agentCosts.push({ id: agent.id, title: agent.title, project_id: agent.project_id, costs });
+      }
+    }
+
+    res.json({
+      total: { input_tokens: totalInput, output_tokens: totalOutput, cost_usd: totalCost },
+      agents: agentCosts,
+    });
+  } catch (err) {
+    logger.error({ err }, "Error fetching cost analytics");
+    res.status(500).json({ error: "Failed to fetch cost analytics" });
   }
 });
 

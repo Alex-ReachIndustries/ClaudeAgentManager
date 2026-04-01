@@ -6,6 +6,11 @@ import { logger } from "../logger.js";
 const AUTH_ENABLED = process.env.AUTH_ENABLED === "true";
 
 export function getApiKey(): string {
+  // Priority: API_KEY env var > DB settings > generate new
+  if (process.env.API_KEY) {
+    return process.env.API_KEY;
+  }
+
   let key = getSetting("api_key");
   if (!key) {
     key = crypto.randomBytes(32).toString("hex");
@@ -16,6 +21,9 @@ export function getApiKey(): string {
 }
 
 export function rotateApiKey(): string {
+  if (process.env.API_KEY) {
+    logger.warn("API key rotation requested but API_KEY env var is set — env var takes precedence");
+  }
   const key = crypto.randomBytes(32).toString("hex");
   setSetting("api_key", key);
   return key;

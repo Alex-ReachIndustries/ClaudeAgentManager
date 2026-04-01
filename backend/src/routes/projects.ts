@@ -29,6 +29,23 @@ const param = (req: Request, name: string): string => {
   return Array.isArray(v) ? v[0] : v;
 };
 
+/** Extract agent ID from X-Agent-Id header (used for PM enforcement) */
+function getCallerAgentId(req: Request): string | null {
+  const header = req.headers["x-agent-id"];
+  if (typeof header === "string" && header.trim()) return header.trim();
+  return null;
+}
+
+/** Check if the caller is the PM for the given project. Returns error message or null if OK. */
+function enforcePM(req: Request, project: Record<string, unknown>): string | null {
+  const callerId = getCallerAgentId(req);
+  if (!callerId) return null; // No agent header = user/system call, always allowed
+  const pmId = project.pm_agent_id as string | null;
+  if (!pmId) return null; // No PM assigned yet, allow
+  if (callerId === pmId) return null; // Caller is the PM
+  return `Only the PM agent (${pmId}) can perform this action. Caller: ${callerId}`;
+}
+
 /** Parse an integer query param with a default and max cap */
 function parseIntQuery(value: unknown, defaultVal: number, max: number): number {
   if (value === undefined || value === null) return defaultVal;
@@ -470,6 +487,13 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     if (project.status !== "active") {
       res.status(400).json({ error: `Cannot spawn agents for project in '${project.status}' status` });
+      return;
+    }
+
+    // PM enforcement: only the PM agent (or direct user/system calls) can spawn sub-agents
+    const pmError = enforcePM(req, project);
+    if (pmError) {
+      res.status(403).json({ error: pmError });
       return;
     }
 

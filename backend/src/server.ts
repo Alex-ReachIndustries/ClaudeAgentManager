@@ -13,14 +13,14 @@ import workflowsRouter from "./routes/workflows.js";
 import retentionRouter from "./routes/retention.js";
 import projectsRouter from "./routes/projects.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
-import { archiveInactiveAgents, getAgent, getDb, touchAgentHeartbeat, updateAgent } from "./db.js";
+import { archiveInactiveAgents, createLaunchRequest, getAgent, getDb, touchAgentHeartbeat, updateAgent } from "./db.js";
 import { initPush } from "./push.js";
 import { initWebhookDispatcher } from "./webhook-dispatcher.js";
 import { initWorkflowEngine } from "./workflow-engine.js";
 import { startRetentionScheduler } from "./retention.js";
 import { initMqtt, setMqttHandlers } from "./mqtt.js";
 import { authMiddleware, getApiKey } from "./middleware/auth.js";
-import { startBackupScheduler } from "./backup.js";
+
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -106,9 +106,6 @@ const server = app.listen(PORT, () => {
   // Initialize Web Push (generates VAPID keys on first run)
   initPush();
 
-  // Start backup scheduler
-  startBackupScheduler();
-
   // Initialize webhook dispatcher
   initWebhookDispatcher();
 
@@ -147,6 +144,43 @@ const server = app.listen(PORT, () => {
       }
     } catch (err) {
       logger.error({ err }, "Error in archive sweep");
+    }
+
+    // Auto-recovery: resume PM agents of active projects that were archived
+    try {
+      const db = getDb();
+      const staleProjectPMs = db.prepare(`
+        SELECT a.id, a.cwd, a.metadata, p.id AS project_id, p.name AS project_name
+        FROM agents a
+        JOIN projects p ON p.pm_agent_id = a.id
+        WHERE a.status = 'archived'
+          AND p.status = 'active'
+      `).all() as { id: string; cwd: string | null; metadata: string | null; project_id: string; project_name: string }[];
+
+      for (const pm of staleProjectPMs) {
+        // Check recovery attempts to prevent infinite loops (max 3)
+        let meta: Record<string, unknown> = {};
+        try { meta = JSON.parse(pm.metadata || "{}"); } catch { /* ignore */ }
+        const recoveryCount = (meta.recovery_count as number) || 0;
+        if (recoveryCount >= 3) {
+          logger.warn(`PM agent ${pm.id} for project "${pm.project_name}" exceeded max recovery attempts (${recoveryCount})`);
+          continue;
+        }
+
+        // Create resume launch request
+        const cwd = pm.cwd || "";
+        createLaunchRequest("resume", cwd, pm.id);
+        updateAgent(pm.id, {
+          status: "active",
+          metadata: JSON.stringify({ ...meta, recovery_count: recoveryCount + 1, last_recovery_at: new Date().toISOString() }),
+        });
+
+        const agent = getAgent(pm.id);
+        if (agent) broadcast("agent-updated", agent);
+        logger.info(`Auto-recovery: resuming PM agent ${pm.id} for project "${pm.project_name}" (attempt ${recoveryCount + 1}/3)`);
+      }
+    } catch (err) {
+      logger.error({ err }, "Error in auto-recovery sweep");
     }
   }, 5 * 60 * 1000);
 });
