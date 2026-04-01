@@ -272,6 +272,18 @@ class AgentDetailViewModel(
     }
 
     /**
+     * Send a signal (ctrl-c or enter) to the agent's terminal.
+     */
+    fun sendSignal(signal: String) {
+        viewModelScope.launch {
+            repository.sendSignal(agentId, signal)
+                .onFailure { e ->
+                    _uiState.update { it.copy(error = "Signal failed: ${e.message}") }
+                }
+        }
+    }
+
+    /**
      * Resume the agent by creating a resume launch request.
      */
     fun resumeAgent() {

@@ -1,8 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle } from 'lucide-react';
+import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, StopCircle, CornerDownLeft } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, closeAgent, fetchAgentFiles } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, closeAgent, fetchAgentFiles, sendSignal } from '../api';
 import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
@@ -139,6 +139,22 @@ function AgentDetail() {
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+        <button
+          onClick={async () => { if (id) await sendSignal(id, 'ctrl-c'); }}
+          className="inline-flex items-center gap-1 px-3 py-2 text-sm text-dark-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-colors"
+          title="Send Ctrl+C to terminal"
+        >
+          <StopCircle size={16} />
+          <span className="text-xs">Ctrl+C</span>
+        </button>
+        <button
+          onClick={async () => { if (id) await sendSignal(id, 'enter'); }}
+          className="inline-flex items-center gap-1 px-3 py-2 text-sm text-dark-500 hover:text-blue-400 hover:bg-blue-950/30 rounded-lg transition-colors"
+          title="Send Enter to terminal"
+        >
+          <CornerDownLeft size={16} />
+          <span className="text-xs">Enter</span>
+        </button>
         <button
           onClick={async () => {
             if (!id || !agent || resuming) return;

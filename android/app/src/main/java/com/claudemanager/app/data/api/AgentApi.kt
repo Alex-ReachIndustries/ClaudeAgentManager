@@ -103,6 +103,12 @@ interface AgentApi {
     suspend fun closeAgent(@Path("id") id: String): Response<CloseResponse>
 
     /**
+     * Send a signal (ctrl-c, enter) to the agent's terminal.
+     */
+    @POST("api/agents/{id}/signal")
+    suspend fun sendSignal(@Path("id") id: String, @Body body: Map<String, String>): Response<OkResponse>
+
+    /**
      * Resume an archived/suspended agent with its full conversation history.
      */
     @POST("api/agents/{id}/resume")

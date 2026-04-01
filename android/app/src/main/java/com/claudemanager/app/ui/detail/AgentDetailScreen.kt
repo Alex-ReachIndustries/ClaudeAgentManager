@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material.icons.filled.KeyboardReturn
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
@@ -178,6 +180,28 @@ fun AgentDetailScreen(
                         ) {
                             val agent = state.agent
                             if (agent != null) {
+                                // Ctrl+C — send interrupt signal
+                                DropdownMenuItem(
+                                    text = { Text("Send Ctrl+C") },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.StopCircle, contentDescription = null, tint = LumiError)
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.sendSignal("ctrl-c")
+                                    }
+                                )
+                                // Enter key
+                                DropdownMenuItem(
+                                    text = { Text("Send Enter") },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.KeyboardReturn, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.sendSignal("enter")
+                                    }
+                                )
                                 // Resume (for archived/completed agents)
                                 if (!agent.isLive) {
                                     DropdownMenuItem(

@@ -9,6 +9,7 @@ import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
+import com.claudemanager.app.data.models.OkResponse
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
 import com.claudemanager.app.data.models.CreateProjectBody
 import com.claudemanager.app.data.models.CreateWebhookBody
@@ -87,6 +88,10 @@ class AgentRepository {
      */
     suspend fun closeAgent(id: String): Result<CloseResponse> = apiCall {
         api.closeAgent(id)
+    }
+
+    suspend fun sendSignal(id: String, signal: String): Result<OkResponse> = apiCall {
+        api.sendSignal(id, mapOf("signal" to signal))
     }
 
     /**

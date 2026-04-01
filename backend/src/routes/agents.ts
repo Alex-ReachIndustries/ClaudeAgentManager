@@ -990,4 +990,42 @@ router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) =
   }
 });
 
+// POST /:id/signal — send a signal (ctrl-c, enter) to the agent's terminal
+router.post("/:id/signal", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const { signal } = req.body as { signal?: string };
+    if (!signal || !["ctrl-c", "enter"].includes(signal)) {
+      res.status(400).json({ error: "Invalid signal. Use 'ctrl-c' or 'enter'" });
+      return;
+    }
+
+    const pid = (agent as Record<string, unknown>).pid as number | null;
+    if (!pid) {
+      res.status(400).json({ error: "Agent has no PID — cannot send signal" });
+      return;
+    }
+
+    // Create a signal launch request for the launcher to process
+    const db = getDb();
+    const stmt = db.prepare(
+      "INSERT INTO launch_requests (type, folder_path, resume_agent_id, target_pid, status) VALUES (?, ?, ?, ?, 'pending')"
+    );
+    stmt.run("signal", signal, id, pid);
+
+    broadcast("launch-request-created", { type: "signal", signal, agentId: id, pid });
+
+    res.json({ ok: true, signal, pid });
+  } catch (err) {
+    logger.error({ err }, "Error sending signal");
+    res.status(500).json({ error: "Failed to send signal" });
+  }
+});
+
 export default router;

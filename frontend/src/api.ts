@@ -145,6 +145,10 @@ export async function resumeAgent(agentId: string): Promise<{ ok: boolean; launc
   return request<{ ok: boolean; launch_request_id: number }>(`/agents/${agentId}/resume`, { method: 'POST' });
 }
 
+export async function sendSignal(agentId: string, signal: 'ctrl-c' | 'enter'): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/agents/${agentId}/signal`, { method: 'POST', body: JSON.stringify({ signal }) });
+}
+
 // --- Launch requests ---
 export async function createLaunchRequest(type: 'new' | 'resume', folderPath: string, resumeAgentId?: string): Promise<{ ok: boolean; request: unknown }> {
   return request<{ ok: boolean; request: unknown }>('/launch-requests', {

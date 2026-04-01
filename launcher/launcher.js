@@ -223,6 +223,45 @@ async function launchResumeAgent(agentId, folderPath) {
   return proc;
 }
 
+function sendSignalToTerminal(pid, signal) {
+  log(`Sending ${signal} to terminal PID ${pid}`);
+  try {
+    if (signal === 'ctrl-c') {
+      // Send Ctrl+C via PowerShell — generates a console control event
+      const proc = spawn('powershell.exe', ['-NoProfile', '-Command',
+        `$process = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+        `if ($process) { ` +
+        `  [Console]::GenerateConsoleCtrlEvent(0, ${pid}); ` +
+        `  Write-Host "Sent Ctrl+C to PID ${pid}" ` +
+        `} else { Write-Host "PID ${pid} not found" }`
+      ], { stdio: 'pipe' });
+      proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
+      proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
+      proc.on('close', (code) => log(`[signal] Ctrl+C sent (exit ${code})`));
+    } else if (signal === 'enter') {
+      // Send Enter key via PowerShell SendKeys
+      const proc = spawn('powershell.exe', ['-NoProfile', '-Command',
+        `Add-Type -AssemblyName System.Windows.Forms; ` +
+        `$wshell = New-Object -ComObject wscript.shell; ` +
+        `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+        `if ($proc) { ` +
+        `  $wshell.AppActivate(${pid}); ` +
+        `  Start-Sleep -Milliseconds 200; ` +
+        `  [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); ` +
+        `  Write-Host "Sent Enter to PID ${pid}" ` +
+        `} else { Write-Host "PID ${pid} not found" }`
+      ], { stdio: 'pipe' });
+      proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
+      proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
+      proc.on('close', (code) => log(`[signal] Enter sent (exit ${code})`));
+    } else {
+      log(`Unknown signal: ${signal}`);
+    }
+  } catch (err) {
+    log(`Failed to send signal: ${err.message}`);
+  }
+}
+
 function terminateAgent(pid) {
   log(`Terminating terminal process with PID: ${pid}`);
   try {
@@ -276,6 +315,8 @@ async function processPendingRequests() {
         } else if (req.type === 'new') {
           launchNewAgent(req.folder_path);
           // Sidecar for new agents starts when they register (agent_id unknown here)
+        } else if (req.type === 'signal') {
+          sendSignalToTerminal(req.target_pid, req.folder_path);
         } else {
           log(`Unknown request type "${req.type}" for #${req.id} — skipping`);
         }
