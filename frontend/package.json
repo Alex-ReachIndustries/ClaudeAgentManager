@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "mqtt": "^5.10.0",
     "lucide-react": "^0.468.0",
     "mermaid": "^11.4.0",
     "react": "^19.0.0",

@@ -242,7 +242,9 @@ function notifyConnectionState(state: ConnectionState) {
   connectionListeners.forEach((fn) => fn(state));
 }
 
-export function subscribeToEvents(
+import { subscribeToMqttEvents, isMqttAvailable } from './mqtt-client';
+
+function subscribeToSSE(
   onEvent: (event: SSEEvent) => void,
   onConnectionStateChange?: (state: ConnectionState) => void,
 ): () => void {
@@ -254,7 +256,6 @@ export function subscribeToEvents(
     onConnectionStateChange?.(state);
   };
 
-  // EventSource starts in CONNECTING state
   emitState('connecting');
 
   es.onopen = () => {
@@ -291,5 +292,35 @@ export function subscribeToEvents(
     es.removeEventListener('message-queued', handleMessageQueued);
     es.close();
     emitState('disconnected');
+  };
+}
+
+/**
+ * Subscribe to real-time events. Tries MQTT-over-WebSocket first for
+ * sub-second latency, falls back to SSE if MQTT broker is unavailable.
+ */
+export function subscribeToEvents(
+  onEvent: (event: SSEEvent) => void,
+  onConnectionStateChange?: (state: ConnectionState) => void,
+): () => void {
+  let cleanup: (() => void) | null = null;
+
+  // Try MQTT first, fall back to SSE
+  isMqttAvailable(2000).then((available) => {
+    if (available) {
+      console.log('[events] Using MQTT-over-WebSocket');
+      cleanup = subscribeToMqttEvents(onEvent, onConnectionStateChange);
+    } else {
+      console.log('[events] MQTT unavailable, falling back to SSE');
+      cleanup = subscribeToSSE(onEvent, onConnectionStateChange);
+    }
+  }).catch(() => {
+    console.log('[events] MQTT probe failed, using SSE');
+    cleanup = subscribeToSSE(onEvent, onConnectionStateChange);
+  });
+
+  // Return cleanup function that cancels whichever transport was chosen
+  return () => {
+    cleanup?.();
   };
 }
