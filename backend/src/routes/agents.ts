@@ -516,6 +516,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
 
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);
+    publishAgentUpdate(id, updatedAgent as Record<string, unknown>);
 
     // Dispatch webhooks for status changes
     if (status) {
