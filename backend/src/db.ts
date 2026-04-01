@@ -293,7 +293,10 @@ export function getDb(): Database.Database {
         metadata TEXT DEFAULT '{}',
         poll_delay_until TEXT,
         workspace TEXT,
-        last_read_at TEXT
+        last_read_at TEXT,
+        last_activity_at TEXT,
+        recovery_count INTEGER DEFAULT 0,
+        max_recovery_attempts INTEGER DEFAULT 3
       );
       INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
       DROP TABLE agents;
