@@ -131,48 +131,8 @@ class AgentNotificationService : Service() {
                 return@launch
             }
 
-            // Try MQTT first, fall back to SSE
-            val mqtt = com.claudemanager.app.data.mqtt.MqttEventClient()
-            mqttClient = mqtt
-            mqtt.connect()
-
-            // Wait briefly to see if MQTT connects
-            kotlinx.coroutines.delay(3000)
-
-            if (mqtt.isConnected()) {
-                Log.d(TAG, "Using MQTT for real-time events")
-                updateServiceNotification("Connected (MQTT)")
-
-                // Observe MQTT connection state
-                launch {
-                    mqtt.connectionState.collectLatest { state ->
-                        val stateLabel = when (state) {
-                            com.claudemanager.app.data.mqtt.MqttEventClient.ConnectionState.CONNECTED -> "Connected (MQTT)"
-                            com.claudemanager.app.data.mqtt.MqttEventClient.ConnectionState.CONNECTING -> "Connecting (MQTT)"
-                            com.claudemanager.app.data.mqtt.MqttEventClient.ConnectionState.DISCONNECTED -> {
-                                // MQTT disconnected — fall back to SSE
-                                Log.d(TAG, "MQTT disconnected, falling back to SSE")
-                                startSSEFallback()
-                                "Reconnecting"
-                            }
-                        }
-                        updateServiceNotification(stateLabel)
-                    }
-                }
-
-                // Observe MQTT events
-                launch {
-                    mqtt.events.collect { event ->
-                        handleSSEEvent(event)
-                    }
-                }
-            } else {
-                // MQTT failed — use SSE
-                Log.d(TAG, "MQTT unavailable, using SSE")
-                mqtt.cancel()
-                mqttClient = null
-                startSSEFallback()
-            }
+            // Use SSE directly — MQTT-over-WS is unreliable from mobile via Tailscale
+            startSSEFallback()
         }
     }
 
@@ -186,7 +146,7 @@ class AgentNotificationService : Service() {
         serviceScope.launch {
             client.connectionState.collectLatest { state ->
                 val stateLabel = when (state) {
-                    SSEClient.ConnectionState.CONNECTED -> "Connected (SSE)"
+                    SSEClient.ConnectionState.CONNECTED -> "Connected"
                     SSEClient.ConnectionState.CONNECTING -> "Connecting"
                     SSEClient.ConnectionState.DISCONNECTED -> "Disconnected"
                 }
