@@ -47,7 +47,9 @@ export function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       delivered_at TEXT,
       content TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','executed'))
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','executed')),
+      source TEXT DEFAULT 'user',
+      source_agent_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS files (
