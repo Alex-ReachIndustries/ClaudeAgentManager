@@ -101,6 +101,16 @@ client.on('connect', () => {
 
   // Also subscribe to system broadcasts
   client.subscribe('system/broadcast', { qos: 1 });
+
+  // Start publishing heartbeats every 30 seconds
+  setInterval(() => {
+    if (client.connected) {
+      client.publish(`agents/${AGENT_ID}/heartbeat`, JSON.stringify({
+        timestamp: new Date().toISOString(),
+      }), { qos: 0 });
+    }
+  }, 30000);
+  log('Heartbeat publishing started (every 30s)');
 });
 
 client.on('message', (topic, payload) => {

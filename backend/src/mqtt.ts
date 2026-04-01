@@ -42,10 +42,37 @@ export function initMqtt(): void {
     connected = true;
     logger.info("MQTT connected");
 
-    // Subscribe to agent update topics (for future use — agents publishing via MQTT)
-    client!.subscribe("agents/+/updates", { qos: 1 }, (err) => {
+    // Subscribe to agent update topics for agents publishing via MQTT sidecar
+    client!.subscribe("agents/+/updates/inbound", { qos: 1 }, (err) => {
       if (err) logger.error({ err }, "MQTT subscribe error");
+      else logger.info("Subscribed to agents/+/updates/inbound");
     });
+
+    // Subscribe to agent heartbeats
+    client!.subscribe("agents/+/heartbeat", { qos: 0 }, (err) => {
+      if (err) logger.error({ err }, "MQTT heartbeat subscribe error");
+    });
+  });
+
+  client.on("message", (topic: string, payload: Buffer) => {
+    try {
+      const parts = topic.split("/");
+      if (parts[0] !== "agents" || parts.length < 3) return;
+
+      const agentId = parts[1];
+      const action = parts[2];
+
+      if (action === "heartbeat") {
+        // Agent heartbeat via MQTT — touch the agent's last activity
+        onMqttHeartbeat?.(agentId);
+      } else if (action === "updates" && parts[3] === "inbound") {
+        // Agent update published via MQTT sidecar
+        const data = JSON.parse(payload.toString());
+        onMqttUpdate?.(agentId, data);
+      }
+    } catch (err) {
+      logger.error({ err }, "Error processing MQTT message");
+    }
   });
 
   client.on("error", (err) => {
@@ -60,6 +87,18 @@ export function initMqtt(): void {
   client.on("reconnect", () => {
     logger.info("MQTT reconnecting");
   });
+}
+
+// Callbacks for MQTT-received events (set by server.ts)
+let onMqttUpdate: ((agentId: string, data: Record<string, unknown>) => void) | null = null;
+let onMqttHeartbeat: ((agentId: string) => void) | null = null;
+
+export function setMqttHandlers(handlers: {
+  onUpdate?: (agentId: string, data: Record<string, unknown>) => void;
+  onHeartbeat?: (agentId: string) => void;
+}) {
+  onMqttUpdate = handlers.onUpdate || null;
+  onMqttHeartbeat = handlers.onHeartbeat || null;
 }
 
 /**

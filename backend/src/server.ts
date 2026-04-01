@@ -13,12 +13,12 @@ import workflowsRouter from "./routes/workflows.js";
 import retentionRouter from "./routes/retention.js";
 import projectsRouter from "./routes/projects.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
-import { archiveInactiveAgents, getAgent, getDb } from "./db.js";
+import { archiveInactiveAgents, getAgent, getDb, touchAgentHeartbeat, updateAgent } from "./db.js";
 import { initPush } from "./push.js";
 import { initWebhookDispatcher } from "./webhook-dispatcher.js";
 import { initWorkflowEngine } from "./workflow-engine.js";
 import { startRetentionScheduler } from "./retention.js";
-import { initMqtt } from "./mqtt.js";
+import { initMqtt, setMqttHandlers } from "./mqtt.js";
 import { authMiddleware, getApiKey } from "./middleware/auth.js";
 import { startBackupScheduler } from "./backup.js";
 
@@ -120,6 +120,21 @@ const server = app.listen(PORT, () => {
 
   // Initialize MQTT bridge (non-blocking — continues if broker unavailable)
   initMqtt();
+
+  // Set MQTT handlers for agent updates received via MQTT
+  setMqttHandlers({
+    onHeartbeat: (agentId) => {
+      try {
+        touchAgentHeartbeat(agentId);
+        // Auto-unarchive if needed
+        const agent = getAgent(agentId);
+        if (agent && (agent as Record<string, unknown>).status === "archived") {
+          updateAgent(agentId, { status: "active" });
+          broadcast("agent-updated", getAgent(agentId));
+        }
+      } catch { /* ignore */ }
+    },
+  });
 
   // Periodic sweep: archive agents inactive for >30 minutes, every 5 minutes
   setInterval(() => {
