@@ -558,11 +558,19 @@ private fun AgentMetricsPanel(
  */
 @Composable
 private fun MetricCard(label: String, value: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(LumiCard)
+            .clickable {
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, value))
+                copied = true
+            }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top
@@ -574,11 +582,19 @@ private fun MetricCard(label: String, value: String) {
             modifier = Modifier.width(120.dp)
         )
         Text(
-            text = value,
+            text = if (copied) "Copied!" else value,
             style = MaterialTheme.typography.bodyMedium,
-            color = LumiOnSurface,
+            color = if (copied) LumiPurple500 else LumiOnSurface,
             modifier = Modifier.weight(1f)
         )
+    }
+
+    // Reset "Copied!" after 1.5 seconds
+    if (copied) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(1500)
+            copied = false
+        }
     }
 }
 
