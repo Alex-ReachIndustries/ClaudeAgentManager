@@ -160,31 +160,7 @@ async function getClaudeProcesses() {
   }
 }
 
-async function sendEnterToProcess(pid) {
-  try {
-    // Use spawn instead of exec to guarantee windowsHide works
-    const { spawn: spawnProc } = require('child_process');
-    await new Promise((resolve, reject) => {
-      const proc = spawnProc('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
-        `Add-Type -AssemblyName System.Windows.Forms; ` +
-        `$wshell = New-Object -ComObject wscript.shell; ` +
-        `$activated = $wshell.AppActivate(${pid}); ` +
-        `if ($activated) { ` +
-          `Start-Sleep -Milliseconds 300; ` +
-          `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
-          `Start-Sleep -Milliseconds 500; ` +
-          `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
-        `}`
-      ], { stdio: 'ignore', windowsHide: true });
-      proc.on('close', resolve);
-      proc.on('error', reject);
-      setTimeout(() => { try { proc.kill(); } catch {} resolve(); }, 15000);
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
+// sendEnterToProcess removed — rate limits no longer show a dialog
 
 // ---------------------------------------------------------------------------
 // Safety checks
@@ -360,70 +336,7 @@ async function handleDeadAgent(agent) {
 }
 
 // ---------------------------------------------------------------------------
-// Hourly sweep — send Enter keys to stuck agents when rate limits reset
-// ---------------------------------------------------------------------------
-
-async function hourlySweep() {
-  if (shuttingDown) return;
-  log('=== Hourly sweep: rate limits resetting ===');
-
-  let agents;
-  try {
-    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
-    agents = data.data || [];
-  } catch (err) {
-    log(`Hourly sweep failed: ${err.message}`);
-    return;
-  }
-
-  const claudePids = await getClaudeProcesses();
-  let wokenCount = 0;
-
-  for (const agent of agents) {
-    if (!isActiveStatus(agent.status)) continue;
-
-    const pid = parsePid(agent.pid);
-    const timeSinceUpdate = Date.now() - parseTimestamp(agent.last_update_at);
-
-    // Only sweep agents stuck for 5+ minutes with a live process
-    if (timeSinceUpdate < SAFE_THRESHOLD) continue;
-    if (!pid) continue;
-
-    const alive = claudePids.has(pid) || await isProcessAlive(pid);
-    if (!alive) continue;
-
-    logAgent(agent.id, `Hourly sweep: sending Enter (stuck ${Math.round(timeSinceUpdate / 60000)}m)`);
-    await sendEnterToProcess(pid);
-    wokenCount++;
-
-    // Small stagger between agents
-    await new Promise(r => setTimeout(r, 2000));
-  }
-
-  log(`=== Hourly sweep done: sent Enter to ${wokenCount} agent(s) ===`);
-}
-
-function scheduleHourlySweep() {
-  const now = new Date();
-  const minutesPast = now.getMinutes();
-  const secondsPast = now.getSeconds();
-
-  // Time until next HH:02:00
-  let msUntilSweep;
-  if (minutesPast < 2) {
-    msUntilSweep = ((2 - minutesPast) * 60 - secondsPast) * 1000;
-  } else {
-    msUntilSweep = ((62 - minutesPast) * 60 - secondsPast) * 1000;
-  }
-
-  log(`Next hourly sweep in ${Math.round(msUntilSweep / 60000)} minutes`);
-  const t = setTimeout(() => {
-    hourlySweep();
-    const i = setInterval(hourlySweep, 60 * 60 * 1000);
-    activeIntervals.push(i);
-  }, msUntilSweep);
-  activeTimeouts.push(t);
-}
+// Hourly sweep removed — rate limits no longer show a dialog to dismiss
 
 // ---------------------------------------------------------------------------
 // Sidecar monitoring — runs every 5 minutes
@@ -561,7 +474,6 @@ async function start() {
   activeIntervals.push(setInterval(checkAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkSidecars, SIDECAR_CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
-  scheduleHourlySweep();
 
   // First check after 10s (let things settle)
   setTimeout(checkAgents, 10000);
