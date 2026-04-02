@@ -185,8 +185,8 @@ fun AgentDetailScreen(
                             tint = LumiOnSurfaceSecondary
                         )
                     }
-                    // Continue button
-                    IconButton(onClick = { viewModel.sendInput("continue") }) {
+                    // Continue button — sends "continue" as a message to the agent
+                    IconButton(onClick = { viewModel.sendMessage("continue") }) {
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
                             contentDescription = "Continue",
