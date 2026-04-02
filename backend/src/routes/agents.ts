@@ -608,17 +608,33 @@ router.post("/:id/read", (req: Request, res: Response) => {
 router.post("/:id/close", (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const agent = getAgent(id);
+    const agent = getAgent(id) as Record<string, unknown> | undefined;
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
 
-    const pid = (agent as Record<string, unknown>).pid as number | null;
+    const pid = agent.pid as number | null;
 
-    // Mark as completed (not archived) — completed agents don't auto-reactivate on poll/update,
-    // unlike archived agents which auto-unarchive when the process is still alive
-    updateAgent(id, { status: "completed" });
+    // Build context handoff: use agent-provided summary or auto-generate from recent updates
+    const closureSummary = req.body?.closure_summary as string | undefined;
+    const recentUpdates = getUpdates(id, 10);
+    const autoSummary = recentUpdates.data
+      .reverse()
+      .map((u) => `[${u.type}] ${u.summary || (u.content as string)?.slice(0, 200)}`)
+      .join("\n");
+
+    const metadata = JSON.parse((agent.metadata as string) || "{}");
+    metadata.context_handoff = {
+      closed_at: new Date().toISOString(),
+      title: agent.title,
+      workspace: agent.workspace,
+      role: agent.role || null,
+      project_id: agent.project_id || null,
+      closure_summary: closureSummary || null,
+      recent_activity: autoSummary,
+    };
+    updateAgent(id, { status: "completed", metadata: JSON.stringify(metadata) });
 
     // Create terminate request for the launcher to kill the process
     if (pid) {
@@ -655,13 +671,21 @@ router.post("/:id/resume", (req: Request, res: Response) => {
     // Create a resume launch request
     const launchResult = createLaunchRequest("resume", folderPath, id);
 
+    // Extract context handoff from metadata before clearing it
+    const metadata = JSON.parse((agent.metadata as string) || "{}");
+    const contextHandoff = metadata.context_handoff || null;
+
     // Set agent status back to active (will be updated when it reconnects)
     updateAgent(id, { status: "active" });
 
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);
 
-    res.json({ ok: true, launch_request_id: (launchResult as Record<string, unknown>).id });
+    res.json({
+      ok: true,
+      launch_request_id: (launchResult as Record<string, unknown>).id,
+      context_handoff: contextHandoff,
+    });
   } catch (err) {
     logger.error({ err }, "Error resuming agent");
     res.status(500).json({ error: "Failed to resume agent" });
