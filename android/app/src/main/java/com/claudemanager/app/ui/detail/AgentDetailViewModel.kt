@@ -400,6 +400,27 @@ class AgentDetailViewModel(
     }
 
     /**
+     * Terminate the agent and immediately resume it (restart).
+     */
+    fun terminateAndResume() {
+        viewModelScope.launch {
+            repository.closeAgent(agentId)
+                .onSuccess {
+                    // Brief delay to let terminate propagate
+                    kotlinx.coroutines.delay(1000)
+                    repository.resumeAgent(agentId)
+                        .onSuccess { refreshAgent() }
+                        .onFailure { e ->
+                            _uiState.update { it.copy(error = "Resume failed: ${e.message}") }
+                        }
+                }
+                .onFailure { e ->
+                    _uiState.update { it.copy(error = "Terminate failed: ${e.message}") }
+                }
+        }
+    }
+
+    /**
      * Archive the agent (set status to archived).
      */
     fun archiveAgent() {

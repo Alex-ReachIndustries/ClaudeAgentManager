@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -294,6 +295,16 @@ fun AgentDetailScreen(
                                             onClick = {
                                                 showOverflowMenu = false
                                                 viewModel.closeAgent()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Terminate & Resume") },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                viewModel.terminateAndResume()
                                             }
                                         )
                                     }
