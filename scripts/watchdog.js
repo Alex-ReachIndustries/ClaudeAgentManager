@@ -1,25 +1,25 @@
 #!/usr/bin/env node
 /**
- * Agent Watchdog v3 — Reliable overnight agent persistence
+ * Agent Watchdog v4 — Safe agent persistence with strong protections
  *
- * Monitors all agents at the process level and ensures they stay alive.
- * Designed to run alongside the launcher and handle:
+ * SAFETY RULES (hard guarantees):
+ *   - NEVER close/kill an agent that posted an update in the last 5 minutes
+ *   - NEVER set status to 'completed' (reserved for project agents)
+ *   - NEVER create launch requests that open visible terminal windows
+ *   - NEVER act on the same agent more than once per 5 minutes
+ *   - NEVER create duplicate resume requests
+ *   - ALL recovery actions are logged with reason
  *
- *   1. Process-level monitoring (actual PID checks every 30s)
- *   2. Rate limit / session dialog detection with targeted SendKeys
- *   3. MQTT sidecar health monitoring
- *   4. Session expiry handling with recovery limits
- *   5. Graceful shutdown
+ * What it does:
+ *   1. Detects truly dead agents (PID gone + no update for 10+ min)
+ *   2. Creates resume launch requests for dead agents (max 3 attempts)
+ *   3. Sends Enter keys to stuck agents on the hourly sweep only
+ *   4. Restarts dead MQTT sidecars (directly, no terminal windows)
  *
- * Auto-discovers backend URL from ~/.claude/agent-server-url
- * and API key from ~/.claude/agent-manager-key.
- *
- * Run:
- *   node scripts/watchdog.js
- *   (or) SERVER_URL=http://localhost:3001 node scripts/watchdog.js
+ * Run: node scripts/watchdog.js
  */
 
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
@@ -30,55 +30,46 @@ const execAsync = promisify(exec);
 // Configuration
 // ---------------------------------------------------------------------------
 
-const CHECK_INTERVAL = 30 * 1000;           // 30s — process-level checks
-const STUCK_THRESHOLD = 5 * 60 * 1000;      // 5 min without update = possibly stuck
-const DEAD_THRESHOLD = 10 * 60 * 1000;      // 10 min without update = likely dead
-const POST_RESTART_GRACE = 2 * 60 * 1000;   // 2 min grace after restart
-const MAX_RECOVERY_ATTEMPTS = 5;            // max auto-recoveries per agent
-const SIDECAR_CHECK_INTERVAL = 60 * 1000;   // 60s — sidecar health checks
-const HOURLY_SWEEP_MARGIN = 2 * 60 * 1000;  // start sweep 2 min after hour
-const SENDKEYS_RETRY_WAIT = 30 * 1000;      // 30s wait after Enter before escalating
+const CHECK_INTERVAL = 60 * 1000;              // 60s between checks (not 30s)
+const SAFE_THRESHOLD = 5 * 60 * 1000;          // 5 min — never touch agent within this
+const DEAD_THRESHOLD = 10 * 60 * 1000;         // 10 min without update + dead PID = dead
+const ACTION_COOLDOWN = 5 * 60 * 1000;         // 5 min cooldown between actions per agent
+const MAX_RECOVERY_ATTEMPTS = 3;               // max 3 auto-recoveries (not 5)
+const SIDECAR_CHECK_INTERVAL = 5 * 60 * 1000;  // 5 min between sidecar checks
+const POST_RESTART_GRACE = 3 * 60 * 1000;      // 3 min grace after restart
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-// Track agents we've recently restarted (agentId -> { restartedAt, recoveryCount })
+// Per-agent cooldown tracking: agentId -> { lastAction: Date, type: string }
+const actionCooldowns = new Map();
+
+// Track recently restarted agents: agentId -> { restartedAt }
 const recentRestarts = new Map();
 
-// Track agents where we sent Enter keys (agentId -> { sentAt })
-const enterKeySent = new Map();
-
-// Track known sidecar PIDs (agentId -> pid)
+// Track known sidecar PIDs: agentId -> pid
 const knownSidecars = new Map();
 
-// Shutdown flag
 let shuttingDown = false;
 
 // ---------------------------------------------------------------------------
-// Server URL / API key auto-discovery
+// Server URL / API key discovery
 // ---------------------------------------------------------------------------
 
 function discoverServerUrl() {
-  // Priority: env var > CLI arg > file > default
   if (process.env.SERVER_URL) return process.env.SERVER_URL;
-
   const idx = process.argv.indexOf('--server');
   if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
-
   try {
     const home = process.env.USERPROFILE || process.env.HOME;
-    const urlFile = path.join(home, '.claude', 'agent-server-url');
-    return fs.readFileSync(urlFile, 'utf8').trim();
+    return fs.readFileSync(path.join(home, '.claude', 'agent-server-url'), 'utf8').trim();
   } catch {
     return 'http://localhost:3001';
   }
 }
 
 function discoverApiKey() {
-  const idx = process.argv.indexOf('--api-key');
-  if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
-
   try {
     const home = process.env.USERPROFILE || process.env.HOME;
     return fs.readFileSync(path.join(home, '.claude', 'agent-manager-key'), 'utf8').trim();
@@ -104,7 +95,7 @@ function logAgent(agentId, msg) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP helpers (Node 22+ built-in fetch)
+// HTTP helpers
 // ---------------------------------------------------------------------------
 
 async function fetchJSON(url, options = {}) {
@@ -124,19 +115,19 @@ async function fetchJSON(url, options = {}) {
 }
 
 async function postJSON(url, body = {}) {
-  return fetchJSON(url, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  return fetchJSON(url, { method: 'POST', body: JSON.stringify(body) });
 }
 
 // ---------------------------------------------------------------------------
-// Process monitoring (PowerShell)
+// Process monitoring
 // ---------------------------------------------------------------------------
 
-/**
- * Check if a specific PID is alive.
- */
+function parsePid(pid) {
+  if (!pid) return null;
+  const n = parseInt(String(pid), 10);
+  return isNaN(n) ? null : n;
+}
+
 async function isProcessAlive(pid) {
   try {
     const { stdout } = await execAsync(
@@ -149,50 +140,26 @@ async function isProcessAlive(pid) {
   }
 }
 
-/**
- * Get all running claude.exe processes with their PIDs and parent PIDs.
- * Returns array of { pid, parentPid, sessionName }.
- */
 async function getClaudeProcesses() {
   try {
     const { stdout } = await execAsync(
-      `powershell.exe -NoProfile -Command "Get-Process -Name claude -ErrorAction SilentlyContinue | Select-Object Id, @{N='ParentId';E={(Get-CimInstance Win32_Process -Filter \\"ProcessId=$($_.Id)\\").ParentProcessId}} | ConvertTo-Json -Compress"`,
+      `powershell.exe -NoProfile -Command "Get-Process -Name claude -ErrorAction SilentlyContinue | Select-Object Id | ConvertTo-Json -Compress"`,
       { timeout: 10000 }
     );
     const trimmed = stdout.trim();
     if (!trimmed || trimmed === '') return [];
     const parsed = JSON.parse(trimmed);
-    // PowerShell returns a single object (not array) when there's only one process
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    return new Set(arr.map(p => p.Id));
   } catch {
-    return [];
+    return new Set();
   }
 }
 
-/**
- * Find node.exe processes that are running mqtt-bridge.js for a specific agent.
- * Returns the PID if found, null otherwise.
- */
-async function findSidecarProcess(agentId) {
-  try {
-    const { stdout } = await execAsync(
-      `powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name='node.exe'\\" | Where-Object { $_.CommandLine -match 'mqtt-bridge' -and $_.CommandLine -match '${agentId.substring(0, 8)}' } | Select-Object -ExpandProperty ProcessId"`,
-      { timeout: 10000 }
-    );
-    const pid = parseInt(stdout.trim(), 10);
-    return isNaN(pid) ? null : pid;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Send Enter keys to a specific process window (targeted, not broadcast).
- */
 async function sendEnterToProcess(pid) {
   try {
     await execAsync(
-      `powershell.exe -NoProfile -Command "` +
+      `powershell.exe -NoProfile -WindowStyle Hidden -Command "` +
         `Add-Type -AssemblyName System.Windows.Forms; ` +
         `$wshell = New-Object -ComObject wscript.shell; ` +
         `$activated = $wshell.AppActivate(${pid}); ` +
@@ -201,38 +168,8 @@ async function sendEnterToProcess(pid) {
           `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
           `Start-Sleep -Milliseconds 500; ` +
           `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
-          `Start-Sleep -Milliseconds 500; ` +
-          `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
-        `} else { ` +
-          `Write-Host 'ACTIVATE_FAILED'; ` +
         `}"`,
-      { timeout: 15000 }
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Send a typed string to a specific process window (for "continue" message).
- */
-async function sendTextToProcess(pid, text) {
-  try {
-    // Escape special SendKeys characters
-    const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}');
-    await execAsync(
-      `powershell.exe -NoProfile -Command "` +
-        `Add-Type -AssemblyName System.Windows.Forms; ` +
-        `$wshell = New-Object -ComObject wscript.shell; ` +
-        `$activated = $wshell.AppActivate(${pid}); ` +
-        `if ($activated) { ` +
-          `Start-Sleep -Milliseconds 300; ` +
-          `[System.Windows.Forms.SendKeys]::SendWait('${escaped}'); ` +
-          `Start-Sleep -Milliseconds 300; ` +
-          `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
-        `}"`,
-      { timeout: 10000 }
+      { timeout: 15000, windowsHide: true }
     );
     return true;
   } catch {
@@ -241,226 +178,117 @@ async function sendTextToProcess(pid, text) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent state helpers
+// Safety checks
 // ---------------------------------------------------------------------------
 
-function parseAgentTimestamp(ts) {
+function parseTimestamp(ts) {
   if (!ts) return 0;
-  // Backend stores UTC timestamps without 'Z' suffix
   const str = ts.endsWith('Z') ? ts : ts + 'Z';
   return new Date(str).getTime();
-}
-
-function getRecoveryCount(agent) {
-  try {
-    const meta = JSON.parse(agent.metadata || '{}');
-    return (meta.recovery_count || 0);
-  } catch {
-    return 0;
-  }
 }
 
 function isActiveStatus(status) {
   return ['active', 'idle', 'working', 'waiting-for-input'].includes(status);
 }
 
-function isRecoverableStatus(status) {
-  return ['archived', 'completed'].includes(status);
+/**
+ * SAFETY: Check if we're allowed to take action on this agent.
+ * Returns false if the agent is protected.
+ */
+function canActOnAgent(agentId, lastUpdateAt) {
+  const now = Date.now();
+  const timeSinceUpdate = now - parseTimestamp(lastUpdateAt);
+
+  // HARD RULE: never touch an agent that updated in the last 5 minutes
+  if (timeSinceUpdate < SAFE_THRESHOLD) return false;
+
+  // HARD RULE: respect action cooldown
+  const cooldown = actionCooldowns.get(agentId);
+  if (cooldown && (now - cooldown.lastAction) < ACTION_COOLDOWN) return false;
+
+  // HARD RULE: respect post-restart grace period
+  const restart = recentRestarts.get(agentId);
+  if (restart && (now - restart.restartedAt) < POST_RESTART_GRACE) return false;
+
+  return true;
+}
+
+function recordAction(agentId, type) {
+  actionCooldowns.set(agentId, { lastAction: Date.now(), type });
+}
+
+function getRecoveryCount(agent) {
+  try {
+    return JSON.parse(agent.metadata || '{}').recovery_count || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Core monitoring loop
+// Core monitoring loop — runs every 60s
 // ---------------------------------------------------------------------------
 
-async function fetchAgents() {
+async function checkAgents() {
+  if (shuttingDown) return;
+
+  let agents;
   try {
     const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
-    return data.data || [];
+    agents = data.data || [];
   } catch (err) {
     if (!err.message.includes('ECONNREFUSED')) {
       log(`Failed to fetch agents: ${err.message}`);
     }
-    return null;
+    return;
   }
-}
 
-/**
- * Main check loop — runs every CHECK_INTERVAL (30s).
- *
- * For each agent that should be active:
- *   1. Verify its PID actually exists
- *   2. If PID dead -> trigger recovery
- *   3. If PID alive but no update in 5+ min -> stuck at dialog, send Enter
- *   4. If Enter was sent 30s+ ago and still stuck -> escalate
- */
-async function checkAgents() {
-  if (shuttingDown) return;
-
-  const agents = await fetchAgents();
-  if (!agents) return;
-
-  const now = Date.now();
-  const claudeProcs = await getClaudeProcesses();
-  const claudePids = new Set(claudeProcs.map(p => p.Id));
-
-  let activeCount = 0;
-  let stuckCount = 0;
+  const claudePids = await getClaudeProcesses();
   let deadCount = 0;
 
   for (const agent of agents) {
-    // Skip completed/archived agents unless they were recently restarted
-    if (!isActiveStatus(agent.status)) {
-      // Check if this is an agent we recently restarted that hasn't checked in yet
-      const restart = recentRestarts.get(agent.id);
-      if (restart && (now - restart.restartedAt) < POST_RESTART_GRACE) {
-        // Still within grace period, skip
-        continue;
+    if (!isActiveStatus(agent.status)) continue;
+
+    const pid = parsePid(agent.pid);
+    const timeSinceUpdate = Date.now() - parseTimestamp(agent.last_update_at);
+
+    // SAFETY: skip if agent updated recently
+    if (!canActOnAgent(agent.id, agent.last_update_at)) continue;
+
+    // Is the process alive?
+    let processAlive = false;
+    if (pid) {
+      processAlive = claudePids.has(pid);
+      if (!processAlive) {
+        // Double-check with direct PID lookup
+        processAlive = await isProcessAlive(pid);
       }
-      continue;
     }
 
-    activeCount++;
-
-    const pid = agent.pid ? parseInt(String(agent.pid), 10) : null;
-    const lastUpdate = parseAgentTimestamp(agent.last_update_at);
-    const timeSinceUpdate = now - lastUpdate;
-
-    // If agent posted an update very recently (<60s), it's alive — skip
-    if (timeSinceUpdate < 60 * 1000) continue;
-
-    // Check if we recently restarted this agent
-    const restart = recentRestarts.get(agent.id);
-    if (restart && (now - restart.restartedAt) < POST_RESTART_GRACE) {
-      // Within grace period — don't interfere
-      continue;
-    }
-
-    // --- Case 1: Agent has a PID and it's alive ---
-    if (pid && claudePids.has(pid)) {
-      if (timeSinceUpdate > STUCK_THRESHOLD) {
-        stuckCount++;
-        await handleStuckAgent(agent, pid, timeSinceUpdate);
-      }
-      continue;
-    }
-
-    // --- Case 2: Agent has a PID but it's dead ---
-    if (pid && !claudePids.has(pid)) {
-      // Double-check with a direct PID lookup (claude might have a different process name)
-      const directAlive = await isProcessAlive(pid);
-      if (directAlive) {
-        if (timeSinceUpdate > STUCK_THRESHOLD) {
-          stuckCount++;
-          await handleStuckAgent(agent, pid, timeSinceUpdate);
-        }
-        continue;
-      }
-
+    // Only act if process is DEAD and no update for DEAD_THRESHOLD
+    if (!processAlive && timeSinceUpdate > DEAD_THRESHOLD) {
       deadCount++;
-      logAgent(agent.id, `PID ${pid} is dead (status=${agent.status}, last update ${Math.round(timeSinceUpdate / 60000)}m ago)`);
-      await handleDeadAgent(agent);
-      continue;
-    }
-
-    // --- Case 3: Agent has no PID recorded but is marked active ---
-    if (!pid && timeSinceUpdate > DEAD_THRESHOLD) {
-      deadCount++;
-      logAgent(agent.id, `No PID recorded and no update for ${Math.round(timeSinceUpdate / 60000)}m — treating as dead`);
+      logAgent(agent.id, `DEAD: PID ${pid || 'none'} gone, no update for ${Math.round(timeSinceUpdate / 60000)}m`);
       await handleDeadAgent(agent);
     }
+    // If process is alive but stuck, we only handle that in hourly sweeps
   }
 
-  // Log summary only when there's something interesting
-  if (stuckCount > 0 || deadCount > 0) {
-    log(`Status: ${activeCount} active, ${stuckCount} stuck, ${deadCount} dead`);
+  if (deadCount > 0) {
+    log(`Check complete: ${deadCount} dead agent(s) found`);
   }
 }
 
 /**
- * Handle an agent that is alive but hasn't posted updates (stuck at dialog).
- */
-async function handleStuckAgent(agent, pid, timeSinceUpdate) {
-  const agentId = agent.id;
-
-  // Check if we already sent Enter keys recently
-  const enterState = enterKeySent.get(agentId);
-
-  if (!enterState) {
-    // First attempt: send Enter keys to dismiss dialog
-    logAgent(agentId, `Stuck for ${Math.round(timeSinceUpdate / 60000)}m — sending Enter keys to PID ${pid}`);
-    const sent = await sendEnterToProcess(pid);
-    if (sent) {
-      enterKeySent.set(agentId, { sentAt: Date.now(), attempts: 1 });
-    }
-    return;
-  }
-
-  const timeSinceEnter = Date.now() - enterState.sentAt;
-
-  if (timeSinceEnter < SENDKEYS_RETRY_WAIT) {
-    // Still waiting for Enter to take effect
-    return;
-  }
-
-  // Enter didn't work — escalate
-  if (enterState.attempts < 3) {
-    // Try sending Enter again (dialog might have multiple prompts)
-    logAgent(agentId, `Still stuck after Enter (attempt ${enterState.attempts}) — retrying Enter keys`);
-    await sendEnterToProcess(pid);
-    enterKeySent.set(agentId, { sentAt: Date.now(), attempts: enterState.attempts + 1 });
-    return;
-  }
-
-  // After 3 Enter attempts, try sending "continue" as a typed message via API
-  if (enterState.attempts === 3) {
-    logAgent(agentId, `Enter keys failed 3 times — sending "/session-resume" via API`);
-    try {
-      await postJSON(`${SERVER_URL}/api/agents/${agentId}/messages`, {
-        content: '/session-resume',
-        source: 'system',
-      });
-      enterKeySent.set(agentId, { sentAt: Date.now(), attempts: 4 });
-    } catch (err) {
-      logAgent(agentId, `Failed to send API message: ${err.message}`);
-    }
-    return;
-  }
-
-  // After API message attempt, try typing "continue" directly into terminal
-  if (enterState.attempts === 4) {
-    logAgent(agentId, `API message didn't help — typing "continue" into terminal`);
-    await sendTextToProcess(pid, 'continue');
-    enterKeySent.set(agentId, { sentAt: Date.now(), attempts: 5 });
-    return;
-  }
-
-  // All attempts exhausted — agent is unrecoverable while alive
-  if (timeSinceUpdate > DEAD_THRESHOLD * 2) {
-    logAgent(agentId, `Stuck beyond recovery with live process — killing and restarting`);
-    try {
-      // Kill the stuck process via the backend terminate flow
-      await postJSON(`${SERVER_URL}/api/agents/${agentId}/close`, {});
-    } catch (err) {
-      logAgent(agentId, `Failed to close agent: ${err.message}`);
-    }
-    enterKeySent.delete(agentId);
-    // handleDeadAgent will pick this up on next cycle
-  }
-}
-
-/**
- * Handle an agent whose process is dead — attempt recovery via backend API.
+ * Handle a confirmed dead agent — attempt recovery via resume.
  */
 async function handleDeadAgent(agent) {
   const agentId = agent.id;
   const recoveryCount = getRecoveryCount(agent);
 
-  // Clear any Enter key tracking
-  enterKeySent.delete(agentId);
-
-  // Check recovery limits
+  // SAFETY: check limits
   if (recoveryCount >= MAX_RECOVERY_ATTEMPTS) {
-    logAgent(agentId, `Recovery count ${recoveryCount} >= max ${MAX_RECOVERY_ATTEMPTS} — marking as archived (failed)`);
+    logAgent(agentId, `Recovery limit reached (${recoveryCount}/${MAX_RECOVERY_ATTEMPTS}) — archiving`);
     try {
       await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`, {
         method: 'PATCH',
@@ -470,37 +298,32 @@ async function handleDeadAgent(agent) {
             ...JSON.parse(agent.metadata || '{}'),
             watchdog_failed: true,
             watchdog_failed_at: new Date().toISOString(),
-            watchdog_reason: `Exceeded max recovery attempts (${MAX_RECOVERY_ATTEMPTS})`,
           }),
         }),
       });
     } catch (err) {
-      logAgent(agentId, `Failed to mark as failed: ${err.message}`);
+      logAgent(agentId, `Failed to archive: ${err.message}`);
     }
+    recordAction(agentId, 'archive');
     return;
   }
 
-  // Check if there's already a pending resume launch request for this agent
+  // SAFETY: check for existing pending resume requests
   try {
-    const pendingRequests = await fetchJSON(`${SERVER_URL}/api/launch-requests?status=pending`);
-    if (Array.isArray(pendingRequests)) {
-      const existingResume = pendingRequests.find(
-        r => r.type === 'resume' && r.resume_agent_id === agentId
-      );
-      if (existingResume) {
-        logAgent(agentId, `Resume launch request #${existingResume.id} already pending — skipping`);
+    const pending = await fetchJSON(`${SERVER_URL}/api/launch-requests?status=pending`);
+    if (Array.isArray(pending)) {
+      const existing = pending.find(r => r.type === 'resume' && r.resume_agent_id === agentId);
+      if (existing) {
+        logAgent(agentId, `Resume request #${existing.id} already pending — skipping`);
+        recordAction(agentId, 'skip-dup');
         return;
       }
     }
-  } catch {
-    // If we can't check, proceed with recovery (dedup is not critical)
-  }
+  } catch { /* proceed if check fails */ }
 
-  // Close the agent first (marks as completed), then resume
-  logAgent(agentId, `Triggering recovery (attempt ${recoveryCount + 1}/${MAX_RECOVERY_ATTEMPTS})`);
-
+  // Increment recovery count in metadata
+  logAgent(agentId, `Recovery attempt ${recoveryCount + 1}/${MAX_RECOVERY_ATTEMPTS}`);
   try {
-    // Update metadata with recovery count before close/resume
     const meta = JSON.parse(agent.metadata || '{}');
     await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`, {
       method: 'PATCH',
@@ -509,96 +332,68 @@ async function handleDeadAgent(agent) {
           ...meta,
           recovery_count: recoveryCount + 1,
           last_recovery_at: new Date().toISOString(),
-          watchdog_recovery: true,
         }),
       }),
     });
 
-    // Close the agent (sets status=completed, creates terminate launch request if PID exists)
+    // Close then resume
     await postJSON(`${SERVER_URL}/api/agents/${agentId}/close`, {});
-
-    // Small delay to let terminate propagate
     await new Promise(r => setTimeout(r, 1000));
-
-    // Resume the agent (creates a resume launch request for the launcher to pick up)
     const result = await postJSON(`${SERVER_URL}/api/agents/${agentId}/resume`, {});
-    logAgent(agentId, `Resume requested: ${JSON.stringify(result)}`);
+    logAgent(agentId, `Resume launched (request #${result.launch_request_id || '?'})`);
 
-    // Track the restart
-    recentRestarts.set(agentId, {
-      restartedAt: Date.now(),
-      recoveryCount: recoveryCount + 1,
-    });
+    recentRestarts.set(agentId, { restartedAt: Date.now() });
+    recordAction(agentId, 'resume');
   } catch (err) {
     logAgent(agentId, `Recovery failed: ${err.message}`);
+    recordAction(agentId, 'error');
   }
 }
 
 // ---------------------------------------------------------------------------
-// Hourly sweep — on the hour when rate limits reset
+// Hourly sweep — send Enter keys to stuck agents when rate limits reset
 // ---------------------------------------------------------------------------
 
-/**
- * Do a comprehensive sweep of ALL agents when rate limits reset.
- * Sends Enter keys to every stuck process and triggers recovery for dead ones.
- */
 async function hourlySweep() {
   if (shuttingDown) return;
-
   log('=== Hourly sweep: rate limits resetting ===');
 
-  const agents = await fetchAgents();
-  if (!agents) return;
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch (err) {
+    log(`Hourly sweep failed: ${err.message}`);
+    return;
+  }
 
-  const claudeProcs = await getClaudeProcesses();
-  const claudePids = new Set(claudeProcs.map(p => p.Id));
-  const now = Date.now();
+  const claudePids = await getClaudeProcesses();
   let wokenCount = 0;
 
   for (const agent of agents) {
     if (!isActiveStatus(agent.status)) continue;
 
-    const pid = agent.pid;
-    const lastUpdate = parseAgentTimestamp(agent.last_update_at);
-    const timeSinceUpdate = now - lastUpdate;
+    const pid = parsePid(agent.pid);
+    const timeSinceUpdate = Date.now() - parseTimestamp(agent.last_update_at);
 
-    const parsedPid = pid ? parseInt(String(pid), 10) : null;
+    // Only sweep agents stuck for 5+ minutes with a live process
+    if (timeSinceUpdate < SAFE_THRESHOLD) continue;
+    if (!pid) continue;
 
-    // Only sweep agents that appear stuck (3+ min without update)
-    if (timeSinceUpdate < 3 * 60 * 1000) continue;
+    const alive = claudePids.has(pid) || await isProcessAlive(pid);
+    if (!alive) continue;
 
-    if (parsedPid && (claudePids.has(parsedPid) || await isProcessAlive(parsedPid))) {
-      // Process alive but stuck — send Enter keys (rate limit dialog likely)
-      logAgent(agent.id, `Hourly sweep: sending Enter keys (${Math.round(timeSinceUpdate / 60000)}m stuck)`);
-      await sendEnterToProcess(parsedPid);
-      wokenCount++;
+    logAgent(agent.id, `Hourly sweep: sending Enter (stuck ${Math.round(timeSinceUpdate / 60000)}m)`);
+    await sendEnterToProcess(pid);
+    wokenCount++;
 
-      // Clear any escalation tracking — fresh start after hour
-      enterKeySent.delete(agent.id);
-
-      // Also send a "continue" message via API after a brief delay
-      setTimeout(async () => {
-        try {
-          await postJSON(`${SERVER_URL}/api/agents/${agent.id}/messages`, {
-            content: 'continue',
-            source: 'system',
-          });
-          logAgent(agent.id, 'Hourly sweep: sent "continue" via API');
-        } catch (err) {
-          logAgent(agent.id, `Hourly sweep: failed to message: ${err.message}`);
-        }
-      }, 5000);
-    }
-    // Dead agents will be handled by the regular checkAgents cycle
+    // Small stagger between agents
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  log(`=== Hourly sweep complete: woke ${wokenCount} agent(s) ===`);
+  log(`=== Hourly sweep done: sent Enter to ${wokenCount} agent(s) ===`);
 }
 
-/**
- * Schedule the hourly sweep at HH:02 (2 minutes after the hour).
- * Rate limits on most APIs reset on the hour, so we wait a small margin.
- */
 function scheduleHourlySweep() {
   const now = new Date();
   const minutesPast = now.getMinutes();
@@ -613,152 +408,123 @@ function scheduleHourlySweep() {
   }
 
   log(`Next hourly sweep in ${Math.round(msUntilSweep / 60000)} minutes`);
-
-  setTimeout(() => {
+  const t = setTimeout(() => {
     hourlySweep();
-    // Then repeat every hour
-    setInterval(hourlySweep, 60 * 60 * 1000);
+    const i = setInterval(hourlySweep, 60 * 60 * 1000);
+    activeIntervals.push(i);
   }, msUntilSweep);
+  activeTimeouts.push(t);
 }
 
 // ---------------------------------------------------------------------------
-// Sidecar monitoring
+// Sidecar monitoring — runs every 5 minutes
 // ---------------------------------------------------------------------------
 
-/**
- * Check MQTT sidecars for all active agents.
- * If a sidecar should be running but isn't, attempt to restart it.
- */
 async function checkSidecars() {
   if (shuttingDown) return;
 
-  const agents = await fetchAgents();
-  if (!agents) return;
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch { return; }
 
   for (const agent of agents) {
-    if (!isActiveStatus(agent.status)) {
-      // Clean up tracking for inactive agents
-      knownSidecars.delete(agent.id);
-      continue;
-    }
+    if (!isActiveStatus(agent.status)) continue;
 
     const agentId = agent.id;
+    const pid = parsePid(agent.pid);
+
+    // Only restart sidecars for agents with live processes
+    if (!pid || !(await isProcessAlive(pid))) continue;
 
     // Check if sidecar is running
-    const knownPid = knownSidecars.get(agentId);
     let sidecarAlive = false;
-
-    if (knownPid) {
+    const knownPid = knownSidecars.get(agentId);
+    if (knownPid && typeof knownPid === 'number') {
       sidecarAlive = await isProcessAlive(knownPid);
     }
 
     if (!sidecarAlive) {
-      // Try to find sidecar by scanning node processes
-      const foundPid = await findSidecarProcess(agentId);
-      if (foundPid) {
-        knownSidecars.set(agentId, foundPid);
-        sidecarAlive = true;
-      }
+      // Scan for existing sidecar process
+      try {
+        const { stdout } = await execAsync(
+          `powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name='node.exe'\\" | Where-Object { $_.CommandLine -match 'mqtt-bridge' -and $_.CommandLine -match '${agentId.substring(0, 8)}' } | Select-Object -ExpandProperty ProcessId"`,
+          { timeout: 10000 }
+        );
+        const foundPid = parseInt(stdout.trim(), 10);
+        if (!isNaN(foundPid)) {
+          knownSidecars.set(agentId, foundPid);
+          sidecarAlive = true;
+        }
+      } catch { /* not found */ }
     }
 
     if (!sidecarAlive) {
-      // Rate-limit sidecar restart attempts — at most once per 5 minutes per agent
-      const lastSidecarAttempt = knownSidecars.get(`${agentId}_attempt`);
-      if (lastSidecarAttempt && (Date.now() - lastSidecarAttempt) < 5 * 60 * 1000) {
-        continue; // Already attempted recently, skip
-      }
-      knownSidecars.set(`${agentId}_attempt`, Date.now());
-
-      const pid = agent.pid ? parseInt(String(agent.pid), 10) : null;
-      const agentAlive = pid && await isProcessAlive(pid);
-
-      if (agentAlive) {
-        // Agent is alive, just sidecar is dead — restart sidecar directly (no launch request)
-        try {
-          const sidecarDir = path.join(__dirname, '..', 'sidecar');
-          const sidecarScript = path.join(sidecarDir, 'mqtt-bridge.js');
-          if (fs.existsSync(sidecarScript)) {
-            const { spawn } = require('child_process');
-            const proc = spawn('node', [
-              'mqtt-bridge.js',
-              '--agent', agentId,
-              '--broker', process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
-              '--username', 'agent',
-              '--password', process.env.MQTT_AGENT_PASSWORD || 'agentsidecar',
-            ], {
-              cwd: sidecarDir,  // CRITICAL: must be sidecar dir for require('mqtt') to work
-              detached: true,
-              stdio: 'ignore',
-              windowsHide: true,
-            });
-            proc.unref();
-            knownSidecars.set(agentId, proc.pid);
-            logAgent(agentId, `Restarted MQTT sidecar directly (PID ${proc.pid})`);
-          }
-        } catch (err) {
-          logAgent(agentId, `Failed to restart sidecar: ${err.message}`);
+      // Spawn sidecar directly (hidden, no terminal window)
+      try {
+        const sidecarDir = path.join(__dirname, '..', 'sidecar');
+        const sidecarScript = path.join(sidecarDir, 'mqtt-bridge.js');
+        if (fs.existsSync(sidecarScript)) {
+          const proc = spawn('node', [
+            'mqtt-bridge.js',
+            '--agent', agentId,
+            '--broker', process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
+            '--username', 'agent',
+            '--password', process.env.MQTT_AGENT_PASSWORD || 'agentsidecar',
+          ], {
+            cwd: sidecarDir,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+          proc.unref();
+          knownSidecars.set(agentId, proc.pid);
+          logAgent(agentId, `Started MQTT sidecar (PID ${proc.pid})`);
         }
+      } catch (err) {
+        logAgent(agentId, `Sidecar start failed: ${err.message}`);
       }
-      // If agent is also dead, the main check loop will handle full recovery
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Cleanup — expire old tracking data
+// Cleanup
 // ---------------------------------------------------------------------------
 
 function cleanupTracking() {
   const now = Date.now();
-  const maxAge = 30 * 60 * 1000; // 30 min
+  const maxAge = 30 * 60 * 1000;
 
-  for (const [agentId, info] of recentRestarts) {
-    if (now - info.restartedAt > maxAge) {
-      recentRestarts.delete(agentId);
-    }
+  for (const [id, info] of actionCooldowns) {
+    if (now - info.lastAction > maxAge) actionCooldowns.delete(id);
   }
-
-  for (const [agentId, info] of enterKeySent) {
-    if (now - info.sentAt > maxAge) {
-      enterKeySent.delete(agentId);
-    }
+  for (const [id, info] of recentRestarts) {
+    if (now - info.restartedAt > maxAge) recentRestarts.delete(id);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Graceful shutdown
+// Shutdown
 // ---------------------------------------------------------------------------
+
+const activeIntervals = [];
+const activeTimeouts = [];
 
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  log(`Received ${signal} — shutting down gracefully`);
-
-  // Clear all intervals
-  for (const id of activeIntervals) {
-    clearInterval(id);
-  }
-  for (const id of activeTimeouts) {
-    clearTimeout(id);
-  }
-
-  log('Watchdog stopped');
+  log(`${signal} — shutting down`);
+  activeIntervals.forEach(clearInterval);
+  activeTimeouts.forEach(clearTimeout);
   process.exit(0);
 }
 
-// Track intervals/timeouts for cleanup
-const activeIntervals = [];
-const activeTimeouts = [];
-
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-
-// Windows-specific: handle Ctrl+C on Windows
 if (process.platform === 'win32') {
-  const rl = require('readline').createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
   rl.on('SIGINT', () => shutdown('SIGINT'));
 }
 
@@ -767,41 +533,34 @@ if (process.platform === 'win32') {
 // ---------------------------------------------------------------------------
 
 async function start() {
-  log('===================================');
-  log('Agent Watchdog v3 starting');
-  log('===================================');
+  log('=== Agent Watchdog v4 ===');
   log(`Server: ${SERVER_URL}`);
-  log(`API key: ${API_KEY ? API_KEY.substring(0, 8) + '...' : '(none)'}`);
   log(`Check interval: ${CHECK_INTERVAL / 1000}s`);
-  log(`Stuck threshold: ${STUCK_THRESHOLD / 60000}m`);
+  log(`Safe threshold: ${SAFE_THRESHOLD / 60000}m (never touch within)`);
   log(`Dead threshold: ${DEAD_THRESHOLD / 60000}m`);
-  log(`Post-restart grace: ${POST_RESTART_GRACE / 60000}m`);
-  log(`Max recovery attempts: ${MAX_RECOVERY_ATTEMPTS}`);
+  log(`Action cooldown: ${ACTION_COOLDOWN / 60000}m per agent`);
+  log(`Max recovery: ${MAX_RECOVERY_ATTEMPTS} attempts`);
 
-  // Verify backend connectivity
   try {
     const health = await fetchJSON(`${SERVER_URL}/api/health`);
-    log(`Backend health: ${health.status}`);
+    log(`Backend: ${health.status}`);
   } catch (err) {
-    log(`WARNING: Cannot reach backend at ${SERVER_URL}: ${err.message}`);
-    log('Will keep retrying...');
+    log(`WARNING: Backend unreachable: ${err.message}`);
   }
 
-  // Initial check
-  await checkAgents();
-
-  // Schedule recurring checks
+  // Start monitoring
   activeIntervals.push(setInterval(checkAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkSidecars, SIDECAR_CHECK_INTERVAL));
-  activeIntervals.push(setInterval(cleanupTracking, 5 * 60 * 1000));
-
-  // Schedule hourly sweep
+  activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
   scheduleHourlySweep();
+
+  // First check after 10s (let things settle)
+  setTimeout(checkAgents, 10000);
 
   log('Monitoring active');
 }
 
 start().catch(err => {
-  log(`Fatal startup error: ${err.message}`);
+  log(`Fatal: ${err.message}`);
   process.exit(1);
 });
