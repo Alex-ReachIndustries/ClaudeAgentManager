@@ -121,6 +121,7 @@ fun ConversationPanel(
     isUploading: Boolean,
     onSendMessage: (String) -> Unit,
     onUploadFile: (Uri) -> Unit,
+    onFileDownload: (Long, String) -> Unit = { _, _ -> },
     draftMessage: String = "",
     onDraftChanged: (String) -> Unit = {},
     lastUploadedFileName: String? = null,
@@ -223,7 +224,7 @@ fun ConversationPanel(
                                 SentMessageBubble(message = item.message)
                             }
                         }
-                        is ConversationItem.File -> FileBubble(fileInfo = item.fileInfo)
+                        is ConversationItem.File -> FileBubble(fileInfo = item.fileInfo, onDownload = onFileDownload)
                     }
                 }
 
@@ -720,9 +721,8 @@ private fun updateTypeInfo(type: UpdateType): ConvUpdateTypeInfo = when (type) {
  * User uploads align right (purple tint), Claude-generated files align left (blue tint).
  */
 @Composable
-private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo) {
+private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo, onDownload: (Long, String) -> Unit = { _, _ -> }) {
     val isUser = fileInfo.source == "user"
-    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -746,10 +746,7 @@ private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo) {
                 if (isUser) LumiPurple500.copy(alpha = 0.25f) else LumiOnSurfaceTertiary.copy(alpha = 0.2f)
             ),
             modifier = Modifier.clickable {
-                // Open download URL in browser
-                val url = "${com.claudemanager.app.data.api.ApiClient.getBaseUrl()}/api/agents/${fileInfo.agentId}/files/${fileInfo.id}"
-                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                context.startActivity(intent)
+                onDownload(fileInfo.id, fileInfo.filename)
             }
         ) {
             Column(modifier = Modifier.padding(12.dp)) {

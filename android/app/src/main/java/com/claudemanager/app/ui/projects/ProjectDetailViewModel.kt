@@ -259,6 +259,45 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     }
 
     /**
+     * Download a project file via OkHttp and open it.
+     */
+    fun downloadFile(agentId: String, fileId: Long, filename: String, context: android.content.Context) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val url = repository.getFileDownloadUrl(agentId, fileId)
+                val client = com.claudemanager.app.data.api.ApiClient.getRetrofit().callFactory() as okhttp3.OkHttpClient
+                val request = okhttp3.Request.Builder().url(url).build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body ?: return@launch
+                    val cacheDir = java.io.File(context.cacheDir, "downloads")
+                    cacheDir.mkdirs()
+                    val file = java.io.File(cacheDir, filename)
+                    file.outputStream().use { out -> body.byteStream().use { it.copyTo(out) } }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        try {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context, "${context.packageName}.fileprovider", file
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, response.header("Content-Type") ?: "application/octet-stream")
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            _uiState.update { it.copy(actionMessage = "Downloaded: $filename") }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { it.copy(actionMessage = "Download failed: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    /**
      * Load messages for the selected agent.
      */
     private fun loadAgentMessages(agentId: String) {

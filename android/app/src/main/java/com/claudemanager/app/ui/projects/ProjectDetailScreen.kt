@@ -55,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -101,6 +102,7 @@ fun ProjectDetailScreen(
     viewModel: ProjectDetailViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showMenu by remember { mutableStateOf(false) }
 
@@ -414,7 +416,10 @@ fun ProjectDetailScreen(
                                 }
                             } else {
                                 items(state.files, key = { it.id }) { file ->
-                                    FileCard(file = file)
+                                    FileCard(
+                                        file = file,
+                                        onDownload = { viewModel.downloadFile(file.agentId, file.id.toLong(), file.filename, context) }
+                                    )
                                 }
                             }
                         }
@@ -900,11 +905,11 @@ private fun AgentListCard(
  * File card for the Files tab.
  */
 @Composable
-private fun FileCard(file: ProjectFile) {
+private fun FileCard(file: ProjectFile, onDownload: () -> Unit = {}) {
     Card(
         colors = CardDefaults.cardColors(containerColor = LumiCard),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().clickable { onDownload() }
     ) {
         Row(
             modifier = Modifier.padding(12.dp),

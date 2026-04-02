@@ -404,6 +404,7 @@ fun AgentDetailScreen(
                                 isUploading = state.isUploading,
                                 onSendMessage = viewModel::sendMessage,
                                 onUploadFile = { uri -> viewModel.uploadFile(uri, context) },
+                                onFileDownload = { fileId, filename -> viewModel.downloadFile(fileId, filename, context) },
                                 draftMessage = state.draftMessage,
                                 onDraftChanged = viewModel::updateDraftMessage,
                                 lastUploadedFileName = state.lastUploadedFileName,
