@@ -256,13 +256,19 @@ function sendSignalToTerminal(pid, signal, agentId) {
     const activateScript =
       `$sent = $false; ` +
       `$wshell = New-Object -ComObject wscript.shell; ` +
+      // Try stored PID and its parent
       `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
       `if ($p) { ` +
       `  $pp = (Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId; ` +
       `  if ($pp) { $sent = $wshell.AppActivate($pp) }; ` +
       `  if (-not $sent) { $sent = $wshell.AppActivate(${pid}) }; ` +
       `}; ` +
-      agentSearch;
+      agentSearch +
+      // Final fallback: activate WindowsTerminal process (sends to active tab)
+      `if (-not $sent) { ` +
+      `  $wt = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Select-Object -First 1; ` +
+      `  if ($wt) { $sent = $wshell.AppActivate($wt.Id) } ` +
+      `}; `;
 
     const keys = signal === 'ctrl-c' ? "'^c'" : "'{ENTER}'";
     const label = signal === 'ctrl-c' ? 'Ctrl+C' : 'Enter';
@@ -309,6 +315,10 @@ function sendTextToTerminal(pid, text, agentId) {
       `  if (-not $sent) { $sent = $wshell.AppActivate(${pid}) }; ` +
       `}; ` +
       agentSearch +
+      `if (-not $sent) { ` +
+      `  $wt = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Select-Object -First 1; ` +
+      `  if ($wt) { $sent = $wshell.AppActivate($wt.Id) } ` +
+      `}; ` +
       `if ($sent) { ` +
       `  Add-Type -AssemblyName System.Windows.Forms; ` +
       `  Start-Sleep -Milliseconds 500; ` +
