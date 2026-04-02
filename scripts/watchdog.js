@@ -662,35 +662,38 @@ async function checkSidecars() {
     }
 
     if (!sidecarAlive) {
-      logAgent(agentId, 'MQTT sidecar not running — requesting restart via launch request');
+      // Rate-limit sidecar restart attempts — at most once per 5 minutes per agent
+      const lastSidecarAttempt = knownSidecars.get(`${agentId}_attempt`);
+      if (lastSidecarAttempt && (Date.now() - lastSidecarAttempt) < 5 * 60 * 1000) {
+        continue; // Already attempted recently, skip
+      }
+      knownSidecars.set(`${agentId}_attempt`, Date.now());
 
-      // The launcher manages sidecar lifecycle via launch requests.
-      // We create a resume launch request which the launcher handles
-      // by spawning both the agent and its sidecar.
-      // But first check if the agent process is actually alive — if so, we just
-      // need the sidecar, not a full resume. In that case, restart it directly.
-      const pid = agent.pid;
+      const pid = agent.pid ? parseInt(String(agent.pid), 10) : null;
       const agentAlive = pid && await isProcessAlive(pid);
 
       if (agentAlive) {
-        // Agent is alive, just sidecar is dead — restart sidecar directly
+        // Agent is alive, just sidecar is dead — restart sidecar directly (no launch request)
         try {
-          const sidecarPath = path.join(__dirname, '..', 'sidecar', 'mqtt-bridge.js');
-          if (fs.existsSync(sidecarPath)) {
+          const sidecarDir = path.join(__dirname, '..', 'sidecar');
+          const sidecarScript = path.join(sidecarDir, 'mqtt-bridge.js');
+          if (fs.existsSync(sidecarScript)) {
             const { spawn } = require('child_process');
             const proc = spawn('node', [
-              sidecarPath,
+              'mqtt-bridge.js',
               '--agent', agentId,
               '--broker', process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
               '--username', 'agent',
               '--password', process.env.MQTT_AGENT_PASSWORD || 'agentsidecar',
             ], {
+              cwd: sidecarDir,  // CRITICAL: must be sidecar dir for require('mqtt') to work
               detached: true,
               stdio: 'ignore',
+              windowsHide: true,
             });
             proc.unref();
             knownSidecars.set(agentId, proc.pid);
-            logAgent(agentId, `Restarted MQTT sidecar (PID ${proc.pid})`);
+            logAgent(agentId, `Restarted MQTT sidecar directly (PID ${proc.pid})`);
           }
         } catch (err) {
           logAgent(agentId, `Failed to restart sidecar: ${err.message}`);
