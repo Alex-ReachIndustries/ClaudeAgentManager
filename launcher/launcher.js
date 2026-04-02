@@ -176,19 +176,33 @@ function launchSidecar(agentId) {
   log(`Started MQTT sidecar for agent ${agentId.substring(0, 8)}`);
 }
 
-function launchNewAgent(folderPath) {
+function launchNewAgent(folderPath, spawnMeta) {
   const cwd = resolveFolder(folderPath);
   log(`Launching NEW agent in: ${cwd}`);
 
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
-  // Launch interactive session directly (no pre-flight — it caused double agents)
+  // Build the initial prompt — if this is a project sub-agent, include role and prompt
+  let initialPrompt = 'run /session-init and then await instructions';
+  let tabTitle = `Claude - ${path.basename(cwd)}`;
+
+  if (spawnMeta && spawnMeta.role && spawnMeta.prompt) {
+    // Sub-agent spawn: include role and task prompt directly
+    // The agent should NOT load PM context from workspace memories
+    initialPrompt = `You are a sub-agent with role: ${spawnMeta.role}. ` +
+      `Your task: ${spawnMeta.prompt} ` +
+      `Run /session-init then immediately start working on your task. ` +
+      `Do NOT adopt any PM role from workspace files. Your role is ${spawnMeta.role} only.`;
+    tabTitle = `Claude - ${spawnMeta.role}`;
+    log(`Sub-agent role: ${spawnMeta.role}, prompt: ${spawnMeta.prompt.substring(0, 80)}...`);
+  }
+
   const proc = spawn('wt.exe', [
-    'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
+    'new-tab', '--title', tabTitle,
     '-d', cwd,
     'cmd', '/k',
-    'claude', '--dangerously-skip-permissions', 'run /session-init and then await instructions'
+    'claude', '--dangerously-skip-permissions', initialPrompt
   ], {
     detached: true,
     stdio: 'ignore',
@@ -387,7 +401,12 @@ async function processPendingRequests() {
           // Start MQTT sidecar for the resumed agent
           launchSidecar(req.resume_agent_id);
         } else if (req.type === 'new') {
-          launchNewAgent(req.folder_path);
+          // Check if agent_id contains JSON metadata (sub-agent spawn)
+          let spawnMeta = null;
+          if (req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')) {
+            try { spawnMeta = JSON.parse(req.agent_id); } catch {}
+          }
+          launchNewAgent(req.folder_path, spawnMeta);
           // Sidecar for new agents starts when they register (agent_id unknown here)
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
