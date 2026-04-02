@@ -321,9 +321,12 @@ async function checkAgents() {
 
     activeCount++;
 
-    const pid = agent.pid;
+    const pid = agent.pid ? parseInt(String(agent.pid), 10) : null;
     const lastUpdate = parseAgentTimestamp(agent.last_update_at);
     const timeSinceUpdate = now - lastUpdate;
+
+    // If agent posted an update very recently (<60s), it's alive — skip
+    if (timeSinceUpdate < 60 * 1000) continue;
 
     // Check if we recently restarted this agent
     const restart = recentRestarts.get(agent.id);
@@ -457,12 +460,12 @@ async function handleDeadAgent(agent) {
 
   // Check recovery limits
   if (recoveryCount >= MAX_RECOVERY_ATTEMPTS) {
-    logAgent(agentId, `Recovery count ${recoveryCount} >= max ${MAX_RECOVERY_ATTEMPTS} — marking as failed`);
+    logAgent(agentId, `Recovery count ${recoveryCount} >= max ${MAX_RECOVERY_ATTEMPTS} — marking as archived (failed)`);
     try {
       await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`, {
         method: 'PATCH',
         body: JSON.stringify({
-          status: 'completed',
+          status: 'archived',
           metadata: JSON.stringify({
             ...JSON.parse(agent.metadata || '{}'),
             watchdog_failed: true,
@@ -559,13 +562,15 @@ async function hourlySweep() {
     const lastUpdate = parseAgentTimestamp(agent.last_update_at);
     const timeSinceUpdate = now - lastUpdate;
 
+    const parsedPid = pid ? parseInt(String(pid), 10) : null;
+
     // Only sweep agents that appear stuck (3+ min without update)
     if (timeSinceUpdate < 3 * 60 * 1000) continue;
 
-    if (pid && (claudePids.has(pid) || await isProcessAlive(pid))) {
+    if (parsedPid && (claudePids.has(parsedPid) || await isProcessAlive(parsedPid))) {
       // Process alive but stuck — send Enter keys (rate limit dialog likely)
       logAgent(agent.id, `Hourly sweep: sending Enter keys (${Math.round(timeSinceUpdate / 60000)}m stuck)`);
-      await sendEnterToProcess(pid);
+      await sendEnterToProcess(parsedPid);
       wokenCount++;
 
       // Clear any escalation tracking — fresh start after hour
