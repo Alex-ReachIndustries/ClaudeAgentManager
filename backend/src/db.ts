@@ -132,6 +132,17 @@ export function getDb(): Database.Database {
       timestamp TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS cost_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      label TEXT NOT NULL DEFAULT 'unlabeled',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cost_events_agent_id ON cost_events(agent_id);
     CREATE INDEX IF NOT EXISTS idx_project_updates_project_id ON project_updates(project_id);
     CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
     CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
@@ -892,6 +903,40 @@ export function addProjectUpdate(projectId: string, type: string, content: strin
 export function getProjectAgents(projectId: string): Record<string, unknown>[] {
   const db = getDb();
   return db.prepare("SELECT * FROM agents WHERE project_id = ? ORDER BY created_at DESC").all(projectId) as Record<string, unknown>[];
+}
+
+// --- Cost events ---
+
+export function addCostEvent(agentId: string, label: string, inputTokens: number, outputTokens: number, costUsd: number) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO cost_events (agent_id, label, input_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?)
+  `);
+  return stmt.run(agentId, label, inputTokens, outputTokens, Math.round(costUsd * 1e6) / 1e6);
+}
+
+export function getCostEvents(agentId: string): Record<string, unknown>[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM cost_events WHERE agent_id = ? ORDER BY created_at ASC
+  `).all(agentId) as Record<string, unknown>[];
+}
+
+export function getCostEventsSummary(agentId: string): Record<string, unknown>[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT label,
+      SUM(input_tokens) as input_tokens,
+      SUM(output_tokens) as output_tokens,
+      ROUND(SUM(cost_usd), 6) as cost_usd,
+      COUNT(*) as event_count,
+      MIN(created_at) as first_at,
+      MAX(created_at) as last_at
+    FROM cost_events
+    WHERE agent_id = ?
+    GROUP BY label
+    ORDER BY MIN(created_at) ASC
+  `).all(agentId) as Record<string, unknown>[];
 }
 
 export function getActiveProjectAgentCount(projectId: string): number {

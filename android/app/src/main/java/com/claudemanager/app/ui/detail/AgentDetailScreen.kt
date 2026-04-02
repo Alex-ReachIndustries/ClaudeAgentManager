@@ -76,6 +76,7 @@ import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.models.MessageStatus
 import com.claudemanager.app.ui.detail.components.ConversationPanel
 import com.claudemanager.app.ui.detail.components.FilesPanel
+import com.claudemanager.app.ui.detail.components.CostBreakdownPanel
 import com.claudemanager.app.ui.detail.components.TerminalPanel
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
@@ -356,6 +357,7 @@ fun AgentDetailScreen(
                                     text = when (tab) {
                                         DetailTab.CONVERSATION -> "Chat"
                                         DetailTab.TERMINAL -> "Terminal"
+                                        DetailTab.COSTS -> "Costs"
                                         DetailTab.INFO -> "Info"
                                     },
                                     style = MaterialTheme.typography.labelLarge,
@@ -395,6 +397,14 @@ fun AgentDetailScreen(
                         DetailTab.TERMINAL -> {
                             TerminalPanel(
                                 lines = state.terminalLines,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        DetailTab.COSTS -> {
+                            CostBreakdownPanel(
+                                costBreakdown = state.costBreakdown,
+                                isLoading = state.isLoadingCosts,
+                                onRefresh = { viewModel.loadCosts() },
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

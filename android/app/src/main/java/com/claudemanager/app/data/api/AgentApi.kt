@@ -5,6 +5,7 @@ import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
+import com.claudemanager.app.data.models.AgentCostBreakdownResponse
 import com.claudemanager.app.data.models.CostAnalyticsResponse
 import com.claudemanager.app.data.models.CostReportBody
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
@@ -388,6 +389,14 @@ interface AgentApi {
      */
     @GET("api/agents/analytics/costs")
     suspend fun getCostAnalytics(): Response<CostAnalyticsResponse>
+
+    /**
+     * Get per-agent cost breakdown by task label.
+     */
+    @GET("api/agents/{id}/costs")
+    suspend fun getAgentCosts(
+        @Path("id") id: String
+    ): Response<AgentCostBreakdownResponse>
 
     // ── File Sharing ────────────────────────────────────────────────────
 

@@ -23,6 +23,9 @@ import {
   deleteAgentFiles,
   createLaunchRequest,
   updateProject,
+  addCostEvent,
+  getCostEvents,
+  getCostEventsSummary,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
@@ -1166,10 +1169,11 @@ router.post("/:id/cost", (req: Request, res: Response) => {
       return;
     }
 
-    const { input_tokens, output_tokens, cost_usd } = req.body as {
+    const { input_tokens, output_tokens, cost_usd, label } = req.body as {
       input_tokens?: number;
       output_tokens?: number;
       cost_usd?: number;
+      label?: string;
     };
 
     if (input_tokens === undefined && output_tokens === undefined && cost_usd === undefined) {
@@ -1184,6 +1188,15 @@ router.post("/:id/cost", (req: Request, res: Response) => {
       res.status(400).json({ error: "Cost values must not be negative" });
       return;
     }
+
+    // Log cost event with label for breakdown tracking
+    addCostEvent(
+      id,
+      label || "unlabeled",
+      input_tokens || 0,
+      output_tokens || 0,
+      cost_usd || 0,
+    );
 
     // Accumulate costs in agent metadata
     let meta: Record<string, unknown> = {};
@@ -1201,6 +1214,44 @@ router.post("/:id/cost", (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "Error reporting cost");
     res.status(500).json({ error: "Failed to report cost" });
+  }
+});
+
+// GET /:id/costs — per-agent cost breakdown by task label
+router.get("/:id/costs", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id) as Record<string, unknown> | undefined;
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const detail = req.query.detail === "true";
+    const summary = getCostEventsSummary(id);
+
+    // Calculate total
+    let totalInput = 0, totalOutput = 0, totalCost = 0;
+    for (const row of summary) {
+      totalInput += (row.input_tokens as number) || 0;
+      totalOutput += (row.output_tokens as number) || 0;
+      totalCost += (row.cost_usd as number) || 0;
+    }
+
+    const result: Record<string, unknown> = {
+      total: { input_tokens: totalInput, output_tokens: totalOutput, cost_usd: Math.round(totalCost * 1e6) / 1e6 },
+      breakdown: summary,
+    };
+
+    // Optionally include raw events
+    if (detail) {
+      result.events = getCostEvents(id);
+    }
+
+    res.json(result);
+  } catch (err) {
+    logger.error({ err }, "Error fetching agent costs");
+    res.status(500).json({ error: "Failed to fetch agent costs" });
   }
 });
 

@@ -61,6 +61,43 @@ data class CostReportBody(
 )
 
 /**
+ * Response from GET /api/agents/{id}/costs — per-agent cost breakdown by task.
+ */
+data class AgentCostBreakdownResponse(
+    @SerializedName("total")
+    val total: CostData,
+
+    @SerializedName("breakdown")
+    val breakdown: List<CostBreakdownEntry>
+)
+
+/**
+ * A single task/label cost entry in the per-agent breakdown.
+ */
+data class CostBreakdownEntry(
+    @SerializedName("label")
+    val label: String,
+
+    @SerializedName("input_tokens")
+    val inputTokens: Long = 0,
+
+    @SerializedName("output_tokens")
+    val outputTokens: Long = 0,
+
+    @SerializedName("cost_usd")
+    val costUsd: Double = 0.0,
+
+    @SerializedName("event_count")
+    val eventCount: Int = 1,
+
+    @SerializedName("first_at")
+    val firstAt: String? = null,
+
+    @SerializedName("last_at")
+    val lastAt: String? = null
+)
+
+/**
  * Request body for POST /api/agents/{id}/terminal.
  */
 data class TerminalOutputBody(

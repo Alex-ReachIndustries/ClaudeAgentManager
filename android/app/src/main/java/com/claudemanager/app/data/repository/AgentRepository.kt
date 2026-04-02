@@ -9,6 +9,7 @@ import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
+import com.claudemanager.app.data.models.AgentCostBreakdownResponse
 import com.claudemanager.app.data.models.CostAnalyticsResponse
 import com.claudemanager.app.data.models.CostReportBody
 import com.claudemanager.app.data.models.OkResponse
@@ -504,6 +505,13 @@ class AgentRepository {
      */
     suspend fun getCostAnalytics(): Result<CostAnalyticsResponse> = apiCall {
         api.getCostAnalytics()
+    }
+
+    /**
+     * Get per-agent cost breakdown by task label.
+     */
+    suspend fun getAgentCosts(agentId: String): Result<AgentCostBreakdownResponse> = apiCall {
+        api.getAgentCosts(agentId)
     }
 
     // ── File Sharing ───────────────────────────────────────────────────

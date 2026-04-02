@@ -12,6 +12,7 @@ import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.AgentStatus
+import com.claudemanager.app.data.models.AgentCostBreakdownResponse
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.sse.SSEEvent
 import kotlinx.coroutines.delay
@@ -28,6 +29,7 @@ import kotlinx.coroutines.launch
 enum class DetailTab {
     CONVERSATION,
     TERMINAL,
+    COSTS,
     INFO
 }
 
@@ -61,7 +63,9 @@ data class AgentDetailUiState(
     val lastUploadedFileName: String? = null,
     val pendingAttachments: List<AttachedFile> = emptyList(),
     val terminalLines: List<String> = emptyList(),
-    val isSharingFile: Boolean = false
+    val isSharingFile: Boolean = false,
+    val costBreakdown: AgentCostBreakdownResponse? = null,
+    val isLoadingCosts: Boolean = false
 )
 
 /**
@@ -165,6 +169,9 @@ class AgentDetailViewModel(
      */
     fun selectTab(tab: DetailTab) {
         _uiState.update { it.copy(selectedTab = tab) }
+        if (tab == DetailTab.COSTS && _uiState.value.costBreakdown == null) {
+            loadCosts()
+        }
     }
 
     /**
@@ -586,6 +593,28 @@ class AgentDetailViewModel(
                             isSharingFile = false,
                             error = e.message ?: "Failed to share file"
                         )
+                    }
+                }
+        }
+    }
+
+    // ── Cost breakdown ───────────────────────────────────────────────────
+
+    /**
+     * Load per-agent cost breakdown by task label.
+     */
+    fun loadCosts() {
+        _uiState.update { it.copy(isLoadingCosts = true) }
+        viewModelScope.launch {
+            repository.getAgentCosts(agentId)
+                .onSuccess { breakdown ->
+                    _uiState.update {
+                        it.copy(costBreakdown = breakdown, isLoadingCosts = false)
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(isLoadingCosts = false, error = e.message)
                     }
                 }
         }
