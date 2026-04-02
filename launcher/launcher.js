@@ -148,12 +148,12 @@ function launchNewAgent(folderPath, spawnMeta) {
   let tabTitle = `Claude - ${path.basename(cwd)}`;
 
   if (spawnMeta && spawnMeta.role && spawnMeta.prompt) {
-    // Sub-agent spawn: include role and task prompt directly
-    // The agent should NOT load PM context from workspace memories
-    initialPrompt = `You are a sub-agent with role: ${spawnMeta.role}. ` +
+    const projectRef = spawnMeta.project_id ? ` Project ID: ${spawnMeta.project_id}.` : '';
+    initialPrompt = `You are a project agent with role: ${spawnMeta.role}.${projectRef} ` +
       `Your task: ${spawnMeta.prompt} ` +
-      `Run /session-init then immediately start working on your task. ` +
-      `Do NOT adopt any PM role from workspace files. Your role is ${spawnMeta.role} only.`;
+      `Run /session-init but SKIP loading workspace context (claudeadmin/memories) — it contains other agents' data that will confuse you. ` +
+      `After session-init, immediately start working on your task. Your role is ${spawnMeta.role} ONLY. ` +
+      `Do NOT adopt any other role from workspace files or old session data.`;
     tabTitle = `Claude - ${spawnMeta.role}`;
     log(`Sub-agent role: ${spawnMeta.role}, prompt: ${spawnMeta.prompt.substring(0, 80)}...`);
   }
