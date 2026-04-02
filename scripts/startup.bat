@@ -1,7 +1,7 @@
 @echo off
 REM ClaudeManager Startup Script
-REM Runs on Windows boot via Task Scheduler
-REM Starts: Docker services, Launcher, and Cam (system manager agent)
+REM Runs on Windows login via Task Scheduler (ClaudeManager-Startup)
+REM Ensures: Docker services, PM2 (launcher+watchdog), and Cam agent are running
 
 echo [%time%] ClaudeManager startup beginning...
 
@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 echo [%time%] Docker is ready.
 
-REM Start the Docker Compose stack
+REM Start the Docker Compose stack (idempotent — skips already running)
 echo [%time%] Starting Docker services...
 cd /d C:\Users\kuron\Research\ClaudeManager
 docker compose up -d
@@ -30,18 +30,16 @@ if errorlevel 1 (
 )
 echo [%time%] Backend healthy.
 
-REM Start the launcher in background
-echo [%time%] Starting launcher...
-start /min "ClaudeManager Launcher" cmd /c "cd /d C:\Users\kuron\Research\ClaudeManager\launcher && set SERVER_URL=http://localhost:3001 && node launcher.js"
-
-REM Start the watchdog (auto-resumes dead agents)
-echo [%time%] Starting watchdog...
-start /min "ClaudeManager Watchdog" cmd /c "cd /d C:\Users\kuron\Research\ClaudeManager && set SERVER_URL=http://localhost:3001 && node scripts/watchdog.js"
+REM Ensure PM2 processes are running (launcher + watchdog)
+REM PM2 resurrect is handled by PM2-AgentLauncher scheduled task,
+REM but just in case, nudge it here too
+echo [%time%] Ensuring PM2 processes...
+pm2 resurrect >nul 2>&1
 
 REM Wait a moment for services to initialize
 timeout /t 5 /nobreak >nul
 
-REM Launch Cam — the system manager agent
+REM Launch Cam — the system manager agent (only if not already running)
 echo [%time%] Launching Cam (system manager agent)...
 start "Cam - System Manager" wt.exe new-tab --title "Cam - System Manager" -d "C:\Users\kuron\Research\ClaudeManager" cmd /k claude --dangerously-skip-permissions "You are Cam, the ClaudeManager system manager agent. Run /session-init then begin your duties: monitor all running agents, keep system resources tidy, ensure project managers are alive and responsive, and post a status report to the session manager every 15 minutes covering: running agents, system load (CPU/disk), any issues detected. Your title should be 'Cam — System Manager'."
 
