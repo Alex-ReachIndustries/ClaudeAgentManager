@@ -195,7 +195,10 @@ async function launchResumeAgent(agentId, folderPath) {
     try {
       const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
       if (agent && agent.cwd) {
-        cwd = agent.cwd.replace(/\//g, '\\');
+        // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
+        cwd = agent.cwd
+          .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`)
+          .replace(/\//g, '\\');
         log(`Using agent's stored cwd: ${cwd}`);
       }
     } catch (err) {
