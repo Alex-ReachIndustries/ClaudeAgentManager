@@ -134,47 +134,7 @@ function ensureWorkspaceTrusted(absolutePath) {
 }
 
 // Track sidecar processes for cleanup
-const sidecarProcesses = new Map();
-
-function launchSidecar(agentId) {
-  const sidecarPath = path.join(__dirname, '..', 'sidecar', 'mqtt-bridge.js');
-  if (!fs.existsSync(sidecarPath)) {
-    log(`Sidecar script not found at ${sidecarPath} — skipping MQTT bridge`);
-    return;
-  }
-
-  // Kill existing sidecar for this agent if any
-  const existing = sidecarProcesses.get(agentId);
-  if (existing) {
-    try { existing.kill(); } catch {}
-    sidecarProcesses.delete(agentId);
-  }
-
-  const proc = spawn('node', [
-    sidecarPath,
-    '--agent', agentId,
-    '--broker', process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
-    '--username', 'agent',
-    '--password', process.env.MQTT_AGENT_PASSWORD || 'agentsidecar',
-  ], {
-    detached: false,
-    stdio: 'pipe',
-  });
-
-  proc.stdout.on('data', (data) => {
-    log(`[sidecar ${agentId.substring(0, 8)}] ${data.toString().trim()}`);
-  });
-  proc.stderr.on('data', (data) => {
-    log(`[sidecar ${agentId.substring(0, 8)}] ERR: ${data.toString().trim()}`);
-  });
-  proc.on('close', (code) => {
-    log(`[sidecar ${agentId.substring(0, 8)}] exited with code ${code}`);
-    sidecarProcesses.delete(agentId);
-  });
-
-  sidecarProcesses.set(agentId, proc);
-  log(`Started MQTT sidecar for agent ${agentId.substring(0, 8)}`);
-}
+// MQTT sidecar removed — agents poll HTTP directly via background watcher
 
 function launchNewAgent(folderPath, spawnMeta) {
   const cwd = resolveFolder(folderPath);
@@ -391,23 +351,14 @@ async function processPendingRequests() {
           } else {
             log(`Terminate request #${req.id} has no target_pid — skipping`);
           }
-          // Kill sidecar for this agent
-          if (req.agent_id) {
-            const sc = sidecarProcesses.get(req.agent_id);
-            if (sc) { try { sc.kill(); } catch {} sidecarProcesses.delete(req.agent_id); }
-          }
         } else if (req.type === 'resume' && req.resume_agent_id) {
           await launchResumeAgent(req.resume_agent_id, req.folder_path);
-          // Start MQTT sidecar for the resumed agent
-          launchSidecar(req.resume_agent_id);
         } else if (req.type === 'new') {
-          // Check if agent_id contains JSON metadata (sub-agent spawn)
           let spawnMeta = null;
           if (req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')) {
             try { spawnMeta = JSON.parse(req.agent_id); } catch {}
           }
           launchNewAgent(req.folder_path, spawnMeta);
-          // Sidecar for new agents starts when they register (agent_id unknown here)
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
         } else if (req.type === 'input') {

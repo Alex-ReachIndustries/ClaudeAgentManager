@@ -35,7 +35,6 @@ const SAFE_THRESHOLD = 5 * 60 * 1000;          // 5 min — never touch agent wi
 const DEAD_THRESHOLD = 10 * 60 * 1000;         // 10 min without update + dead PID = dead
 const ACTION_COOLDOWN = 5 * 60 * 1000;         // 5 min cooldown between actions per agent
 const MAX_RECOVERY_ATTEMPTS = 3;               // max 3 auto-recoveries (not 5)
-const SIDECAR_CHECK_INTERVAL = 5 * 60 * 1000;  // 5 min between sidecar checks
 const POST_RESTART_GRACE = 3 * 60 * 1000;      // 3 min grace after restart
 
 // ---------------------------------------------------------------------------
@@ -47,9 +46,6 @@ const actionCooldowns = new Map();
 
 // Track recently restarted agents: agentId -> { restartedAt }
 const recentRestarts = new Map();
-
-// Track known sidecar PIDs: agentId -> pid
-const knownSidecars = new Map();
 
 let shuttingDown = false;
 
@@ -338,78 +334,7 @@ async function handleDeadAgent(agent) {
 // ---------------------------------------------------------------------------
 // Hourly sweep removed — rate limits no longer show a dialog to dismiss
 
-// ---------------------------------------------------------------------------
-// Sidecar monitoring — runs every 5 minutes
-// ---------------------------------------------------------------------------
-
-async function checkSidecars() {
-  if (shuttingDown) return;
-
-  let agents;
-  try {
-    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
-    agents = data.data || [];
-  } catch { return; }
-
-  for (const agent of agents) {
-    if (!isActiveStatus(agent.status)) continue;
-
-    const agentId = agent.id;
-    const pid = parsePid(agent.pid);
-
-    // Only restart sidecars for agents with live processes
-    if (!pid || !(await isProcessAlive(pid))) continue;
-
-    // Check if sidecar is running
-    let sidecarAlive = false;
-    const knownPid = knownSidecars.get(agentId);
-    if (knownPid && typeof knownPid === 'number') {
-      sidecarAlive = await isProcessAlive(knownPid);
-    }
-
-    if (!sidecarAlive) {
-      // Scan for existing sidecar process (use wmic instead of PowerShell to avoid window flash)
-      try {
-        const { stdout } = await execAsync(
-          `wmic process where "name='node.exe' and commandline like '%mqtt-bridge%' and commandline like '%${agentId.substring(0, 8)}%'" get processid /format:csv`,
-          { timeout: 10000, windowsHide: true }
-        );
-        const foundPid = parseInt(stdout.trim(), 10);
-        if (!isNaN(foundPid)) {
-          knownSidecars.set(agentId, foundPid);
-          sidecarAlive = true;
-        }
-      } catch { /* not found */ }
-    }
-
-    if (!sidecarAlive) {
-      // Spawn sidecar directly (hidden, no terminal window)
-      try {
-        const sidecarDir = path.join(__dirname, '..', 'sidecar');
-        const sidecarScript = path.join(sidecarDir, 'mqtt-bridge.js');
-        if (fs.existsSync(sidecarScript)) {
-          const proc = spawn('node', [
-            'mqtt-bridge.js',
-            '--agent', agentId,
-            '--broker', process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
-            '--username', 'agent',
-            '--password', process.env.MQTT_AGENT_PASSWORD || 'agentsidecar',
-          ], {
-            cwd: sidecarDir,
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-          });
-          proc.unref();
-          knownSidecars.set(agentId, proc.pid);
-          logAgent(agentId, `Started MQTT sidecar (PID ${proc.pid})`);
-        }
-      } catch (err) {
-        logAgent(agentId, `Sidecar start failed: ${err.message}`);
-      }
-    }
-  }
-}
+// Sidecar monitoring removed — agents poll HTTP directly via background watcher
 
 // ---------------------------------------------------------------------------
 // Cleanup
@@ -472,7 +397,6 @@ async function start() {
 
   // Start monitoring
   activeIntervals.push(setInterval(checkAgents, CHECK_INTERVAL));
-  activeIntervals.push(setInterval(checkSidecars, SIDECAR_CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
 
   // First check after 10s (let things settle)
