@@ -228,19 +228,19 @@ function sendSignalToTerminal(pid, signal) {
   try {
     if (signal === 'ctrl-c') {
       // Send Ctrl+C via PowerShell — generates a console control event
-      const proc = spawn('powershell.exe', ['-NoProfile', '-Command',
+      const proc = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
         `$process = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
         `if ($process) { ` +
         `  [Console]::GenerateConsoleCtrlEvent(0, ${pid}); ` +
         `  Write-Host "Sent Ctrl+C to PID ${pid}" ` +
         `} else { Write-Host "PID ${pid} not found" }`
-      ], { stdio: 'pipe' });
+      ], { stdio: 'pipe', windowsHide: true });
       proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
       proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
       proc.on('close', (code) => log(`[signal] Ctrl+C sent (exit ${code})`));
     } else if (signal === 'enter') {
       // Send Enter key via PowerShell SendKeys
-      const proc = spawn('powershell.exe', ['-NoProfile', '-Command',
+      const proc = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
         `Add-Type -AssemblyName System.Windows.Forms; ` +
         `$wshell = New-Object -ComObject wscript.shell; ` +
         `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
@@ -250,7 +250,7 @@ function sendSignalToTerminal(pid, signal) {
         `  [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); ` +
         `  Write-Host "Sent Enter to PID ${pid}" ` +
         `} else { Write-Host "PID ${pid} not found" }`
-      ], { stdio: 'pipe' });
+      ], { stdio: 'pipe', windowsHide: true });
       proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
       proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
       proc.on('close', (code) => log(`[signal] Enter sent (exit ${code})`));
@@ -267,19 +267,19 @@ function sendTextToTerminal(pid, text) {
   try {
     // Escape special characters for SendKeys
     const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}');
-    const proc = spawn('powershell.exe', ['-NoProfile', '-Command',
+    const proc = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
       `Add-Type -AssemblyName System.Windows.Forms; ` +
       `$wshell = New-Object -ComObject wscript.shell; ` +
       `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
       `if ($proc) { ` +
       `  $wshell.AppActivate(${pid}); ` +
-      `  Start-Sleep -Milliseconds 200; ` +
+      `  Start-Sleep -Milliseconds 500; ` +
       `  [System.Windows.Forms.SendKeys]::SendWait("${escaped}"); ` +
-      `  Start-Sleep -Milliseconds 100; ` +
+      `  Start-Sleep -Milliseconds 200; ` +
       `  [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); ` +
       `  Write-Host "Typed text and Enter to PID ${pid}" ` +
       `} else { Write-Host "PID ${pid} not found" }`
-    ], { stdio: 'pipe' });
+    ], { stdio: 'pipe', windowsHide: true });
     proc.stdout.on('data', (data) => log(`[input] ${data.toString().trim()}`));
     proc.stderr.on('data', (data) => log(`[input] ERR: ${data.toString().trim()}`));
     proc.on('close', (code) => log(`[input] Text sent (exit ${code})`));
