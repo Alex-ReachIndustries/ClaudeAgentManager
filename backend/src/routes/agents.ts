@@ -1172,8 +1172,16 @@ router.post("/:id/cost", (req: Request, res: Response) => {
       cost_usd?: number;
     };
 
-    if (!input_tokens && !output_tokens && !cost_usd) {
+    if (input_tokens === undefined && output_tokens === undefined && cost_usd === undefined) {
       res.status(400).json({ error: "Provide at least one of: input_tokens, output_tokens, cost_usd" });
+      return;
+    }
+
+    // Validate: no negative values
+    if ((input_tokens !== undefined && input_tokens < 0) ||
+        (output_tokens !== undefined && output_tokens < 0) ||
+        (cost_usd !== undefined && cost_usd < 0)) {
+      res.status(400).json({ error: "Cost values must not be negative" });
       return;
     }
 
@@ -1182,9 +1190,9 @@ router.post("/:id/cost", (req: Request, res: Response) => {
     try { meta = JSON.parse((agent.metadata as string) || "{}"); } catch { /* ignore */ }
 
     const costs = (meta.costs as Record<string, number>) || { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
-    if (input_tokens) costs.input_tokens = (costs.input_tokens || 0) + input_tokens;
-    if (output_tokens) costs.output_tokens = (costs.output_tokens || 0) + output_tokens;
-    if (cost_usd) costs.cost_usd = (costs.cost_usd || 0) + cost_usd;
+    if (input_tokens !== undefined) costs.input_tokens = (costs.input_tokens || 0) + input_tokens;
+    if (output_tokens !== undefined) costs.output_tokens = (costs.output_tokens || 0) + output_tokens;
+    if (cost_usd !== undefined) costs.cost_usd = Math.round(((costs.cost_usd || 0) + cost_usd) * 1e6) / 1e6;
     meta.costs = costs;
 
     updateAgent(id, { metadata: JSON.stringify(meta) });
@@ -1222,7 +1230,7 @@ router.get("/analytics/costs", (_req: Request, res: Response) => {
     }
 
     res.json({
-      total: { input_tokens: totalInput, output_tokens: totalOutput, cost_usd: totalCost },
+      total: { input_tokens: totalInput, output_tokens: totalOutput, cost_usd: Math.round(totalCost * 1e6) / 1e6 },
       agents: agentCosts,
     });
   } catch (err) {
