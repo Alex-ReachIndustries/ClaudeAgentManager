@@ -237,37 +237,48 @@ async function launchResumeAgent(agentId, folderPath) {
   return proc;
 }
 
-function sendSignalToTerminal(pid, signal) {
-  log(`Sending ${signal} to terminal PID ${pid}`);
+function sendSignalToTerminal(pid, signal, agentId) {
+  // Try: PID -> parent PID -> find claude.exe by agent UUID in command line
+  log(`Sending ${signal} to terminal PID ${pid}${agentId ? ` (agent ${agentId.substring(0,8)})` : ''}`);
   try {
-    if (signal === 'ctrl-c') {
-      // Send Ctrl+C via PowerShell — generates a console control event
-      const proc = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
-        `$process = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
-        `if ($process) { ` +
-        `  [Console]::GenerateConsoleCtrlEvent(0, ${pid}); ` +
-        `  Write-Host "Sent Ctrl+C to PID ${pid}" ` +
-        `} else { Write-Host "PID ${pid} not found" }`
-      ], { stdio: 'pipe', windowsHide: true });
-      proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
-      proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
-      proc.on('close', (code) => log(`[signal] Ctrl+C sent (exit ${code})`));
-    } else if (signal === 'enter') {
-      // Send Enter key via PowerShell SendKeys
-      const proc = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
-        `Add-Type -AssemblyName System.Windows.Forms; ` +
-        `$wshell = New-Object -ComObject wscript.shell; ` +
-        `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
-        `if ($proc) { ` +
-        `  $wshell.AppActivate(${pid}); ` +
-        `  Start-Sleep -Milliseconds 200; ` +
-        `  [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); ` +
-        `  Write-Host "Sent Enter to PID ${pid}" ` +
-        `} else { Write-Host "PID ${pid} not found" }`
-      ], { stdio: 'pipe', windowsHide: true });
-      proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
-      proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
-      proc.on('close', (code) => log(`[signal] Enter sent (exit ${code})`));
+    // Build the activation script: try PID, parent PID, then search by agent UUID
+    const agentSearch = agentId
+      ? `if (-not $sent) { ` +
+        `  $cp = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -match '${agentId.substring(0,8)}' } | Select-Object -First 1; ` +
+        `  if ($cp) { ` +
+        `    $pp = (Get-CimInstance Win32_Process -Filter "ProcessId=$($cp.ProcessId)").ParentProcessId; ` +
+        `    if ($pp) { $sent = $wshell.AppActivate($pp) }; ` +
+        `    if (-not $sent) { $sent = $wshell.AppActivate($cp.ProcessId) }; ` +
+        `  } ` +
+        `}; `
+      : '';
+
+    const activateScript =
+      `$sent = $false; ` +
+      `$wshell = New-Object -ComObject wscript.shell; ` +
+      `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+      `if ($p) { ` +
+      `  $pp = (Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId; ` +
+      `  if ($pp) { $sent = $wshell.AppActivate($pp) }; ` +
+      `  if (-not $sent) { $sent = $wshell.AppActivate(${pid}) }; ` +
+      `}; ` +
+      agentSearch;
+
+    const keys = signal === 'ctrl-c' ? "'^c'" : "'{ENTER}'";
+    const label = signal === 'ctrl-c' ? 'Ctrl+C' : 'Enter';
+
+    const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
+      activateScript +
+      `if ($sent) { ` +
+      `  Add-Type -AssemblyName System.Windows.Forms; ` +
+      `  Start-Sleep -Milliseconds 300; ` +
+      `  [System.Windows.Forms.SendKeys]::SendWait(${keys}); ` +
+      `  Write-Host "Sent ${label}" ` +
+      `} else { Write-Host "ACTIVATE_FAILED" }`
+    ], { stdio: 'pipe', windowsHide: true });
+    proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
+    proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
+    proc.on('close', (code) => log(`[signal] ${label} done (exit ${code})`));
     } else {
       log(`Unknown signal: ${signal}`);
     }
@@ -276,23 +287,39 @@ function sendSignalToTerminal(pid, signal) {
   }
 }
 
-function sendTextToTerminal(pid, text) {
-  log(`Typing "${text}" into terminal PID ${pid}`);
+function sendTextToTerminal(pid, text, agentId) {
+  log(`Typing "${text}" into terminal PID ${pid}${agentId ? ` (agent ${agentId.substring(0,8)})` : ''}`);
   try {
-    // Escape special characters for SendKeys
     const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}');
-    const proc = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
-      `Add-Type -AssemblyName System.Windows.Forms; ` +
+    const agentSearch = agentId
+      ? `if (-not $sent) { ` +
+        `  $cp = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -match '${agentId.substring(0,8)}' } | Select-Object -First 1; ` +
+        `  if ($cp) { ` +
+        `    $pp = (Get-CimInstance Win32_Process -Filter "ProcessId=$($cp.ProcessId)").ParentProcessId; ` +
+        `    if ($pp) { $sent = $wshell.AppActivate($pp) }; ` +
+        `    if (-not $sent) { $sent = $wshell.AppActivate($cp.ProcessId) }; ` +
+        `  } ` +
+        `}; `
+      : '';
+
+    const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
+      `$sent = $false; ` +
       `$wshell = New-Object -ComObject wscript.shell; ` +
-      `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
-      `if ($proc) { ` +
-      `  $wshell.AppActivate(${pid}); ` +
+      `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+      `if ($p) { ` +
+      `  $pp = (Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId; ` +
+      `  if ($pp) { $sent = $wshell.AppActivate($pp) }; ` +
+      `  if (-not $sent) { $sent = $wshell.AppActivate(${pid}) }; ` +
+      `}; ` +
+      agentSearch +
+      `if ($sent) { ` +
+      `  Add-Type -AssemblyName System.Windows.Forms; ` +
       `  Start-Sleep -Milliseconds 500; ` +
       `  [System.Windows.Forms.SendKeys]::SendWait("${escaped}"); ` +
       `  Start-Sleep -Milliseconds 200; ` +
       `  [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); ` +
-      `  Write-Host "Typed text and Enter to PID ${pid}" ` +
-      `} else { Write-Host "PID ${pid} not found" }`
+      `  Write-Host "Typed text and Enter" ` +
+      `} else { Write-Host "ACTIVATE_FAILED" }`
     ], { stdio: 'pipe', windowsHide: true });
     proc.stdout.on('data', (data) => log(`[input] ${data.toString().trim()}`));
     proc.stderr.on('data', (data) => log(`[input] ERR: ${data.toString().trim()}`));
@@ -356,9 +383,9 @@ async function processPendingRequests() {
           launchNewAgent(req.folder_path);
           // Sidecar for new agents starts when they register (agent_id unknown here)
         } else if (req.type === 'signal') {
-          sendSignalToTerminal(req.target_pid, req.folder_path);
+          sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
         } else if (req.type === 'input') {
-          sendTextToTerminal(req.target_pid, req.folder_path);
+          sendTextToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
         } else {
           log(`Unknown request type "${req.type}" for #${req.id} — skipping`);
         }
