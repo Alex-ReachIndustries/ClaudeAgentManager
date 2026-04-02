@@ -76,6 +76,7 @@ import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.models.MessageStatus
 import com.claudemanager.app.ui.detail.components.ConversationPanel
 import com.claudemanager.app.ui.detail.components.FilesPanel
+import com.claudemanager.app.ui.detail.components.TerminalPanel
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
@@ -353,7 +354,8 @@ fun AgentDetailScreen(
                             text = {
                                 Text(
                                     text = when (tab) {
-                                        DetailTab.CONVERSATION -> "Conversation"
+                                        DetailTab.CONVERSATION -> "Chat"
+                                        DetailTab.TERMINAL -> "Terminal"
                                         DetailTab.INFO -> "Info"
                                     },
                                     style = MaterialTheme.typography.labelLarge,
@@ -390,16 +392,28 @@ fun AgentDetailScreen(
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
+                        DetailTab.TERMINAL -> {
+                            TerminalPanel(
+                                lines = state.terminalLines,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                         DetailTab.INFO -> {
                             InfoTab(
                                 agent = state.agent,
                                 messages = state.messages,
                                 files = state.files,
+                                otherAgents = state.otherAgents,
+                                isSharingFile = state.isSharingFile,
                                 onFileClick = { fileId ->
                                     val file = state.files.find { it.id == fileId }
                                     val filename = file?.filename ?: "download"
                                     viewModel.downloadFile(fileId, filename, context)
                                 },
+                                onShareFile = { fileId, targetAgentId ->
+                                    viewModel.shareFile(fileId, targetAgentId)
+                                },
+                                onLoadOtherAgents = viewModel::loadOtherAgents,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -470,7 +484,11 @@ private fun InfoTab(
     agent: Agent?,
     messages: List<com.claudemanager.app.data.models.AgentMessage>,
     files: List<com.claudemanager.app.data.models.FileInfo>,
+    otherAgents: List<Agent>,
+    isSharingFile: Boolean,
     onFileClick: (Long) -> Unit,
+    onShareFile: (Long, String) -> Unit,
+    onLoadOtherAgents: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
@@ -484,6 +502,10 @@ private fun InfoTab(
         FilesPanel(
             files = files,
             onFileClick = onFileClick,
+            otherAgents = otherAgents,
+            isSharingFile = isSharingFile,
+            onShareFile = onShareFile,
+            onLoadOtherAgents = onLoadOtherAgents,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -568,6 +590,28 @@ private fun AgentMetricsPanel(
 
         // Current status
         MetricCard(label = "Status", value = agent.status.displayName)
+
+        // Cost metrics (if available in metadata)
+        agent.metadata?.costs?.let { costs ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Cost Tracking",
+                style = MaterialTheme.typography.titleSmall,
+                color = LumiOnSurfaceSecondary
+            )
+            MetricCard(
+                label = "Input Tokens",
+                value = "%,d".format(costs.inputTokens)
+            )
+            MetricCard(
+                label = "Output Tokens",
+                value = "%,d".format(costs.outputTokens)
+            )
+            MetricCard(
+                label = "Cost USD",
+                value = "$%,.4f".format(costs.costUsd)
+            )
+        }
     }
 }
 

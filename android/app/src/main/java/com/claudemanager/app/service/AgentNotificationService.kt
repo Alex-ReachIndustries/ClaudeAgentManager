@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -41,6 +42,15 @@ class AgentNotificationService : Service() {
 
         @Volatile
         var isRunning: Boolean = false
+            private set
+
+        /**
+         * Shared flow of SSE events from the active service instance.
+         * ViewModels can collect this to receive real-time events (e.g. terminal output).
+         * Null when the service is not running.
+         */
+        @Volatile
+        var sseEvents: SharedFlow<SSEEvent>? = null
             private set
 
         /**
@@ -104,6 +114,7 @@ class AgentNotificationService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        sseEvents = null
         mqttClient?.cancel()
         mqttClient = null
         sseClient?.cancel()
@@ -141,6 +152,7 @@ class AgentNotificationService : Service() {
 
         val client = SSEClient()
         sseClient = client
+        sseEvents = client.events
 
         // Observe connection state
         serviceScope.launch {
@@ -225,6 +237,11 @@ class AgentNotificationService : Service() {
             is SSEEvent.LaunchRequestCreated,
             is SSEEvent.LaunchRequestUpdated -> {
                 // No notification needed for launch request events
+            }
+
+            is SSEEvent.TerminalOutput -> {
+                // Terminal output is consumed by ViewModels via the shared events flow.
+                // No notification needed.
             }
         }
     }

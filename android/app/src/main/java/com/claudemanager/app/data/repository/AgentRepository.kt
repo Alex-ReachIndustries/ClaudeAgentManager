@@ -9,6 +9,8 @@ import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
+import com.claudemanager.app.data.models.CostAnalyticsResponse
+import com.claudemanager.app.data.models.CostReportBody
 import com.claudemanager.app.data.models.OkResponse
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
 import com.claudemanager.app.data.models.CreateProjectBody
@@ -26,7 +28,9 @@ import com.claudemanager.app.data.models.RetentionRunResult
 import com.claudemanager.app.data.models.RetentionSettingsBody
 import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.SendMessageBody
+import com.claudemanager.app.data.models.ShareFileRequest
 import com.claudemanager.app.data.models.SpawnAgentBody
+import com.claudemanager.app.data.models.TerminalOutputBody
 import com.claudemanager.app.data.models.UpdateAgentBody
 import com.claudemanager.app.data.models.UpdateWebhookBody
 import com.claudemanager.app.data.models.WebhookEntry
@@ -470,6 +474,53 @@ class AgentRepository {
         content: String
     ): Result<Unit> = apiCall {
         api.relayMessage(fromAgentId, RelayBody(targetAgentId, content))
+    }.map { }
+
+    // ── Terminal Streaming ────────────────────────────────────────────────
+
+    /**
+     * Send terminal output for an agent. This is ephemeral and broadcast via SSE.
+     */
+    suspend fun postTerminalOutput(agentId: String, output: String): Result<Unit> = apiCall {
+        api.postTerminalOutput(agentId, TerminalOutputBody(output))
+    }.map { }
+
+    // ── Cost Tracking ──────────────────────────────────────────────────
+
+    /**
+     * Report token usage and cost for an agent. Accumulates in agent metadata.
+     */
+    suspend fun reportCost(
+        agentId: String,
+        inputTokens: Long,
+        outputTokens: Long,
+        costUsd: Double
+    ): Result<Unit> = apiCall {
+        api.reportCost(agentId, CostReportBody(inputTokens, outputTokens, costUsd))
+    }.map { }
+
+    /**
+     * Get aggregate cost analytics across all agents.
+     */
+    suspend fun getCostAnalytics(): Result<CostAnalyticsResponse> = apiCall {
+        api.getCostAnalytics()
+    }
+
+    // ── File Sharing ───────────────────────────────────────────────────
+
+    /**
+     * Share a file from one agent to another (copies the file).
+     *
+     * @param agentId The source agent that owns the file.
+     * @param fileId The file to share.
+     * @param targetAgentId The agent to copy the file to.
+     */
+    suspend fun shareFile(
+        agentId: String,
+        fileId: Long,
+        targetAgentId: String
+    ): Result<Unit> = apiCall {
+        api.shareFile(agentId, ShareFileRequest(fileId, targetAgentId))
     }.map { }
 
     // ── Health Check ─────────────────────────────────────────────────────

@@ -133,7 +133,10 @@ data class AgentMetadata(
     val projects: List<ProjectStatus> = emptyList(),
 
     @SerializedName("todos")
-    val todos: List<TodoStatus> = emptyList()
+    val todos: List<TodoStatus> = emptyList(),
+
+    @SerializedName("costs")
+    val costs: CostData? = null
 )
 
 /**

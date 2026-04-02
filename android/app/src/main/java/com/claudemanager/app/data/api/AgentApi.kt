@@ -5,6 +5,8 @@ import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.CloseResponse
+import com.claudemanager.app.data.models.CostAnalyticsResponse
+import com.claudemanager.app.data.models.CostReportBody
 import com.claudemanager.app.data.models.CreateLaunchRequestBody
 import com.claudemanager.app.data.models.CreateLaunchResponse
 import com.claudemanager.app.data.models.CreateProjectBody
@@ -22,7 +24,9 @@ import com.claudemanager.app.data.models.RetentionRunResult
 import com.claudemanager.app.data.models.RetentionSettingsBody
 import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.SendMessageBody
+import com.claudemanager.app.data.models.ShareFileRequest
 import com.claudemanager.app.data.models.SpawnAgentBody
+import com.claudemanager.app.data.models.TerminalOutputBody
 import com.claudemanager.app.data.models.UpdateAgentBody
 import com.claudemanager.app.data.models.UpdateWebhookBody
 import com.claudemanager.app.data.models.WebhookEntry
@@ -354,5 +358,45 @@ interface AgentApi {
     suspend fun relayMessage(
         @Path("id") id: String,
         @Body body: RelayBody
+    ): Response<OkResponse>
+
+    // ── Terminal Streaming ───────────────────────────────────────────────
+
+    /**
+     * Send terminal output for an agent. The output is ephemeral and
+     * broadcast to connected SSE clients.
+     */
+    @POST("api/agents/{id}/terminal")
+    suspend fun postTerminalOutput(
+        @Path("id") id: String,
+        @Body body: TerminalOutputBody
+    ): Response<OkResponse>
+
+    // ── Cost Tracking ───────────────────────────────────────────────────
+
+    /**
+     * Report cost/token usage for an agent. Accumulates in agent metadata.
+     */
+    @POST("api/agents/{id}/cost")
+    suspend fun reportCost(
+        @Path("id") id: String,
+        @Body body: CostReportBody
+    ): Response<OkResponse>
+
+    /**
+     * Get aggregate cost analytics across all agents.
+     */
+    @GET("api/agents/analytics/costs")
+    suspend fun getCostAnalytics(): Response<CostAnalyticsResponse>
+
+    // ── File Sharing ────────────────────────────────────────────────────
+
+    /**
+     * Share a file from one agent to another (copies the file).
+     */
+    @POST("api/agents/{id}/share-file")
+    suspend fun shareFile(
+        @Path("id") id: String,
+        @Body body: ShareFileRequest
     ): Response<OkResponse>
 }
