@@ -158,17 +158,25 @@ function launchNewAgent(folderPath, spawnMeta) {
     log(`Sub-agent role: ${spawnMeta.role}, prompt: ${spawnMeta.prompt.substring(0, 80)}...`);
   }
 
+  // Write prompt to a temp batch file to avoid cmd.exe special character issues
+  // The batch file launches claude with the prompt properly quoted
+  const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
+  // Escape the prompt for batch: double up % signs, wrap in quotes
+  const batchPrompt = initialPrompt.replace(/%/g, '%%');
+  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions "${batchPrompt}"\n`, 'utf8');
+
   const proc = spawn('wt.exe', [
     'new-tab', '--title', tabTitle,
     '-d', cwd,
-    'cmd', '/k',
-    'claude', '--dangerously-skip-permissions', initialPrompt
+    'cmd', '/k', batchFile
   ], {
     detached: true,
     stdio: 'ignore',
   });
   proc.unref();
-  log(`Spawned wt.exe for new agent`);
+  // Clean up batch file after agent starts
+  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} }, 30000);
+  log(`Spawned wt.exe for new agent via ${batchFile}`);
   return proc;
 }
 
