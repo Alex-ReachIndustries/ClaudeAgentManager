@@ -12,8 +12,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
@@ -83,10 +83,11 @@ fun AdminScreen(
         ) {
             // Tab row
             val tabs = AdminTab.entries
-            TabRow(
+            ScrollableTabRow(
                 selectedTabIndex = state.selectedTab.ordinal,
                 containerColor = LumiBackground,
                 contentColor = LumiOnSurface,
+                edgePadding = 16.dp,
                 indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(
                         modifier = Modifier.tabIndicatorOffset(tabPositions[state.selectedTab.ordinal]),
@@ -112,6 +113,7 @@ fun AdminScreen(
                                     AdminTab.WEBHOOKS -> "Webhooks"
                                     AdminTab.RETENTION -> "Retention"
                                     AdminTab.WORKFLOWS -> "Workflows"
+                                    AdminTab.COSTS -> "Costs"
                                 },
                                 style = MaterialTheme.typography.labelLarge,
                                 color = if (state.selectedTab == tab)
@@ -166,6 +168,13 @@ fun AdminScreen(
                     onStart = viewModel::startWorkflow,
                     onPause = viewModel::pauseWorkflow,
                     onDelete = viewModel::deleteWorkflow,
+                    modifier = Modifier.fillMaxSize()
+                )
+                AdminTab.COSTS -> CostsTab(
+                    costAnalytics = state.costAnalytics,
+                    isLoading = state.isLoadingCosts,
+                    error = state.costError,
+                    onRefresh = viewModel::loadCosts,
                     modifier = Modifier.fillMaxSize()
                 )
             }

@@ -13,6 +13,7 @@ import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
 import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.models.FileInfo
+import com.claudemanager.app.data.sse.SSEEvent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +27,7 @@ import kotlinx.coroutines.launch
  */
 enum class DetailTab {
     CONVERSATION,
+    TERMINAL,
     INFO
 }
 
@@ -57,7 +59,9 @@ data class AgentDetailUiState(
     val isRelaying: Boolean = false,
     val isExporting: Boolean = false,
     val lastUploadedFileName: String? = null,
-    val pendingAttachments: List<AttachedFile> = emptyList()
+    val pendingAttachments: List<AttachedFile> = emptyList(),
+    val terminalLines: List<String> = emptyList(),
+    val isSharingFile: Boolean = false
 )
 
 /**
@@ -78,10 +82,16 @@ class AgentDetailViewModel(
     private val _uiState = MutableStateFlow(AgentDetailUiState())
     val uiState: StateFlow<AgentDetailUiState> = _uiState.asStateFlow()
 
+    companion object {
+        /** Maximum number of terminal lines to keep in the buffer. */
+        private const val MAX_TERMINAL_LINES = 200
+    }
+
     init {
         loadAll()
         markRead()
         startPolling()
+        listenForTerminalOutput()
     }
 
     /**
@@ -507,6 +517,74 @@ class AgentDetailViewModel(
                         it.copy(
                             isRelaying = false,
                             error = e.message ?: "Failed to relay message"
+                        )
+                    }
+                }
+        }
+    }
+
+    // ── Terminal Streaming ────────────────────────────────────────────────
+
+    /**
+     * Listen for terminal-output SSE events scoped to this agent and append
+     * new lines to the terminal buffer (capped at [MAX_TERMINAL_LINES]).
+     */
+    private fun listenForTerminalOutput() {
+        viewModelScope.launch {
+            app.let { application ->
+                // Access the SSE client from the notification service singleton if available,
+                // or create a lightweight listener on the shared SSE flow.
+                try {
+                    com.claudemanager.app.service.AgentNotificationService.sseEvents?.collect { event ->
+                        if (event is SSEEvent.TerminalOutput && event.agentId == agentId) {
+                            appendTerminalOutput(event.output)
+                        }
+                    }
+                } catch (_: Exception) {
+                    // SSE not available; terminal will remain empty until SSE connects
+                }
+            }
+        }
+    }
+
+    /**
+     * Append text to the terminal output buffer, keeping the last [MAX_TERMINAL_LINES] lines.
+     */
+    private fun appendTerminalOutput(output: String) {
+        _uiState.update { state ->
+            val newLines = output.lines()
+            val combined = state.terminalLines + newLines
+            val trimmed = if (combined.size > MAX_TERMINAL_LINES) {
+                combined.takeLast(MAX_TERMINAL_LINES)
+            } else {
+                combined
+            }
+            state.copy(terminalLines = trimmed)
+        }
+    }
+
+    // ── File Sharing ───────────────────────────────────────────────────
+
+    /**
+     * Share a file from this agent to another agent.
+     *
+     * @param fileId The file to share.
+     * @param targetAgentId The agent to copy the file to.
+     */
+    fun shareFile(fileId: Long, targetAgentId: String) {
+        _uiState.update { it.copy(isSharingFile = true) }
+        viewModelScope.launch {
+            repository.shareFile(agentId, fileId, targetAgentId)
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(isSharingFile = false, error = null)
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(
+                            isSharingFile = false,
+                            error = e.message ?: "Failed to share file"
                         )
                     }
                 }

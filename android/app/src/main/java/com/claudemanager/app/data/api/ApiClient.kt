@@ -2,6 +2,7 @@ package com.claudemanager.app.data.api
 
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMetadata
+import com.claudemanager.app.data.models.CostData
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonDeserializationContext
@@ -231,6 +232,11 @@ private class AgentMetadataDeserializer : JsonDeserializer<AgentMetadata> {
                             }
                         } else {
                             emptyList()
+                        },
+                        costs = if (obj.has("costs") && obj.get("costs").isJsonObject) {
+                            context.deserialize(obj.get("costs"), CostData::class.java)
+                        } else {
+                            null
                         }
                     )
                 }

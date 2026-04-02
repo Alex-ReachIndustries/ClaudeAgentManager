@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudemanager.app.ClaudeManagerApp
+import com.claudemanager.app.data.models.CostAnalyticsResponse
 import com.claudemanager.app.data.models.RetentionRunResult
 import com.claudemanager.app.data.models.RetentionStatus
 import com.claudemanager.app.data.models.WebhookEntry
@@ -21,7 +22,8 @@ import kotlinx.coroutines.launch
 enum class AdminTab {
     WEBHOOKS,
     RETENTION,
-    WORKFLOWS
+    WORKFLOWS,
+    COSTS
 }
 
 /**
@@ -54,6 +56,11 @@ data class AdminUiState(
     val isLoadingWorkflows: Boolean = false,
     val workflowError: String? = null,
 
+    // Costs
+    val costAnalytics: CostAnalyticsResponse? = null,
+    val isLoadingCosts: Boolean = false,
+    val costError: String? = null,
+
     // General
     val snackbarMessage: String? = null
 )
@@ -85,6 +92,7 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
             AdminTab.WEBHOOKS -> if (_uiState.value.webhooks.isEmpty()) loadWebhooks()
             AdminTab.RETENTION -> if (_uiState.value.retentionStatus == null) loadRetention()
             AdminTab.WORKFLOWS -> if (_uiState.value.workflows.isEmpty()) loadWorkflows()
+            AdminTab.COSTS -> if (_uiState.value.costAnalytics == null) loadCosts()
         }
     }
 
@@ -352,6 +360,28 @@ class AdminViewModel(application: Application) : AndroidViewModel(application) {
                 .onFailure { e ->
                     _uiState.update {
                         it.copy(snackbarMessage = "Failed: ${e.message}")
+                    }
+                }
+        }
+    }
+
+    // ── Costs ───────────────────────────────────────────────────────────
+
+    fun loadCosts() {
+        _uiState.update { it.copy(isLoadingCosts = true, costError = null) }
+        viewModelScope.launch {
+            repository.getCostAnalytics()
+                .onSuccess { analytics ->
+                    _uiState.update {
+                        it.copy(costAnalytics = analytics, isLoadingCosts = false)
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingCosts = false,
+                            costError = e.message ?: "Failed to load cost analytics"
+                        )
                     }
                 }
         }

@@ -210,6 +210,13 @@ class SSEClient {
             "launch-request-updated" -> {
                 SSEEvent.LaunchRequestUpdated(data)
             }
+            "terminal-output" -> {
+                val json = com.google.gson.JsonParser.parseString(data).asJsonObject
+                val agentId = json.get("agentId").asString
+                val output = json.get("output").asString
+                val timestamp = json.get("timestamp")?.asString ?: ""
+                SSEEvent.TerminalOutput(agentId, output, timestamp)
+            }
             else -> {
                 Log.d(TAG, "Unknown SSE event type: $type")
                 null
@@ -269,4 +276,13 @@ sealed class SSEEvent {
      * A launch request was updated (claimed, completed, failed).
      */
     data class LaunchRequestUpdated(val rawData: String) : SSEEvent()
+
+    /**
+     * Terminal output received from an agent's process. Ephemeral streaming data.
+     */
+    data class TerminalOutput(
+        val agentId: String,
+        val output: String,
+        val timestamp: String
+    ) : SSEEvent()
 }
