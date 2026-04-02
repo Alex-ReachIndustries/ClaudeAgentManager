@@ -19,9 +19,20 @@ const http = require('http');
 const path = require('path');
 const os = require('os');
 
-const SERVER_URL = process.argv.includes('--server')
-  ? process.argv[process.argv.indexOf('--server') + 1]
-  : (process.env.SERVER_URL || 'http://localhost:8080');
+function discoverServerUrl() {
+  if (process.argv.includes('--server')) {
+    return process.argv[process.argv.indexOf('--server') + 1];
+  }
+  if (process.env.SERVER_URL) return process.env.SERVER_URL;
+  try {
+    const home = process.env.USERPROFILE || process.env.HOME;
+    const urlFile = require('path').join(home, '.claude', 'agent-server-url');
+    return require('fs').readFileSync(urlFile, 'utf8').trim();
+  } catch {
+    return 'http://localhost:3001';
+  }
+}
+const SERVER_URL = discoverServerUrl();
 
 const API_KEY = process.argv.includes('--api-key')
   ? process.argv[process.argv.indexOf('--api-key') + 1]
