@@ -34,7 +34,8 @@ const AGENT_ID = getArg('agent', process.env.AGENT_ID || '');
 const BROKER_URL = getArg('broker', process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883');
 const USERNAME = getArg('username', process.env.MQTT_USERNAME || 'agent');
 const PASSWORD = getArg('password', process.env.MQTT_PASSWORD || 'agentsidecar');
-const INBOX_PATH = getArg('inbox', path.join(os.homedir(), '.claude', 'mqtt-inbox.json'));
+// Each agent gets its own inbox file to prevent cross-agent message contamination
+const INBOX_PATH = getArg('inbox', path.join(os.homedir(), '.claude', `mqtt-inbox-${AGENT_ID.substring(0, 8)}.json`));
 
 if (!AGENT_ID) {
   console.error('Error: --agent <UUID> is required');
