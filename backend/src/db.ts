@@ -64,7 +64,7 @@ export function getDb(): Database.Database {
 
     CREATE TABLE IF NOT EXISTS launch_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate')),
+      type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate','signal','input')),
       folder_path TEXT NOT NULL DEFAULT '',
       resume_agent_id TEXT,
       target_pid INTEGER,
@@ -296,6 +296,34 @@ export function getDb(): Database.Database {
       CREATE TABLE launch_requests_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate')),
+        folder_path TEXT NOT NULL DEFAULT '',
+        resume_agent_id TEXT,
+        target_pid INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','claimed','completed','failed')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        claimed_at TEXT,
+        completed_at TEXT,
+        agent_id TEXT
+      );
+      INSERT INTO launch_requests_new (${colNames}) SELECT ${colNames} FROM launch_requests;
+      DROP TABLE launch_requests;
+      ALTER TABLE launch_requests_new RENAME TO launch_requests;
+      CREATE INDEX IF NOT EXISTS idx_launch_requests_status ON launch_requests(status);
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
+  // Migration: add 'signal' and 'input' to launch_requests type CHECK constraint
+  const launchTableNow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='launch_requests'").get() as { sql: string } | undefined;
+  if (launchTableNow && !launchTableNow.sql.includes("'signal'")) {
+    const cols = db.prepare("PRAGMA table_info(launch_requests)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).join(", ");
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS launch_requests_new`);
+    db.exec(`
+      CREATE TABLE launch_requests_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate','signal','input')),
         folder_path TEXT NOT NULL DEFAULT '',
         resume_agent_id TEXT,
         target_pid INTEGER,

@@ -114,6 +114,12 @@ interface AgentApi {
     suspend fun sendSignal(@Path("id") id: String, @Body body: Map<String, String>): Response<OkResponse>
 
     /**
+     * Type text into the agent's terminal (followed by Enter).
+     */
+    @POST("api/agents/{id}/input")
+    suspend fun sendInput(@Path("id") id: String, @Body body: Map<String, String>): Response<OkResponse>
+
+    /**
      * Resume an archived/suspended agent with its full conversation history.
      */
     @POST("api/agents/{id}/resume")

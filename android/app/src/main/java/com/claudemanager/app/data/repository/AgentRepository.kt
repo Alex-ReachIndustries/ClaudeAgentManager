@@ -99,6 +99,10 @@ class AgentRepository {
         api.sendSignal(id, mapOf("signal" to signal))
     }
 
+    suspend fun sendInput(id: String, text: String): Result<OkResponse> = apiCall {
+        api.sendInput(id, mapOf("text" to text))
+    }
+
     /**
      * Resume an archived/suspended agent with its full conversation history.
      */

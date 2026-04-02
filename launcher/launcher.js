@@ -262,6 +262,32 @@ function sendSignalToTerminal(pid, signal) {
   }
 }
 
+function sendTextToTerminal(pid, text) {
+  log(`Typing "${text}" into terminal PID ${pid}`);
+  try {
+    // Escape special characters for SendKeys
+    const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}');
+    const proc = spawn('powershell.exe', ['-NoProfile', '-Command',
+      `Add-Type -AssemblyName System.Windows.Forms; ` +
+      `$wshell = New-Object -ComObject wscript.shell; ` +
+      `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+      `if ($proc) { ` +
+      `  $wshell.AppActivate(${pid}); ` +
+      `  Start-Sleep -Milliseconds 200; ` +
+      `  [System.Windows.Forms.SendKeys]::SendWait("${escaped}"); ` +
+      `  Start-Sleep -Milliseconds 100; ` +
+      `  [System.Windows.Forms.SendKeys]::SendWait("{ENTER}"); ` +
+      `  Write-Host "Typed text and Enter to PID ${pid}" ` +
+      `} else { Write-Host "PID ${pid} not found" }`
+    ], { stdio: 'pipe' });
+    proc.stdout.on('data', (data) => log(`[input] ${data.toString().trim()}`));
+    proc.stderr.on('data', (data) => log(`[input] ERR: ${data.toString().trim()}`));
+    proc.on('close', (code) => log(`[input] Text sent (exit ${code})`));
+  } catch (err) {
+    log(`Failed to send text: ${err.message}`);
+  }
+}
+
 function terminateAgent(pid) {
   log(`Terminating terminal process with PID: ${pid}`);
   try {
@@ -317,6 +343,8 @@ async function processPendingRequests() {
           // Sidecar for new agents starts when they register (agent_id unknown here)
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path);
+        } else if (req.type === 'input') {
+          sendTextToTerminal(req.target_pid, req.folder_path);
         } else {
           log(`Unknown request type "${req.type}" for #${req.id} — skipping`);
         }

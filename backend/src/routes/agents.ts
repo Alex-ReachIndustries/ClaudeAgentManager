@@ -1067,6 +1067,44 @@ router.post("/:id/signal", (req: Request, res: Response) => {
   }
 });
 
+// POST /:id/input — type text into the agent's terminal
+router.post("/:id/input", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const { text } = req.body as { text?: string };
+    if (!text) {
+      res.status(400).json({ error: "Provide 'text' to type into the terminal" });
+      return;
+    }
+
+    const pid = (agent as Record<string, unknown>).pid as number | null;
+    if (!pid) {
+      res.status(400).json({ error: "Agent has no PID — cannot send input" });
+      return;
+    }
+
+    // Create an input launch request for the launcher to process
+    const db = getDb();
+    const stmt = db.prepare(
+      "INSERT INTO launch_requests (type, folder_path, resume_agent_id, target_pid, status) VALUES (?, ?, ?, ?, 'pending')"
+    );
+    stmt.run("input", text, id, pid);
+
+    broadcast("launch-request-created", { type: "input", text, agentId: id, pid });
+
+    res.json({ ok: true, text, pid });
+  } catch (err) {
+    logger.error({ err }, "Error sending input");
+    res.status(500).json({ error: "Failed to send input" });
+  }
+});
+
 // POST /:id/share-file — share a file from this agent to another agent
 router.post("/:id/share-file", (req: Request, res: Response) => {
   try {

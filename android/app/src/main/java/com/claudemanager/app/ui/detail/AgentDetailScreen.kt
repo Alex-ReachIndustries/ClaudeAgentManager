@@ -81,6 +81,7 @@ import com.claudemanager.app.ui.detail.components.TerminalPanel
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
+import com.claudemanager.app.ui.theme.LumiSuccess
 import com.claudemanager.app.ui.theme.LumiOnSurface
 import com.claudemanager.app.ui.theme.LumiOnSurfaceSecondary
 import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
@@ -182,6 +183,14 @@ fun AgentDetailScreen(
                             imageVector = Icons.Default.KeyboardReturn,
                             contentDescription = "Send Enter",
                             tint = LumiOnSurfaceSecondary
+                        )
+                    }
+                    // Continue button
+                    IconButton(onClick = { viewModel.sendInput("continue") }) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Continue",
+                            tint = LumiSuccess
                         )
                     }
                     Box {

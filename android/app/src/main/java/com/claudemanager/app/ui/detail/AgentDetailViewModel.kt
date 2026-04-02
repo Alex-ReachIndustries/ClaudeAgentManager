@@ -300,6 +300,15 @@ class AgentDetailViewModel(
         }
     }
 
+    fun sendInput(text: String) {
+        viewModelScope.launch {
+            repository.sendInput(agentId, text)
+                .onFailure { e ->
+                    _uiState.update { it.copy(error = "Input failed: ${e.message}") }
+                }
+        }
+    }
+
     /**
      * Resume the agent by creating a resume launch request.
      */
