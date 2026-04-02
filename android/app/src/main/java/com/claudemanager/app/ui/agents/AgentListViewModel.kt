@@ -282,7 +282,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(isArchiving = true) }
         viewModelScope.launch {
             ids.forEach { id ->
-                repository.closeAgent(id)
+                repository.updateAgent(id, status = "archived")
             }
             // Clear selection and refresh
             _uiState.update {

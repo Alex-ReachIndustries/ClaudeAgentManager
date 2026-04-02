@@ -365,7 +365,6 @@ fun AgentDetailScreen(
                                 Text(
                                     text = when (tab) {
                                         DetailTab.CONVERSATION -> "Chat"
-                                        DetailTab.TERMINAL -> "Terminal"
                                         DetailTab.COSTS -> "Costs"
                                         DetailTab.INFO -> "Info"
                                     },
@@ -400,12 +399,6 @@ fun AgentDetailScreen(
                                 onClearAttachment = viewModel::clearAttachment,
                                 pendingAttachments = state.pendingAttachments,
                                 onRemoveAttachment = viewModel::removeAttachment,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        DetailTab.TERMINAL -> {
-                            TerminalPanel(
-                                lines = state.terminalLines,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

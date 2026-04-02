@@ -28,7 +28,6 @@ import kotlinx.coroutines.launch
  */
 enum class DetailTab {
     CONVERSATION,
-    TERMINAL,
     COSTS,
     INFO
 }
