@@ -11,7 +11,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -408,11 +413,13 @@ fun ConversationPanel(
 /**
  * Left-aligned agent update rendered as a compact card.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun UpdateBubble(update: AgentUpdate) {
     val content = update.parsedContent()
     val typeInfo = updateTypeInfo(update.type)
     var expanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -424,7 +431,13 @@ private fun UpdateBubble(update: AgentUpdate) {
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                 .background(LumiCard)
-                .clickable { expanded = !expanded }
+                .combinedClickable(
+                    onClick = { expanded = !expanded },
+                    onLongClick = {
+                        val text = update.summary ?: update.content
+                        copyToClipboard(context, text)
+                    }
+                )
                 .padding(10.dp)
         ) {
             Column {
@@ -542,8 +555,10 @@ private fun UpdateBubble(update: AgentUpdate) {
 /**
  * Right-aligned user message bubble (sent to agent).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SentMessageBubble(message: AgentMessage) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -554,6 +569,10 @@ private fun SentMessageBubble(message: AgentMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
                 .background(LumiPurple500.copy(alpha = 0.15f))
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { copyToClipboard(context, message.content) }
+                )
                 .padding(10.dp)
         ) {
             Text(
@@ -596,8 +615,10 @@ private fun SentMessageBubble(message: AgentMessage) {
  * Left-aligned message bubble for messages received from another agent via relay.
  * Styled differently from user messages to distinguish the source.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AgentRelayBubble(message: AgentMessage) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -608,6 +629,10 @@ private fun AgentRelayBubble(message: AgentMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                 .background(LumiInfo.copy(alpha = 0.12f))
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { copyToClipboard(context, message.content) }
+                )
                 .padding(10.dp)
         ) {
             Column {
@@ -806,4 +831,13 @@ private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo) {
             }
         }
     }
+}
+
+/**
+ * Copy text to the system clipboard and show a toast confirmation.
+ */
+private fun copyToClipboard(context: android.content.Context, text: String) {
+    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("message", text))
+    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
 }

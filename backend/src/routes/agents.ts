@@ -403,20 +403,33 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     if (!existing) {
       createAgent(id, title || "Untitled Agent");
 
-      // Check recently completed launch requests for project metadata
-      // The launcher marks requests as completed but doesn't know the agent UUID.
-      // Match by: recent completed requests with JSON metadata in agent_id field.
+      // Check for a VERY recent unclaimed launch request with project metadata.
+      // Only match requests created in the last 60 seconds that haven't been
+      // consumed yet. This prevents new plain agents from inheriting old PM roles.
       try {
         const db = getDb();
         const recentReqs = db.prepare(
-          "SELECT * FROM launch_requests WHERE status = 'completed' AND agent_id LIKE '{%' ORDER BY completed_at DESC LIMIT 5"
+          `SELECT * FROM launch_requests
+           WHERE status = 'completed'
+             AND agent_id LIKE '{%'
+             AND completed_at > datetime('now', '-60 seconds')
+           ORDER BY completed_at DESC LIMIT 3`
         ).all() as Record<string, unknown>[];
 
-        for (const req of recentReqs) {
-          if (req.agent_id && typeof req.agent_id === "string") {
+        for (const launchReq of recentReqs) {
+          if (launchReq.agent_id && typeof launchReq.agent_id === "string") {
             try {
-              const meta = JSON.parse(req.agent_id as string);
+              const meta = JSON.parse(launchReq.agent_id as string);
               if (meta && meta.project_id) {
+                // Verify this request's folder matches the agent's cwd (if provided)
+                if (cwd && launchReq.folder_path && typeof launchReq.folder_path === "string") {
+                  const normCwd = (cwd as string).replace(/\\/g, "/").toLowerCase();
+                  const normFolder = (launchReq.folder_path as string).replace(/\\/g, "/").toLowerCase();
+                  if (!normCwd.includes(normFolder) && !normFolder.includes(normCwd)) {
+                    continue; // Skip — different workspace
+                  }
+                }
+
                 // Link the agent to the project
                 db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ? WHERE id = ?")
                   .run(meta.project_id || null, meta.role || null, meta.parent_agent_id || null, id);
@@ -424,7 +437,6 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                 if (meta.role === "PM" && meta.project_id) {
                   updateProject(meta.project_id, { pm_agent_id: id });
 
-                  // Send PM prompts as messages
                   if (meta.pm_prompt) {
                     addMessage(id, meta.pm_prompt);
                     logger.info({ agentId: id }, "Sent PM system prompt");
@@ -435,9 +447,9 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                   }
                 }
 
-                // Replace JSON metadata with real agent_id
+                // Consume: replace JSON metadata with real agent_id so it can't match again
                 db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
-                  .run(id, req.id);
+                  .run(id, launchReq.id);
 
                 logger.info({ agentId: id, projectId: meta.project_id, role: meta.role }, "Linked new agent to project");
                 break;
