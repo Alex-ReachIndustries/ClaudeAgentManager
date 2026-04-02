@@ -279,9 +279,6 @@ function sendSignalToTerminal(pid, signal, agentId) {
     proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
     proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
     proc.on('close', (code) => log(`[signal] ${label} done (exit ${code})`));
-    } else {
-      log(`Unknown signal: ${signal}`);
-    }
   } catch (err) {
     log(`Failed to send signal: ${err.message}`);
   }
