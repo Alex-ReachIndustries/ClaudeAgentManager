@@ -1,10 +1,13 @@
-@file:OptIn(ExperimentalMaterialApi::class)
+@file:OptIn(ExperimentalMaterialApi::class, ExperimentalFoundationApi::class)
 
 package com.claudemanager.app.ui.agents
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,20 +32,26 @@ import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -132,38 +141,47 @@ fun AgentListScreen(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Claude Manager",
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        ConnectionDot(state.connectionState)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = viewModel::refresh) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refresh",
-                            tint = LumiOnSurfaceSecondary
-                        )
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = LumiOnSurfaceSecondary
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = LumiBackground,
-                    titleContentColor = LumiOnSurface
+            if (state.isMultiSelectMode) {
+                MultiSelectTopBar(
+                    selectedCount = state.selectedAgentIds.size,
+                    isArchiving = state.isArchiving,
+                    onArchive = viewModel::archiveSelected,
+                    onClear = viewModel::clearSelection
                 )
-            )
+            } else {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Claude Manager",
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            ConnectionDot(state.connectionState)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = viewModel::refresh) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh",
+                                tint = LumiOnSurfaceSecondary
+                            )
+                        }
+                        IconButton(onClick = onSettingsClick) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = LumiOnSurfaceSecondary
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = LumiBackground,
+                        titleContentColor = LumiOnSurface
+                    )
+                )
+            }
         },
         floatingActionButton = {
             FloatingActionButton(
@@ -277,7 +295,18 @@ fun AgentListScreen(
                             items(activeAgents, key = { it.id }) { agent ->
                                 AgentCard(
                                     agent = agent,
-                                    onClick = { onAgentClick(agent.id) }
+                                    isSelected = agent.id in state.selectedAgentIds,
+                                    isMultiSelectMode = state.isMultiSelectMode,
+                                    onClick = {
+                                        if (state.isMultiSelectMode) {
+                                            viewModel.toggleSelection(agent.id)
+                                        } else {
+                                            onAgentClick(agent.id)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        viewModel.toggleSelection(agent.id)
+                                    }
                                 )
                             }
                         }
@@ -325,7 +354,18 @@ fun AgentListScreen(
                                 items(archivedAgents, key = { it.id }) { agent ->
                                     AgentCard(
                                         agent = agent,
-                                        onClick = { onAgentClick(agent.id) }
+                                        isSelected = agent.id in state.selectedAgentIds,
+                                        isMultiSelectMode = state.isMultiSelectMode,
+                                        onClick = {
+                                            if (state.isMultiSelectMode) {
+                                                viewModel.toggleSelection(agent.id)
+                                            } else {
+                                                onAgentClick(agent.id)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            viewModel.toggleSelection(agent.id)
+                                        }
                                     )
                                 }
                             }
@@ -502,20 +542,48 @@ private fun SectionHeader(title: String, count: Int) {
 /**
  * Individual agent card in the list.
  * Shows status dot, title, workspace, summary, stats, and activity time.
+ * Supports multi-select via long-press and visual selection indicator.
  */
 @Composable
-private fun AgentCard(agent: Agent, onClick: () -> Unit) {
+private fun AgentCard(
+    agent: Agent,
+    isSelected: Boolean = false,
+    isMultiSelectMode: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
+) {
+    val borderModifier = if (isSelected) {
+        Modifier.border(2.dp, LumiPurple500, RoundedCornerShape(12.dp))
+    } else {
+        Modifier
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(borderModifier)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .animateContentSize(),
-        colors = CardDefaults.cardColors(containerColor = LumiCard),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) LumiPurple500.copy(alpha = 0.08f) else LumiCard
+        ),
         shape = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Title row with status dot
+            // Title row with status dot and selection indicator
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isMultiSelectMode) {
+                    Icon(
+                        imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        contentDescription = if (isSelected) "Selected" else "Not selected",
+                        tint = if (isSelected) LumiPurple500 else LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                }
                 Box(
                     modifier = Modifier
                         .size(10.dp)
@@ -652,6 +720,68 @@ private fun AgentCard(agent: Agent, onClick: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Top bar shown during multi-select mode with selection count, Archive, and Cancel actions.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MultiSelectTopBar(
+    selectedCount: Int,
+    isArchiving: Boolean,
+    onArchive: () -> Unit,
+    onClear: () -> Unit
+) {
+    CenterAlignedTopAppBar(
+        navigationIcon = {
+            IconButton(onClick = onClear) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Cancel selection",
+                    tint = LumiOnSurface
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "$selectedCount selected",
+                style = MaterialTheme.typography.titleMedium,
+                color = LumiOnSurface
+            )
+        },
+        actions = {
+            Button(
+                onClick = onArchive,
+                enabled = !isArchiving && selectedCount > 0,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = LumiPurple500,
+                    contentColor = LumiOnSurface
+                ),
+                modifier = Modifier.padding(end = 8.dp)
+            ) {
+                if (isArchiving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = LumiOnSurface,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Icon(
+                    imageVector = Icons.Default.Archive,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Archive")
+            }
+        },
+        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+            containerColor = LumiPurple500.copy(alpha = 0.12f),
+            titleContentColor = LumiOnSurface
+        )
+    )
 }
 
 /**

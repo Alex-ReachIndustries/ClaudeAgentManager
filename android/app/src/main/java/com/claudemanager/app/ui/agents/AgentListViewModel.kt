@@ -34,7 +34,10 @@ data class AgentListUiState(
     val connectionState: SSEClient.ConnectionState = SSEClient.ConnectionState.DISCONNECTED,
     val searchQuery: String = "",
     val selectedFilter: AgentStatus? = null, // null = All
-    val sortOption: SortOption = SortOption.ACTIVITY
+    val sortOption: SortOption = SortOption.ACTIVITY,
+    val isMultiSelectMode: Boolean = false,
+    val selectedAgentIds: Set<String> = emptySet(),
+    val isArchiving: Boolean = false
 )
 
 /**
@@ -237,6 +240,59 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
             }.onFailure { e ->
                 _uiState.update { it.copy(error = e.message ?: "Failed to create launch request") }
             }
+        }
+    }
+
+    // ── Multi-Select ────────────────────────────────────────────────────
+
+    /**
+     * Toggle selection of an agent. If not in multi-select mode, enters it.
+     */
+    fun toggleSelection(agentId: String) {
+        _uiState.update { state ->
+            val newSelected = if (agentId in state.selectedAgentIds) {
+                state.selectedAgentIds - agentId
+            } else {
+                state.selectedAgentIds + agentId
+            }
+            // Exit multi-select if nothing is selected
+            state.copy(
+                isMultiSelectMode = newSelected.isNotEmpty(),
+                selectedAgentIds = newSelected
+            )
+        }
+    }
+
+    /**
+     * Clear selection and exit multi-select mode.
+     */
+    fun clearSelection() {
+        _uiState.update {
+            it.copy(isMultiSelectMode = false, selectedAgentIds = emptySet())
+        }
+    }
+
+    /**
+     * Archive (close) all selected agents, then refresh the list.
+     */
+    fun archiveSelected() {
+        val ids = _uiState.value.selectedAgentIds.toList()
+        if (ids.isEmpty()) return
+
+        _uiState.update { it.copy(isArchiving = true) }
+        viewModelScope.launch {
+            ids.forEach { id ->
+                repository.closeAgent(id)
+            }
+            // Clear selection and refresh
+            _uiState.update {
+                it.copy(
+                    isMultiSelectMode = false,
+                    selectedAgentIds = emptySet(),
+                    isArchiving = false
+                )
+            }
+            refresh()
         }
     }
 
