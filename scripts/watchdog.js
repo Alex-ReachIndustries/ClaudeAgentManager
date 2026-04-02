@@ -130,11 +130,12 @@ function parsePid(pid) {
 
 async function isProcessAlive(pid) {
   try {
+    // Use tasklist (no PowerShell window flash) to check if PID exists
     const { stdout } = await execAsync(
-      `powershell.exe -NoProfile -Command "Get-Process -Id ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"`,
-      { timeout: 5000 }
+      `tasklist /FI "PID eq ${pid}" /NH /FO CSV`,
+      { timeout: 5000, windowsHide: true }
     );
-    return stdout.trim() === String(pid);
+    return stdout.includes(String(pid));
   } catch {
     return false;
   }
@@ -142,15 +143,18 @@ async function isProcessAlive(pid) {
 
 async function getClaudeProcesses() {
   try {
+    // Use tasklist (no PowerShell window flash) to find claude.exe PIDs
     const { stdout } = await execAsync(
-      `powershell.exe -NoProfile -Command "Get-Process -Name claude -ErrorAction SilentlyContinue | Select-Object Id | ConvertTo-Json -Compress"`,
-      { timeout: 10000 }
+      `tasklist /FI "IMAGENAME eq claude.exe" /NH /FO CSV`,
+      { timeout: 10000, windowsHide: true }
     );
-    const trimmed = stdout.trim();
-    if (!trimmed || trimmed === '') return [];
-    const parsed = JSON.parse(trimmed);
-    const arr = Array.isArray(parsed) ? parsed : [parsed];
-    return new Set(arr.map(p => p.Id));
+    const pids = new Set();
+    for (const line of stdout.split('\n')) {
+      // CSV format: "claude.exe","12345","Console","1","12,345 K"
+      const match = line.match(/"claude\.exe","(\d+)"/i);
+      if (match) pids.add(parseInt(match[1], 10));
+    }
+    return pids;
   } catch {
     return new Set();
   }
@@ -158,8 +162,10 @@ async function getClaudeProcesses() {
 
 async function sendEnterToProcess(pid) {
   try {
-    await execAsync(
-      `powershell.exe -NoProfile -WindowStyle Hidden -Command "` +
+    // Use spawn instead of exec to guarantee windowsHide works
+    const { spawn: spawnProc } = require('child_process');
+    await new Promise((resolve, reject) => {
+      const proc = spawnProc('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
         `Add-Type -AssemblyName System.Windows.Forms; ` +
         `$wshell = New-Object -ComObject wscript.shell; ` +
         `$activated = $wshell.AppActivate(${pid}); ` +
@@ -168,9 +174,12 @@ async function sendEnterToProcess(pid) {
           `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
           `Start-Sleep -Milliseconds 500; ` +
           `[System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); ` +
-        `}"`,
-      { timeout: 15000, windowsHide: true }
-    );
+        `}`
+      ], { stdio: 'ignore', windowsHide: true });
+      proc.on('close', resolve);
+      proc.on('error', reject);
+      setTimeout(() => { try { proc.kill(); } catch {} resolve(); }, 15000);
+    });
     return true;
   } catch {
     return false;
@@ -446,11 +455,11 @@ async function checkSidecars() {
     }
 
     if (!sidecarAlive) {
-      // Scan for existing sidecar process
+      // Scan for existing sidecar process (use wmic instead of PowerShell to avoid window flash)
       try {
         const { stdout } = await execAsync(
-          `powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name='node.exe'\\" | Where-Object { $_.CommandLine -match 'mqtt-bridge' -and $_.CommandLine -match '${agentId.substring(0, 8)}' } | Select-Object -ExpandProperty ProcessId"`,
-          { timeout: 10000 }
+          `wmic process where "name='node.exe' and commandline like '%mqtt-bridge%' and commandline like '%${agentId.substring(0, 8)}%'" get processid /format:csv`,
+          { timeout: 10000, windowsHide: true }
         );
         const foundPid = parseInt(stdout.trim(), 10);
         if (!isNaN(foundPid)) {
