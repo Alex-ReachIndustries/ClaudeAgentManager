@@ -46,10 +46,13 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -120,6 +123,8 @@ fun AgentListScreen(
     val state by viewModel.uiState.collectAsState()
     var showArchived by remember { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
+    var selectedFolder by remember { mutableStateOf<String?>(null) }
+    var showRoleTaskDialog by remember { mutableStateOf(false) }
 
     // Use filtered agents for display; separate into active/archived
     val displayAgents = state.filteredAgents
@@ -392,11 +397,80 @@ fun AgentListScreen(
             onDismiss = { showFolderPicker = false },
             onFolderSelected = { path ->
                 showFolderPicker = false
-                viewModel.launchNewAgent(path)
+                selectedFolder = path
+                showRoleTaskDialog = true
+            }
+        )
+    }
+
+    if (showRoleTaskDialog && selectedFolder != null) {
+        var roleText by remember { mutableStateOf("") }
+        var taskText by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = {
+                showRoleTaskDialog = false
+                selectedFolder = null
             },
-            onFolderSelectedWithMeta = { path, role, task ->
-                showFolderPicker = false
-                viewModel.launchNewAgent(path, role, task)
+            title = { Text("New Agent", style = MaterialTheme.typography.headlineSmall) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = selectedFolder!!.substringAfterLast('/').substringAfterLast('\\'),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceSecondary,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    OutlinedTextField(
+                        value = roleText,
+                        onValueChange = { roleText = it },
+                        label = { Text("Role (optional)") },
+                        placeholder = { Text("e.g. Designer, PM, Reviewer") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LumiPurple500,
+                            cursorColor = LumiPurple500
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = taskText,
+                        onValueChange = { taskText = it },
+                        label = { Text("Task (optional)") },
+                        placeholder = { Text("Describe what this agent should do") },
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LumiPurple500,
+                            cursorColor = LumiPurple500
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.launchNewAgent(
+                            selectedFolder!!,
+                            roleText.takeIf { it.isNotBlank() },
+                            taskText.takeIf { it.isNotBlank() }
+                        )
+                        showRoleTaskDialog = false
+                        selectedFolder = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = LumiPurple500)
+                ) {
+                    Text("Create Agent")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showRoleTaskDialog = false
+                    selectedFolder = null
+                }) {
+                    Text("Cancel", color = LumiOnSurfaceSecondary)
+                }
             }
         )
     }
