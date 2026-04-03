@@ -66,7 +66,13 @@ data class CreateLaunchRequestBody(
     val resumeAgentId: String? = null,
 
     @SerializedName("target_pid")
-    val targetPid: Int? = null
+    val targetPid: Int? = null,
+
+    @SerializedName("role")
+    val role: String? = null,
+
+    @SerializedName("task")
+    val task: String? = null
 )
 
 /**

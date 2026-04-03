@@ -430,9 +430,9 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                   }
                 }
 
-                // Link the agent to the project
-                db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ? WHERE id = ?")
-                  .run(meta.project_id || null, meta.role || null, meta.parent_agent_id || null, id);
+                // Link the agent to the project and store its task
+                db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ? WHERE id = ?")
+                  .run(meta.project_id || null, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, id);
 
                 if (meta.role === "PM" && meta.project_id) {
                   updateProject(meta.project_id, { pm_agent_id: id });
@@ -572,8 +572,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace, cwd, pid } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number } = {};
+    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -584,6 +584,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
     if (workspace !== undefined) fields.workspace = workspace;
     if (cwd !== undefined) fields.cwd = cwd;
     if (pid !== undefined) fields.pid = pid;
+    if (role !== undefined) fields.role = role;
+    if (task !== undefined) fields.task = task;
 
     updateAgent(id, fields);
 

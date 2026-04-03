@@ -393,6 +393,10 @@ fun AgentListScreen(
             onFolderSelected = { path ->
                 showFolderPicker = false
                 viewModel.launchNewAgent(path)
+            },
+            onFolderSelectedWithMeta = { path, role, task ->
+                showFolderPicker = false
+                viewModel.launchNewAgent(path, role, task)
             }
         )
     }

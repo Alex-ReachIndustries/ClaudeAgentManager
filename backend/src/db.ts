@@ -167,6 +167,7 @@ export function getDb(): Database.Database {
   try { db.exec("ALTER TABLE agents ADD COLUMN project_id TEXT"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE agents ADD COLUMN role TEXT"); } catch { /* exists */ }
   try { db.exec("ALTER TABLE agents ADD COLUMN parent_agent_id TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN task TEXT"); } catch { /* exists */ }
 
   // Feature 17: Agent-to-agent messaging source columns
   try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'"); } catch { /* exists */ }
@@ -456,7 +457,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string }
 ) {
   const db = getDb();
 
@@ -496,6 +497,14 @@ export function updateAgent(
   if (fields.pid !== undefined) {
     setClauses.push("pid = ?");
     values.push(fields.pid);
+  }
+  if (fields.role !== undefined) {
+    setClauses.push("role = ?");
+    values.push(fields.role);
+  }
+  if (fields.task !== undefined) {
+    setClauses.push("task = ?");
+    values.push(fields.task);
   }
 
   if (setClauses.length === 0) return;

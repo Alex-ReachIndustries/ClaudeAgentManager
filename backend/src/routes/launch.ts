@@ -38,8 +38,16 @@ router.post("/", launchLimiter, validate(launchRequestSchema), (req: Request, re
       return;
     }
 
-    const { target_pid } = req.body;
+    const { target_pid, role, task } = req.body;
     const request = createLaunchRequest(type, folder_path || "", resume_agent_id, target_pid);
+
+    // If role/task provided (from Android new-agent UI), store as metadata for the launcher
+    if ((role || task) && request.id) {
+      const db = getDb();
+      const meta = JSON.stringify({ role: role || null, prompt: task || null });
+      db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?").run(meta, request.id);
+    }
+
     broadcast("launch-request-created", request);
     res.status(201).json({ ok: true, request });
   } catch (err) {

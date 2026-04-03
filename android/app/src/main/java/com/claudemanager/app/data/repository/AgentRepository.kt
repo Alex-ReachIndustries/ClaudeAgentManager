@@ -245,7 +245,9 @@ class AgentRepository {
         type: String,
         folderPath: String,
         resumeAgentId: String? = null,
-        targetPid: Int? = null
+        targetPid: Int? = null,
+        role: String? = null,
+        task: String? = null
     ): Result<LaunchRequest> {
         return apiCall {
             api.createLaunchRequest(
@@ -253,7 +255,9 @@ class AgentRepository {
                     type = type,
                     folderPath = folderPath,
                     resumeAgentId = resumeAgentId,
-                    targetPid = targetPid
+                    targetPid = targetPid,
+                    role = role,
+                    task = task
                 )
             )
         }.map { it.request }

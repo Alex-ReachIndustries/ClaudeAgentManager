@@ -51,6 +51,8 @@ export const agentPatchSchema = z.object({
   workspace: z.string().max(500).optional(),
   cwd: z.string().max(500).optional(),
   pid: z.number().int().positive().nullable().optional(),
+  role: z.string().max(200).optional(),
+  task: z.string().max(65_536).optional(),
 });
 
 // --- Launch requests (POST /launch-requests) ---
@@ -60,6 +62,8 @@ export const launchRequestSchema = z.object({
   folder_path: z.string().max(500).optional(),
   resume_agent_id: z.string().max(100).optional(),
   target_pid: z.number().int().positive().optional(),
+  role: z.string().max(200).optional(),
+  task: z.string().max(65_536).optional(),
 });
 
 // --- Push subscriptions (POST /push/subscribe) ---

@@ -66,7 +66,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun FolderPickerDialog(
     onDismiss: () -> Unit,
-    onFolderSelected: (String) -> Unit
+    onFolderSelected: (String) -> Unit,
+    onFolderSelectedWithMeta: ((String, String?, String?) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as ClaudeManagerApp
@@ -75,6 +76,8 @@ fun FolderPickerDialog(
 
     var currentPath by remember { mutableStateOf("") }
     var selectedPath by remember { mutableStateOf<String?>(null) }
+    var roleText by remember { mutableStateOf("") }
+    var taskText by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val folders = remember { mutableStateListOf<FolderEntry>() }
@@ -249,6 +252,28 @@ fun FolderPickerDialog(
                         }
                     }
                 }
+
+                // Role and task fields
+                if (onFolderSelectedWithMeta != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = roleText,
+                        onValueChange = { roleText = it },
+                        label = { Text("Role (optional)") },
+                        placeholder = { Text("e.g. Designer A, PM, Reviewer") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = taskText,
+                        onValueChange = { taskText = it },
+                        label = { Text("Task (optional)") },
+                        placeholder = { Text("e.g. Create a landing page design") },
+                        maxLines = 3,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {
@@ -256,7 +281,15 @@ fun FolderPickerDialog(
                 onClick = {
                     val path = selectedPath ?: currentPath
                     if (path.isNotBlank()) {
-                        onFolderSelected(path)
+                        if (onFolderSelectedWithMeta != null) {
+                            onFolderSelectedWithMeta(
+                                path,
+                                roleText.takeIf { it.isNotBlank() },
+                                taskText.takeIf { it.isNotBlank() }
+                            )
+                        } else {
+                            onFolderSelected(path)
+                        }
                     }
                 },
                 enabled = (selectedPath != null || currentPath.isNotBlank()),

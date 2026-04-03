@@ -229,13 +229,14 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Create a launch request to start a new agent in the given folder.
      */
-    fun launchNewAgent(folderPath: String) {
+    fun launchNewAgent(folderPath: String, role: String? = null, task: String? = null) {
         viewModelScope.launch {
             repository.createLaunchRequest(
                 type = "new",
-                folderPath = folderPath
+                folderPath = folderPath,
+                role = role,
+                task = task
             ).onSuccess {
-                // Refresh the list to show the new agent once it appears
                 refresh()
             }.onFailure { e ->
                 _uiState.update { it.copy(error = e.message ?: "Failed to create launch request") }
