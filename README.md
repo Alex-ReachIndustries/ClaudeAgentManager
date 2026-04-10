@@ -193,7 +193,7 @@ PDF reports are generated via a PrintingPress-based service. The PDF generator r
 
 ## Documentation
 
-See [docs/Agent_Manager_Manual.pdf](docs/Agent_Manager_Manual.pdf) for the comprehensive reference manual with architecture diagrams, deployment guide, and full API documentation.
+See [docs/ClaudeManager_v4.0.0_User_Manual.pdf](docs/ClaudeManager_v4.0.0_User_Manual.pdf) for the comprehensive reference manual covering all v4.0.0 features: multi-agent projects, relay messaging, cost tracking, Android companion app, deployment guide, and full API reference.
 
 ## License
 
