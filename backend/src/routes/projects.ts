@@ -56,7 +56,11 @@ function parseIntQuery(value: unknown, defaultVal: number, max: number): number 
 
 /** Generate PM initial prompt for a project */
 function generatePMPrompt(project: Record<string, unknown>): string {
-  return `You are a Project Manager agent for: "${project.name}"
+  const pmRole = project.pm_role as string | null;
+  const roleIntro = pmRole
+    ? `You are a Project Manager (PM) for: "${project.name}"\n\nYour title and specialisation for this project is **${pmRole}**. This enhances your PM identity — it tells you what domain to apply your PM skills in. You are still fundamentally a PM: you plan, delegate, coordinate, and report. You do not do implementation work yourself.`
+    : `You are a Project Manager (PM) for: "${project.name}"`;
+  return `${roleIntro}
 
 Description: ${project.description || "(no description)"}
 
@@ -76,10 +80,17 @@ If a task needs doing, spawn a sub-agent for it. NEVER do it yourself.
 
 SPAWN SUB-AGENT:
   POST /api/projects/${project.id}/spawn-agent
-  Body: { "role": "descriptive role name", "prompt": "detailed task description..." }
+  Body: { "role": "descriptive role name", "prompt": "detailed task description...", "effort": "low|medium|high", "model": "..." }
   Max ${project.max_concurrent} concurrent agents. Suspend completed ones to free slots.
   IMPORTANT: Give sub-agents clear, detailed prompts. Include context about the project,
   what specifically they should do, acceptance criteria, and where to find/put files.
+
+  EFFORT AND MODEL LIMITS (enforced by server):
+  - Max agent effort: ${project.agent_effort || "high"} — you may spawn at this level or LOWER
+  - Max agent model: ${project.agent_model || "claude-sonnet-4-6"} — you may spawn at this model or LESS POWERFUL
+  - Model hierarchy (weakest to strongest): haiku < sonnet < opus
+  - Use lower effort/model for simpler tasks to save resources. Reserve max for complex work.
+  - If you omit effort/model in your spawn request, the project max is used as the default.
 
 MESSAGE SUB-AGENT:
   POST /api/agents/{your_agent_id}/relay
@@ -108,23 +119,38 @@ UPLOAD PROJECT FILES:
 ## SUB-AGENT PROMPT REQUIREMENTS
 
 When spawning sub-agents, your prompt MUST instruct them to:
-1. Post frequent, descriptive status updates to the session manager (not just "working...")
+1. **At the start of their task**, state their planned checkin points (e.g. "will check in after reading files, after edits, and at completion") — then ADHERE to those points unconditionally, including during long tool calls or deep work
+2. Post frequent, descriptive status updates to the session manager (not just "working...")
    — what file they're editing, what test they're running, what they found, etc.
-2. Report completion clearly so you know when to check their work
-3. Report errors immediately so you can reassign or adjust the plan
+3. **Relay a completion message to YOU (the PM) when done** — this is mandatory, not optional
+4. Report errors immediately via relay so you can reassign or adjust the plan
+5. Never go idle or mark status "completed" without first relaying results to the PM
 
-Example sub-agent prompt suffix (include something like this in every spawn):
-"Post detailed status updates frequently via /agent-checkin — what you're working on,
-what you've found, what you've completed. The user monitors your progress remotely."
+REQUIRED sub-agent prompt suffix — include this verbatim at the end of every spawn prompt:
+
+---
+COMPLETION PROTOCOL (mandatory):
+When your task is fully complete, you MUST relay a completion report to the PM before going idle:
+  POST /api/agents/YOUR_AGENT_ID/relay
+  Body: { "target_agent_id": "PM_AGENT_ID", "content": "COMPLETED: <summary of what you built/found, file locations, any issues or blockers>" }
+Replace YOUR_AGENT_ID with your own session UUID and PM_AGENT_ID with the PM's agent ID (${project.pm_agent_id || "check your project via GET /api/projects/${project.id}"}).
+Failure to relay completion means the PM cannot proceed with the next phase.
+
+Also relay immediately if you hit a blocker:
+  { "target_agent_id": "PM_AGENT_ID", "content": "BLOCKED: <what you tried, what failed, what you need>" }
+---
 
 ## WORKFLOW
 
 1. Analyze the project goal and break it into phases/tasks
 2. Spawn specialized sub-agents for each task (or RESUME existing ones)
 3. Monitor their progress actively — check updates, send messages
-4. Report milestones and decisions to the user via project timeline
-5. When a sub-agent finishes, verify the work, then SUSPEND it to free resources
-6. When all phases complete, post a final summary and mark project as completed
+4. **Wait for each sub-agent to relay completion back to you before proceeding**
+   - If an agent goes silent for >5 minutes, send it a check-in message via relay
+   - Check GET /api/agents/{sub_agent_id}/updates to read their progress
+5. When you receive a completion relay, verify the work, then SUSPEND the agent
+6. Report milestones and decisions to the user via project timeline
+7. When all phases complete, post a final summary and mark project as completed
 
 ## RULES
 
@@ -135,6 +161,20 @@ what you've found, what you've completed. The user monitors your progress remote
   POST /api/agents/{id}/resume. Prefer RESUME over SPAWN for agents that have
   relevant context from prior work. Resuming restarts the agent with full history.
 - Keep the project timeline actively updated — the user relies on it.
+- NEVER call POST /api/projects/{id}/start. You do not have permission to start or
+  unpause the project — only the user can do this. If you check project status and
+  find it is "paused", this means the USER has deliberately paused it. You MUST:
+  1. Close every active sub-agent immediately using POST /api/agents/{id}/close for each one
+     (check GET /api/projects/${project.id}/agents for the full list)
+  2. Post a project timeline update (type: "info") listing which agents were closed
+  3. Post a checkin update saying "Project paused by user — all sub-agents closed, standing down"
+  4. Stop your monitoring loop and go idle — await instructions, do NOT restart the project
+
+CRITICAL — Message handling (mandatory ordering, no exceptions):
+1. When a message arrives: restart your background watcher IMMEDIATELY (before reading, before thinking)
+2. Post an acknowledgement checkin confirming what you understood the message to be
+3. Then act on the message
+Failure to restart the watcher first means you will miss the next message while working.
 
 CRITICAL — Timeline Updates:
 Post updates when:
@@ -146,6 +186,13 @@ Post updates when:
 - A sub-agent encounters an error (type: "info") — what went wrong, what you'll do
 - A phase completes (type: "milestone") — summarize results and next steps
 The user monitors progress REMOTELY. Silence = confusion. Update frequently.
+
+CRITICAL — Session Manager Checkins:
+After /session-init gives you your session UUID and API credentials, use /agent-checkin to post updates throughout your work. Post:
+- At the start of your first task (status=working, describe what you're doing)
+- At roughly every 25% of your overall progress (type=progress, include "progress": N)
+- On completion of each major phase (type=text, summarise what was achieved)
+Never go more than 2 minutes without posting an update while actively working.
 
 Begin by analyzing the task and creating your execution plan.`;
 }
@@ -164,10 +211,10 @@ router.get("/", (_req: Request, res: Response) => {
 // POST / — create a new project
 router.post("/", validate(projectCreateSchema), (req: Request, res: Response) => {
   try {
-    const { name, description, folder_path, max_concurrent } = req.body;
+    const { name, description, folder_path, max_concurrent, pm_role, pm_effort, pm_model, agent_effort, agent_model } = req.body;
     const id = crypto.randomUUID();
 
-    createProject(id, name, description, folder_path, max_concurrent);
+    createProject(id, name, description, folder_path, max_concurrent, pm_role, pm_effort, pm_model, agent_effort, agent_model);
 
     const project = getProject(id);
     broadcast("project-created", project);
@@ -255,17 +302,26 @@ router.post("/:id/updates", validate(projectUpdateSchema), (req: Request, res: R
 });
 
 // POST /:id/start — start the project (launch or resume PM agent)
+// Agents are NOT allowed to call this endpoint — only user/dashboard calls are permitted.
+// This prevents a running PM from unpausing a project that the user explicitly paused.
 router.post("/:id/start", (req: Request, res: Response) => {
   try {
     const db = getDb();
     const id = param(req, "id");
+
+    // Reject agent-originated calls
+    if (getCallerAgentId(req)) {
+      res.status(403).json({ error: "Agents may not start or unpause a project. Only the user can do this via the dashboard." });
+      return;
+    }
+
     const project = getProject(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
 
-    if (project.status !== "pending" && project.status !== "paused" && project.status !== "active") {
+    if (project.status !== "pending" && project.status !== "paused") {
       res.status(400).json({ error: `Cannot start project in '${project.status}' status` });
       return;
     }
@@ -319,9 +375,11 @@ router.post("/:id/start", (req: Request, res: Response) => {
       db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
         .run(JSON.stringify({
           project_id: id,
-          role: "PM",
+          role: project.pm_role as string || "PM",
           pm_prompt: pmPrompt,
-          user_prompt: userPrompt
+          user_prompt: userPrompt,
+          effort: project.pm_effort as string || "high",
+          model: project.pm_model as string || "claude-sonnet-4-6",
         }), launchRequestId);
     }
 
@@ -356,6 +414,43 @@ router.post("/:id/pause", (req: Request, res: Response) => {
 
     updateProject(id, { status: "paused" });
     addProjectUpdate(id, "info", "Project paused.");
+
+    // Cancel any pending/claimed launch requests for this project so the launcher
+    // doesn't spawn new agent terminals after the pause
+    const db2 = getDb();
+    const cancelled = db2.prepare(`
+      UPDATE launch_requests
+      SET status = 'failed'
+      WHERE status IN ('pending', 'claimed')
+        AND agent_id LIKE ?
+    `).run(`%"project_id":"${id}"%`);
+    if (cancelled.changes > 0) {
+      addProjectUpdate(id, "info", `Cancelled ${cancelled.changes} pending launch request(s).`);
+    }
+
+    // Notify all active agents in the project so they stand down immediately
+    // via their background message watcher (no polling delay needed)
+    const pauseNotice =
+      "PROJECT PAUSED BY USER: The user has paused this project. " +
+      "You must stand down immediately. If you are the PM: close all active sub-agents " +
+      `(GET /api/projects/${id}/agents for the list, then POST /api/agents/{id}/close for each active one), ` +
+      "post a project timeline update listing what was closed, then go idle and await instructions. " +
+      "If you are a sub-agent: stop all work, post a checkin with status=idle, and await instructions. " +
+      "Do NOT start any new work or spawn any new agents.";
+
+    const agents = getProjectAgents(id);
+    let notified = 0;
+    for (const agent of agents) {
+      const agentStatus = (agent as Record<string, unknown>).status as string;
+      if (!["completed", "archived"].includes(agentStatus)) {
+        addMessage((agent as Record<string, unknown>).id as string, pauseNotice, "system");
+        notified++;
+      }
+    }
+
+    if (notified > 0) {
+      addProjectUpdate(id, "info", `Pause notice sent to ${notified} active agent(s).`);
+    }
 
     const updatedProject = getProject(id);
     broadcast("project-updated", updatedProject);
@@ -497,7 +592,7 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
       return;
     }
 
-    const { role, prompt, folder_path } = req.body;
+    const { role, prompt, folder_path, effort: requestedEffort, model: requestedModel } = req.body;
 
     // Check active agent count vs max_concurrent
     const activeCount = getActiveProjectAgentCount(id);
@@ -511,6 +606,25 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     const agentFolderPath = folder_path || (project.folder_path as string) || "";
 
+    // Enforce MAX constraints: PM may request equal or lower effort/model than project max
+    const effortOrder = ["low", "medium", "high"];
+    const modelOrder = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"];
+
+    const maxEffort = (project.agent_effort as string) || "high";
+    const maxModel = (project.agent_model as string) || "claude-sonnet-4-6";
+
+    const resolvedEffort = requestedEffort
+      ? effortOrder.indexOf(requestedEffort) <= effortOrder.indexOf(maxEffort)
+        ? requestedEffort
+        : maxEffort
+      : maxEffort;
+
+    const resolvedModel = requestedModel
+      ? modelOrder.indexOf(requestedModel) <= modelOrder.indexOf(maxModel)
+        ? requestedModel
+        : maxModel
+      : maxModel;
+
     // Create launch request with project metadata
     const db = getDb();
     const launchResult = createLaunchRequest("new", agentFolderPath);
@@ -518,7 +632,12 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     // Store project linkage metadata in agent_id field (will be resolved when agent registers)
     db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
-      .run(JSON.stringify({ project_id: id, role, prompt, parent_agent_id: project.pm_agent_id || null }), launchRequestId);
+      .run(JSON.stringify({
+        project_id: id, role, prompt,
+        parent_agent_id: project.pm_agent_id || null,
+        effort: resolvedEffort,
+        model: resolvedModel,
+      }), launchRequestId);
 
     addProjectUpdate(id, "info", `Sub-agent spawn requested: ${role} (launch request ID: ${launchRequestId})`);
 

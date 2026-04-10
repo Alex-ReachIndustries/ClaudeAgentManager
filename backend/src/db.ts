@@ -186,6 +186,17 @@ export function getDb(): Database.Database {
   // Task queue enhancement: priority on messages (higher = more urgent, default 0)
   try { db.exec("ALTER TABLE messages ADD COLUMN priority INTEGER DEFAULT 0"); } catch { /* exists */ }
 
+  // Effort and model settings on agents
+  try { db.exec("ALTER TABLE agents ADD COLUMN effort TEXT DEFAULT 'high'"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE agents ADD COLUMN model TEXT DEFAULT 'claude-sonnet-4-6'"); } catch { /* exists */ }
+
+  // PM/agent effort and model settings on projects
+  try { db.exec("ALTER TABLE projects ADD COLUMN pm_role TEXT"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE projects ADD COLUMN pm_effort TEXT DEFAULT 'high'"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE projects ADD COLUMN pm_model TEXT DEFAULT 'claude-sonnet-4-6'"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE projects ADD COLUMN agent_effort TEXT DEFAULT 'high'"); } catch { /* exists */ }
+  try { db.exec("ALTER TABLE projects ADD COLUMN agent_model TEXT DEFAULT 'claude-sonnet-4-6'"); } catch { /* exists */ }
+
   // Feature 5: Triggers for computed field caching
   try {
     db.exec(`
@@ -585,6 +596,15 @@ export function getPendingMessages(agentId: string) {
   const selectPending = db.prepare(`
     SELECT * FROM messages WHERE agent_id = ? AND status = 'pending' ORDER BY priority DESC, created_at ASC
   `);
+  // Re-surface messages delivered to the agent but never acknowledged (e.g. agent was
+  // interrupted before posting a checkin, or context was compressed mid-task).
+  // 30-second grace period avoids the race where the watcher restarts before the agent
+  // has had time to post its acknowledgement checkin.
+  const selectUnacknowledged = db.prepare(`
+    SELECT * FROM messages WHERE agent_id = ? AND status = 'delivered' AND acknowledged_at IS NULL
+      AND delivered_at < datetime('now', '-30 seconds')
+    ORDER BY priority DESC, created_at ASC
+  `);
   const markDelivered = db.prepare(`
     UPDATE messages
     SET status = 'delivered', delivered_at = datetime('now')
@@ -595,10 +615,19 @@ export function getPendingMessages(agentId: string) {
   `);
 
   const transaction = db.transaction(() => {
-    const messages = selectPending.all(agentId);
+    const pending = selectPending.all(agentId);
+    const unacked = selectUnacknowledged.all(agentId);
     markDelivered.run(agentId);
     resetPendingCount.run(agentId);
-    return messages;
+    // Combine new pending + previously-delivered-but-unacknowledged, deduped by id
+    const seen = new Set<unknown>();
+    const all = [...pending, ...unacked].filter(m => {
+      const msg = m as Record<string, unknown>;
+      if (seen.has(msg.id)) return false;
+      seen.add(msg.id);
+      return true;
+    });
+    return all;
   });
 
   return transaction();
@@ -865,13 +894,13 @@ export function getProject(id: string): Record<string, unknown> | undefined {
   return project;
 }
 
-export function createProject(id: string, name: string, description: string, folderPath: string, maxConcurrent: number) {
+export function createProject(id: string, name: string, description: string, folderPath: string, maxConcurrent: number, pmRole?: string, pmEffort?: string, pmModel?: string, agentEffort?: string, agentModel?: string) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO projects (id, name, description, folder_path, max_concurrent)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, description, folder_path, max_concurrent, pm_role, pm_effort, pm_model, agent_effort, agent_model)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  return stmt.run(id, name, description, folderPath, maxConcurrent);
+  return stmt.run(id, name, description, folderPath, maxConcurrent, pmRole || null, pmEffort || 'high', pmModel || 'claude-sonnet-4-6', agentEffort || 'high', agentModel || 'claude-sonnet-4-6');
 }
 
 export function updateProject(

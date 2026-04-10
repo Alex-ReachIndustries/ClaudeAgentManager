@@ -412,7 +412,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
           `SELECT * FROM launch_requests
            WHERE status = 'completed'
              AND agent_id LIKE '{%'
-             AND completed_at > datetime('now', '-60 seconds')
+             AND completed_at > datetime('now', '-600 seconds')
            ORDER BY completed_at DESC LIMIT 3`
         ).all() as Record<string, unknown>[];
 
@@ -420,7 +420,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
           if (launchReq.agent_id && typeof launchReq.agent_id === "string") {
             try {
               const meta = JSON.parse(launchReq.agent_id as string);
-              if (meta && meta.project_id) {
+              if (meta && (meta.project_id || meta.role || meta.prompt)) {
                 // Verify this request's folder matches the agent's cwd (if provided)
                 if (cwd && launchReq.folder_path && typeof launchReq.folder_path === "string") {
                   const normCwd = (cwd as string).replace(/\\/g, "/").toLowerCase();
@@ -430,20 +430,29 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                   }
                 }
 
-                // Link the agent to the project and store its task
-                db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ? WHERE id = ?")
-                  .run(meta.project_id || null, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, id);
+                if (meta.project_id) {
+                  // Link the agent to the project and store its task
+                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ? WHERE id = ?")
+                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, id);
 
-                if (meta.role === "PM" && meta.project_id) {
-                  updateProject(meta.project_id, { pm_agent_id: id });
+                  if (meta.role === "PM") {
+                    updateProject(meta.project_id, { pm_agent_id: id });
 
-                  if (meta.pm_prompt) {
-                    addMessage(id, meta.pm_prompt);
-                    logger.info({ agentId: id }, "Sent PM system prompt");
+                    if (meta.pm_prompt) {
+                      addMessage(id, meta.pm_prompt);
+                      logger.info({ agentId: id }, "Sent PM system prompt");
+                    }
+                    // user_prompt is not sent separately — pm_prompt already embeds the project
+                    // description. user_prompt is only used on RESUME (handled in projects.ts).
                   }
-                  if (meta.user_prompt) {
-                    addMessage(id, meta.user_prompt);
-                    logger.info({ agentId: id }, "Sent user initial prompt");
+                } else {
+                  // Standalone agent (not part of a project) — store role/task in DB
+                  db.prepare("UPDATE agents SET role = ?, task = ? WHERE id = ?")
+                    .run(meta.role || null, meta.prompt || null, id);
+
+                  if (meta.prompt) {
+                    addMessage(id, meta.prompt as string);
+                    logger.info({ agentId: id }, "Sent standalone agent task as message");
                   }
                 }
 
@@ -451,7 +460,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                 db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
                   .run(id, launchReq.id);
 
-                logger.info({ agentId: id, projectId: meta.project_id, role: meta.role }, "Linked new agent to project");
+                logger.info({ agentId: id, projectId: meta.project_id || null, role: meta.role || null }, "Linked new agent");
                 break;
               }
             } catch {
@@ -467,17 +476,21 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     // Update title, status, workspace, cwd, pid if provided
     const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number } = {};
     if (title && existing) agentFields.title = title;
-    if (status) agentFields.status = status;
+
+    // Protect terminal statuses: don't allow a running agent to overwrite completed/archived
+    // (e.g. a stale process posting a final checkin after close was triggered)
+    const TERMINAL_STATUSES = ["completed", "archived"];
+    const RUNNING_STATUSES = ["active", "idle", "working", "waiting-for-input"];
+    const currentStatus = (existing as Record<string, unknown>)?.status as string;
+    if (status && !(TERMINAL_STATUSES.includes(currentStatus) && RUNNING_STATUSES.includes(status))) {
+      agentFields.status = status;
+    }
+
     if (workspace) agentFields.workspace = workspace;
     if (cwd) agentFields.cwd = cwd;
     if (pid !== undefined) agentFields.pid = pid;
     if (Object.keys(agentFields).length > 0) {
       updateAgent(id, agentFields);
-    }
-
-    // Auto-unarchive if agent receives an update while archived
-    if (existing && (existing as Record<string, unknown>).status === "archived") {
-      updateAgent(id, { status: "active" });
     }
 
     // Normalize content to always be a JSON string
@@ -519,6 +532,19 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
 
     // Auto-acknowledge delivered messages (agent posting = it has seen them)
     acknowledgeMessages(id);
+
+    // When a PM/Lead/Manager agent starts or resumes, inject a role-reminder message
+    // to prevent context drift where the agent slips into implementation work.
+    if (type === "status") {
+      const agentForRole = getAgent(id);
+      const agentRole = ((agentForRole?.role as string) || "").toLowerCase();
+      const isPmRole = agentRole.includes("pm") || agentRole.includes("lead") || agentRole.includes("manager");
+      const isSessionEvent = (summary || "").toLowerCase().includes("start") || (summary || "").toLowerCase().includes("resum");
+      if (isPmRole && isSessionEvent) {
+        const pmRoleLabel = agentForRole?.role as string;
+        addMessage(id, `[SYSTEM ROLE REMINDER] You are the ${pmRoleLabel} — a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT. Before doing anything else: (1) check on your existing sub-agents via GET /api/agents/{id}/updates, (2) post a PM status update with what the project state is, (3) only then decide next actions. NEVER start implementing.`, "system");
+      }
+    }
 
     // Update project/todo tracking metadata if provided
     if (projects !== undefined || todos !== undefined) {
@@ -572,8 +598,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string } = {};
+    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -586,6 +612,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
     if (pid !== undefined) fields.pid = pid;
     if (role !== undefined) fields.role = role;
     if (task !== undefined) fields.task = task;
+    if (effort !== undefined) fields.effort = effort;
+    if (model !== undefined) fields.model = model;
 
     updateAgent(id, fields);
 
@@ -651,7 +679,7 @@ router.post("/:id/close", (req: Request, res: Response) => {
       closure_summary: closureSummary || null,
       recent_activity: autoSummary,
     };
-    updateAgent(id, { status: "completed", metadata: JSON.stringify(metadata) });
+    updateAgent(id, { status: "archived", metadata: JSON.stringify(metadata) });
 
     // Create terminate request for the launcher to kill the process
     if (pid) {
@@ -808,15 +836,29 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       // Heartbeat: update last_update_at so server knows agent is alive
       touchAgentHeartbeat(id);
 
-      // Auto-unarchive: if agent was archived but is now polling, it's alive again
-      if ((agent as Record<string, unknown>).status === "archived") {
-        updateAgent(id, { status: "active" });
-        const reactivated = getAgent(id);
-        broadcast("agent-updated", reactivated);
-      }
-
       // Atomic: fetch pending + mark delivered in one transaction
-      const messages = getPendingMessages(id);
+      // Also re-surfaces any delivered-but-unacknowledged messages from previous poll cycles
+      const rawMessages = getPendingMessages(id);
+
+      // Append checkin protocol reminder to every message so agents never forget the rules.
+      // This is injected at delivery time only — the DB record stays clean for the dashboard.
+      const CHECKIN_REMINDER = `
+
+---
+[SESSION MANAGER REMINDER — mandatory before acting on this message]
+1. Watcher restarted FIRST (before reading, before thinking)
+2. Post acknowledgement checkin NOW: status=working, confirm what you understood and what you will do
+3. Post a progress update at roughly every 25% of the task — do NOT batch all updates to the end
+4. Post a completion update explaining exactly what was achieved when done
+5. If a new message arrives while you are mid-task: read it, decide whether it changes your current work or should be queued after, acknowledge it with a checkin, then continue working
+Silence = the user cannot see what you are doing.
+---`;
+
+      const messages = (rawMessages as Record<string, unknown>[]).map(m => ({
+        ...m,
+        content: typeof m.content === "string" ? m.content + CHECKIN_REMINDER : m.content,
+      }));
+
       // Include poll_delay_until so the agent knows to pause if set
       const agentData = getAgent(id);
       const pollDelayUntil = agentData?.poll_delay_until as string | null;
@@ -1014,6 +1056,13 @@ router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) =
     // Create message on target agent with source info
     addMessage(target_agent_id, content, "agent", senderId);
     broadcast("message-queued", { agentId: target_agent_id, content, source: "agent", sourceAgentId: senderId });
+
+    // Record relay in both timelines so it's visible in the dashboard
+    const senderTitle = (sender.title as string) || senderId;
+    const targetTitle = (target.title as string) || target_agent_id;
+    const preview = content.length > 120 ? content.substring(0, 120) + "…" : content;
+    addUpdate(senderId, "relay", JSON.stringify({ direction: "sent", to_id: target_agent_id, to_title: targetTitle, message: content }), `→ ${targetTitle}: ${preview}`);
+    addUpdate(target_agent_id, "relay", JSON.stringify({ direction: "received", from_id: senderId, from_title: senderTitle, message: content }), `← ${senderTitle}: ${preview}`);
 
     // Publish to MQTT for instant delivery to agent sidecar
     publishAgentMessage(target_agent_id, content, "agent", senderId);
