@@ -243,6 +243,11 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pmRole, setPmRole] = useState('');
+  const [pmEffort, setPmEffort] = useState('high');
+  const [pmModel, setPmModel] = useState('claude-sonnet-4-6');
+  const [agentEffort, setAgentEffort] = useState('high');
+  const [agentModel, setAgentModel] = useState('claude-sonnet-4-6');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -255,6 +260,11 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
         name: name.trim(),
         description: task.trim(),
         folder_path: folderPath.trim(),
+        pm_role: pmRole.trim() || undefined,
+        pm_effort: pmEffort,
+        pm_model: pmModel,
+        agent_effort: agentEffort,
+        agent_model: agentModel,
       }) as { id: string };
 
       // Auto-start with a crafted PM prompt based on the task
@@ -337,6 +347,55 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
             onSelect={(path) => { setFolderPath(path); setShowFolderPicker(false); }}
             onClose={() => setShowFolderPicker(false)}
           />
+
+          <div>
+            <label className="block text-xs text-dark-400 mb-1">PM Role (optional)</label>
+            <input
+              type="text"
+              value={pmRole}
+              onChange={(e) => setPmRole(e.target.value)}
+              className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-lumi-500 transition-colors"
+              placeholder="e.g. Research Director (defaults to PM)"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-dark-400 mb-1">PM Effort</label>
+              <select value={pmEffort} onChange={e => setPmEffort(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-dark-400 mb-1">PM Model</label>
+              <select value={pmModel} onChange={e => setPmModel(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+                <option value="claude-opus-4-6">Opus 4.6</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-dark-400 mb-1">Agent Effort</label>
+              <select value={agentEffort} onChange={e => setAgentEffort(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-dark-400 mb-1">Agent Model</label>
+              <select value={agentModel} onChange={e => setAgentModel(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+                <option value="claude-opus-4-6">Opus 4.6</option>
+              </select>
+            </div>
+          </div>
 
           <div className="flex justify-end gap-3 pt-2">
             <button

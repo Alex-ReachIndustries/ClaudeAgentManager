@@ -20,13 +20,15 @@ export interface Agent {
   project_name?: string;
   role?: string;
   parent_agent_id?: string;
+  effort?: string;
+  model?: string;
 }
 
 export interface AgentUpdate {
   id: number;
   agent_id: string;
   timestamp: string;
-  type: 'text' | 'progress' | 'diagram' | 'error' | 'status';
+  type: 'text' | 'progress' | 'diagram' | 'error' | 'status' | 'relay';
   content: Record<string, unknown>;
   summary: string | null;
 }

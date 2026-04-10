@@ -93,7 +93,7 @@ export async function deleteAgent(agentId: string): Promise<void> {
 
 export async function updateAgent(
   agentId: string,
-  fields: Partial<Pick<Agent, 'title' | 'status' | 'poll_delay_until'>>,
+  fields: Partial<Pick<Agent, 'title' | 'status' | 'poll_delay_until' | 'role' | 'effort' | 'model'>>,
 ): Promise<Agent> {
   return request<Agent>(`/agents/${agentId}`, {
     method: 'PATCH',
@@ -211,7 +211,7 @@ export async function fetchAgentFiles(agentId: string) { return request<any[]>(`
 
 // --- Projects ---
 export async function fetchProjects() { return request<any[]>('/projects'); }
-export async function createProject(data: {name: string, description: string, folder_path: string, max_concurrent?: number}) { return request('/projects', { method: 'POST', body: JSON.stringify(data) }); }
+export async function createProject(data: {name: string, description: string, folder_path: string, max_concurrent?: number, pm_role?: string, pm_effort?: string, pm_model?: string, agent_effort?: string, agent_model?: string}) { return request('/projects', { method: 'POST', body: JSON.stringify(data) }); }
 export async function fetchProject(id: string) { return request<any>(`/projects/${id}`); }
 export async function fetchProjectAgents(id: string) { return request<any>(`/projects/${id}/agents`); }
 export async function fetchProjectUpdates(id: string) { return request<any>(`/projects/${id}/updates`); }
@@ -219,7 +219,7 @@ export async function startProject(id: string, initialPrompt?: string) { return 
 export async function pauseProject(id: string) { return request(`/projects/${id}/pause`, { method: 'POST' }); }
 export async function completeProject(id: string) { return request(`/projects/${id}/complete`, { method: 'POST' }); }
 export async function deleteProject(id: string) { return request(`/projects/${id}`, { method: 'DELETE' }); }
-export async function spawnProjectAgent(id: string, role: string, prompt: string) { return request(`/projects/${id}/spawn-agent`, { method: 'POST', body: JSON.stringify({ role, prompt }) }); }
+export async function spawnProjectAgent(id: string, role: string, prompt: string, effort?: string, model?: string) { return request(`/projects/${id}/spawn-agent`, { method: 'POST', body: JSON.stringify({ role, prompt, ...(effort && { effort }), ...(model && { model }) }) }); }
 export async function addProjectUpdate(id: string, type: string, content: string) { return request(`/projects/${id}/updates`, { method: 'POST', body: JSON.stringify({ type, content }) }); }
 export async function fetchProjectFiles(id: string) { return request<any[]>(`/projects/${id}/files`); }
 

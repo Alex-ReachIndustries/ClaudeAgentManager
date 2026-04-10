@@ -233,6 +233,25 @@ function UpdateItem({ update }: { update: AgentUpdate }) {
       );
     }
 
+    case 'relay': {
+      const c = typeof update.content === 'object' ? update.content as Record<string, unknown> : {};
+      const isSent = c.direction === 'sent';
+      const peer = isSent ? String(c.to_title ?? c.to_id ?? '?') : String(c.from_title ?? c.from_id ?? '?');
+      const msg = typeof c.message === 'string' ? c.message : contentText(update.content, 'relay', 'text');
+      return (
+        <div className={`flex items-start gap-3 p-3 rounded-lg border ${isSent ? 'bg-blue-950/20 border-blue-800/30' : 'bg-purple-950/20 border-purple-800/30'}`}>
+          <ArrowRightLeft size={16} className={`mt-0.5 shrink-0 ${isSent ? 'text-blue-400' : 'text-purple-400'}`} />
+          <div className="flex-1 min-w-0">
+            <p className={`text-xs font-medium mb-1 ${isSent ? 'text-blue-400' : 'text-purple-400'}`}>
+              {isSent ? `→ ${peer}` : `← ${peer}`}
+            </p>
+            <p className="text-sm text-dark-200 whitespace-pre-wrap break-words">{msg}</p>
+          </div>
+          {timestamp}
+        </div>
+      );
+    }
+
     default:
       return (
         <div className="flex items-start gap-3 p-3 rounded-lg bg-dark-850 border border-dark-800/50">

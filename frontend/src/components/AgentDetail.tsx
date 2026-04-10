@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, StopCircle, CornerDownLeft } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, closeAgent, fetchAgentFiles, sendSignal } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, closeAgent, fetchAgentFiles, sendSignal, sendMessage } from '../api';
 import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
@@ -31,6 +31,11 @@ function AgentDetail() {
   const [resuming, setResuming] = useState(false);
   const [closing, setClosing] = useState(false);
   const [files, setFiles] = useState<AgentFile[]>([]);
+  const [roleInput, setRoleInput] = useState('');
+  const [savingRole, setSavingRole] = useState(false);
+  const [effortInput, setEffortInput] = useState('high');
+  const [modelInput, setModelInput] = useState('claude-sonnet-4-6');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   // Fetch files for inline timeline display
   useEffect(() => {
@@ -40,6 +45,15 @@ function AgentDetail() {
       }).catch(() => {});
     }
   }, [id, agent?.update_count]);
+
+  // Sync role/effort/model inputs when agent loads
+  useEffect(() => {
+    if (agent) {
+      setRoleInput(agent.role ?? '');
+      setEffortInput(agent.effort ?? 'high');
+      setModelInput(agent.model ?? 'claude-sonnet-4-6');
+    }
+  }, [agent?.role, agent?.effort, agent?.model]);
 
   // Mark agent as read when viewing detail page
   useEffect(() => {
@@ -246,6 +260,84 @@ function AgentDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Messages — first on mobile, sidebar on desktop */}
         <div className="order-1 lg:order-2 space-y-4">
+          {/* Role editor */}
+          <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
+            <h3 className="text-sm font-semibold text-dark-300 mb-3">Role</h3>
+            <textarea
+              value={roleInput}
+              onChange={e => setRoleInput(e.target.value)}
+              rows={3}
+              placeholder="Assign a role to this agent..."
+              className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-600 resize-none focus:outline-none focus:border-dark-600"
+            />
+            <button
+              onClick={async () => {
+                if (!id || savingRole) return;
+                setSavingRole(true);
+                try {
+                  await updateAgent(id, { role: roleInput || undefined });
+                  await sendMessage(id, `Your role has been updated to: "${roleInput}". Please follow this new role.`);
+                  refetch();
+                } catch (err) {
+                  console.error('Role update failed:', err);
+                } finally {
+                  setSavingRole(false);
+                }
+              }}
+              disabled={savingRole}
+              className="mt-2 w-full px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-dark-300 hover:text-dark-100 rounded-lg border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingRole ? 'Updating...' : 'Update Role'}
+            </button>
+          </div>
+          {/* Effort & Model settings */}
+          <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
+            <h3 className="text-sm font-semibold text-dark-300 mb-3">Launch Settings</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-dark-500 mb-1 block">Effort</label>
+                <select
+                  value={effortInput}
+                  onChange={e => setEffortInput(e.target.value)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm text-dark-200 focus:outline-none focus:border-dark-600"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-dark-500 mb-1 block">Model</label>
+                <select
+                  value={modelInput}
+                  onChange={e => setModelInput(e.target.value)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm text-dark-200 focus:outline-none focus:border-dark-600"
+                >
+                  <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                  <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+                  <option value="claude-opus-4-6">Opus 4.6</option>
+                </select>
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (!id || savingSettings) return;
+                setSavingSettings(true);
+                try {
+                  await updateAgent(id, { effort: effortInput, model: modelInput });
+                  refetch();
+                } catch (err) {
+                  console.error('Settings update failed:', err);
+                } finally {
+                  setSavingSettings(false);
+                }
+              }}
+              disabled={savingSettings}
+              className="mt-3 w-full px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-dark-300 hover:text-dark-100 rounded-lg border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingSettings ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
           <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
           <PollDelayControl agentId={agent.id} currentDelay={agent.poll_delay_until} onUpdated={refetch} />
         </div>
