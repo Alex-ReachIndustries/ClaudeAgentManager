@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -58,6 +60,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -122,12 +126,49 @@ fun AgentDetailScreen(
         onRefresh = viewModel::refreshAll
     )
 
+    // Launcher for saving a downloaded file to a user-chosen location via SAF
+    val saveToDeviceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        uri?.let { viewModel.savePendingDownloadToUri(it, context) }
+            ?: viewModel.clearPendingDownload()
+    }
+
     // Show error in snackbar
     LaunchedEffect(state.error) {
         state.error?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.clearError()
         }
+    }
+
+    // Download action dialog — shown after a file is fetched to cache
+    state.pendingDownload?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearPendingDownload() },
+            title = { Text(pending.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = { Text("Open with an app or save to device storage?") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.openPendingDownload(context) }) {
+                    Text("Open", color = LumiPurple500)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { viewModel.clearPendingDownload() }) {
+                        Text("Cancel")
+                    }
+                    TextButton(onClick = {
+                        saveToDeviceLauncher.launch(pending.filename)
+                    }) {
+                        Text("Save to Device", color = LumiPurple500)
+                    }
+                }
+            },
+            containerColor = LumiCard,
+            titleContentColor = LumiOnSurface,
+            textContentColor = LumiOnSurfaceSecondary
+        )
     }
 
     Scaffold(
@@ -438,6 +479,7 @@ fun AgentDetailScreen(
                                     viewModel.shareFile(fileId, targetAgentId)
                                 },
                                 onLoadOtherAgents = viewModel::loadOtherAgents,
+                                onUpdateFields = viewModel::updateAgentFields,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -513,12 +555,14 @@ private fun InfoTab(
     onFileClick: (Long) -> Unit,
     onShareFile: (Long, String) -> Unit,
     onLoadOtherAgents: () -> Unit,
+    onUpdateFields: (role: String?, effort: String?, model: String?) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
         AgentMetricsPanel(
             agent = agent,
             messages = messages,
+            onUpdateFields = onUpdateFields,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -545,6 +589,7 @@ private fun InfoTab(
 private fun AgentMetricsPanel(
     agent: Agent?,
     messages: List<com.claudemanager.app.data.models.AgentMessage>,
+    onUpdateFields: (role: String?, effort: String?, model: String?) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     if (agent == null) {
@@ -635,6 +680,111 @@ private fun AgentMetricsPanel(
                 label = "Cost USD",
                 value = "$%,.4f".format(costs.costUsd)
             )
+        }
+
+        // Role editor
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Agent Settings",
+            style = MaterialTheme.typography.titleSmall,
+            color = LumiOnSurfaceSecondary
+        )
+
+        var roleInput by remember(agent.role) { mutableStateOf(agent.role ?: "") }
+        OutlinedTextField(
+            value = roleInput,
+            onValueChange = { roleInput = it },
+            label = { Text("Role") },
+            placeholder = { Text("e.g. PM, Designer, Reviewer") },
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = LumiPurple500,
+                cursorColor = LumiPurple500,
+                focusedTextColor = LumiOnSurface,
+                unfocusedTextColor = LumiOnSurface
+            )
+        )
+
+        // Effort dropdown
+        val effortOptions = listOf("low" to "Low", "medium" to "Medium", "high" to "High")
+        val modelOptions = listOf(
+            "claude-haiku-4-5-20251001" to "Haiku 4.5",
+            "claude-sonnet-4-6" to "Sonnet 4.6",
+            "claude-opus-4-6" to "Opus 4.6"
+        )
+        var selectedEffort by remember(agent.effort) { mutableStateOf(agent.effort ?: "high") }
+        var selectedModel by remember(agent.model) { mutableStateOf(agent.model ?: "claude-sonnet-4-6") }
+        var effortExpanded by remember { mutableStateOf(false) }
+        var modelExpanded by remember { mutableStateOf(false) }
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = effortOptions.firstOrNull { it.first == selectedEffort }?.second ?: selectedEffort,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Effort") },
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = { effortExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = LumiOnSurfaceSecondary)
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = LumiPurple500,
+                    focusedTextColor = LumiOnSurface,
+                    unfocusedTextColor = LumiOnSurface
+                )
+            )
+            DropdownMenu(expanded = effortExpanded, onDismissRequest = { effortExpanded = false }) {
+                effortOptions.forEach { (value, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label, color = if (value == selectedEffort) LumiPurple500 else LumiOnSurface) },
+                        onClick = { selectedEffort = value; effortExpanded = false }
+                    )
+                }
+            }
+        }
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = modelOptions.firstOrNull { it.first == selectedModel }?.second ?: selectedModel,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Model") },
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = { modelExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = LumiOnSurfaceSecondary)
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = LumiPurple500,
+                    focusedTextColor = LumiOnSurface,
+                    unfocusedTextColor = LumiOnSurface
+                )
+            )
+            DropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
+                modelOptions.forEach { (value, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label, color = if (value == selectedModel) LumiPurple500 else LumiOnSurface) },
+                        onClick = { selectedModel = value; modelExpanded = false }
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = {
+                onUpdateFields(
+                    roleInput.takeIf { it.isNotBlank() },
+                    selectedEffort,
+                    selectedModel
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = LumiPurple500)
+        ) {
+            Text("Save Settings")
         }
     }
 }

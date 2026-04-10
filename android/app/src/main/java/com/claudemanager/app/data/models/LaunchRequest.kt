@@ -72,7 +72,13 @@ data class CreateLaunchRequestBody(
     val role: String? = null,
 
     @SerializedName("task")
-    val task: String? = null
+    val task: String? = null,
+
+    @SerializedName("effort")
+    val effort: String? = null,
+
+    @SerializedName("model")
+    val model: String? = null
 )
 
 /**
@@ -135,5 +141,14 @@ data class UpdateAgentBody(
     val status: String? = null,
 
     @SerializedName("poll_delay_until")
-    val pollDelayUntil: String? = null
+    val pollDelayUntil: String? = null,
+
+    @SerializedName("role")
+    val role: String? = null,
+
+    @SerializedName("effort")
+    val effort: String? = null,
+
+    @SerializedName("model")
+    val model: String? = null
 )

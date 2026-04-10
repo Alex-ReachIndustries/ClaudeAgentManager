@@ -175,23 +175,37 @@ object ApiClient {
     /**
      * Convenience: build a one-off Retrofit instance pointed at a specific URL,
      * useful for testing connectivity to a server during setup.
+     *
+     * Uses short 5-second timeouts and no retry for health checks, regardless of
+     * whether the URL is HTTP or HTTPS. (The main [okHttpClient] and [createTrustAllClient]
+     * have longer timeouts suitable for real API calls, but for health checks we want
+     * to fail fast so the setup screen doesn't appear frozen for minutes.)
      */
     fun createRetrofitForUrl(url: String): Retrofit {
         val normalizedUrl = url.trimEnd('/')
-        val client = if (normalizedUrl.startsWith("https://")) {
-            createTrustAllClient()
-        } else {
-            // Use a short-timeout client for health checks
-            OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
-                .writeTimeout(5, TimeUnit.SECONDS)
-                .build()
+        val clientBuilder = OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false) // fail fast during setup health checks
+
+        if (normalizedUrl.startsWith("https://")) {
+            // Trust all certs so Tailscale self-signed certs work
+            val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            })
+            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+            clientBuilder
+                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
         }
 
         return Retrofit.Builder()
             .baseUrl("$normalizedUrl/")
-            .client(client)
+            .client(clientBuilder.build())
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
     }

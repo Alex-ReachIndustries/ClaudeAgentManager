@@ -406,6 +406,17 @@ fun AgentListScreen(
     if (showRoleTaskDialog && selectedFolder != null) {
         var roleText by remember { mutableStateOf("") }
         var taskText by remember { mutableStateOf("") }
+        var effortExpanded by remember { mutableStateOf(false) }
+        var modelExpanded by remember { mutableStateOf(false) }
+        var selectedEffort by remember { mutableStateOf("high") }
+        var selectedModel by remember { mutableStateOf("claude-sonnet-4-6") }
+
+        val effortOptions = listOf("low" to "Low", "medium" to "Medium", "high" to "High")
+        val modelOptions = listOf(
+            "claude-haiku-4-5-20251001" to "Haiku 4.5",
+            "claude-sonnet-4-6" to "Sonnet 4.6",
+            "claude-opus-4-6" to "Opus 4.6"
+        )
 
         AlertDialog(
             onDismissRequest = {
@@ -446,6 +457,62 @@ fun AgentListScreen(
                             cursorColor = LumiPurple500
                         )
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Effort dropdown
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = effortOptions.first { it.first == selectedEffort }.second,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Effort") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                androidx.compose.material3.IconButton(onClick = { effortExpanded = true }) {
+                                    Icon(Icons.Default.ExpandMore, contentDescription = null)
+                                }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LumiPurple500)
+                        )
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = effortExpanded,
+                            onDismissRequest = { effortExpanded = false }
+                        ) {
+                            effortOptions.forEach { (value, label) ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(label, color = if (value == selectedEffort) LumiPurple500 else LumiOnSurface) },
+                                    onClick = { selectedEffort = value; effortExpanded = false }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Model dropdown
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = modelOptions.first { it.first == selectedModel }.second,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Model") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                androidx.compose.material3.IconButton(onClick = { modelExpanded = true }) {
+                                    Icon(Icons.Default.ExpandMore, contentDescription = null)
+                                }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LumiPurple500)
+                        )
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = modelExpanded,
+                            onDismissRequest = { modelExpanded = false }
+                        ) {
+                            modelOptions.forEach { (value, label) ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(label, color = if (value == selectedModel) LumiPurple500 else LumiOnSurface) },
+                                    onClick = { selectedModel = value; modelExpanded = false }
+                                )
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -454,7 +521,9 @@ fun AgentListScreen(
                         viewModel.launchNewAgent(
                             selectedFolder!!,
                             roleText.takeIf { it.isNotBlank() },
-                            taskText.takeIf { it.isNotBlank() }
+                            taskText.takeIf { it.isNotBlank() },
+                            selectedEffort,
+                            selectedModel
                         )
                         showRoleTaskDialog = false
                         selectedFolder = null

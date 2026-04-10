@@ -178,12 +178,26 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     /**
      * Create a new project.
      */
-    fun createProject(name: String, task: String, folderPath: String) {
+    fun createProject(
+        name: String,
+        task: String,
+        folderPath: String,
+        pmRole: String? = null,
+        pmEffort: String? = null,
+        pmModel: String? = null,
+        agentEffort: String? = null,
+        agentModel: String? = null
+    ) {
         viewModelScope.launch {
             repository.createProject(
                 name = name,
                 description = task,
-                folderPath = folderPath
+                folderPath = folderPath,
+                pmRole = pmRole,
+                pmEffort = pmEffort,
+                pmModel = pmModel,
+                agentEffort = agentEffort,
+                agentModel = agentModel
             ).onSuccess { project ->
                 // Auto-start with crafted PM prompt
                 val pmPrompt = "Project: $name\n\nTask: $task\n\nAnalyse this task, break it into phases, and begin execution by spawning the appropriate sub-agents."

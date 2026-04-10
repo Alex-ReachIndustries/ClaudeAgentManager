@@ -42,6 +42,16 @@ data class AttachedFile(
 )
 
 /**
+ * A file that has been downloaded to the app cache and is awaiting the user's
+ * choice of what to do with it (open with an app or save to device storage).
+ */
+data class PendingDownload(
+    val filename: String,
+    val mimeType: String,
+    val cachedFile: java.io.File
+)
+
+/**
  * UI state for the agent detail screen.
  */
 data class AgentDetailUiState(
@@ -64,7 +74,8 @@ data class AgentDetailUiState(
     val terminalLines: List<String> = emptyList(),
     val isSharingFile: Boolean = false,
     val costBreakdown: AgentCostBreakdownResponse? = null,
-    val isLoadingCosts: Boolean = false
+    val isLoadingCosts: Boolean = false,
+    val pendingDownload: PendingDownload? = null
 )
 
 /**
@@ -451,6 +462,29 @@ class AgentDetailViewModel(
     }
 
     /**
+     * Update role, effort, and/or model for this agent.
+     */
+    fun updateAgentFields(role: String? = null, effort: String? = null, model: String? = null) {
+        viewModelScope.launch {
+            repository.updateAgent(agentId, role = role, effort = effort, model = model)
+                .onSuccess { agent ->
+                    _uiState.update { it.copy(agent = agent) }
+                    // Notify the agent about the changes
+                    val parts = mutableListOf<String>()
+                    if (role != null) parts.add("role: \"$role\"")
+                    if (effort != null) parts.add("effort: $effort")
+                    if (model != null) parts.add("model: $model")
+                    if (parts.isNotEmpty()) {
+                        repository.sendMessage(agentId, "Your settings have been updated — ${parts.joinToString(", ")}. Please follow your new role/settings.")
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update { it.copy(error = e.message ?: "Failed to update agent") }
+                }
+        }
+    }
+
+    /**
      * Delete the agent and all its data.
      */
     fun deleteAgent(onDeleted: () -> Unit) {
@@ -474,7 +508,7 @@ class AgentDetailViewModel(
 
     /**
      * Download a file using OkHttp (which trusts Tailscale certs), save to app cache,
-     * then open with a share/view intent. No storage permissions needed.
+     * then surface a [PendingDownload] so the UI can offer "Open" or "Save to Device".
      */
     fun downloadFile(fileId: Long, filename: String, context: Context) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -485,29 +519,15 @@ class AgentDetailViewModel(
                 val response = client.newCall(request).execute()
                 if (response.isSuccessful) {
                     val body = response.body ?: return@launch
-                    // Save to app's cache dir (no permission needed)
+                    val mimeType = response.header("Content-Type") ?: "application/octet-stream"
                     val cacheDir = java.io.File(context.cacheDir, "downloads")
                     cacheDir.mkdirs()
                     val file = java.io.File(cacheDir, filename)
                     file.outputStream().use { out ->
                         body.byteStream().use { it.copyTo(out) }
                     }
-                    // Open the file via FileProvider or direct intent
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        try {
-                            val uri = androidx.core.content.FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                file
-                            )
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, response.header("Content-Type") ?: "application/octet-stream")
-                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(intent)
-                        } catch (_: Exception) {
-                            _uiState.update { it.copy(error = "Downloaded: $filename (no app to open)") }
-                        }
+                        _uiState.update { it.copy(pendingDownload = PendingDownload(filename, mimeType, file)) }
                     }
                 } else {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -520,6 +540,49 @@ class AgentDetailViewModel(
                 }
             }
         }
+    }
+
+    /** Open the pending download with an appropriate viewer app (ACTION_VIEW). */
+    fun openPendingDownload(context: Context) {
+        val pending = _uiState.value.pendingDownload ?: return
+        _uiState.update { it.copy(pendingDownload = null) }
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", pending.cachedFile
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, pending.mimeType)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            _uiState.update { it.copy(error = "No app found to open ${pending.filename}") }
+        }
+    }
+
+    /** Copy the pending download to a user-chosen URI (from ACTION_CREATE_DOCUMENT). */
+    fun savePendingDownloadToUri(uri: android.net.Uri, context: Context) {
+        val pending = _uiState.value.pendingDownload ?: return
+        _uiState.update { it.copy(pendingDownload = null) }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    pending.cachedFile.inputStream().use { it.copyTo(out) }
+                }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { it.copy(error = "Saved ${pending.filename}") }
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { it.copy(error = "Save failed: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    /** Dismiss the pending download dialog without taking any action. */
+    fun clearPendingDownload() {
+        _uiState.update { it.copy(pendingDownload = null) }
     }
 
     // ── Agent Relay ────────────────────────────────────────────────────

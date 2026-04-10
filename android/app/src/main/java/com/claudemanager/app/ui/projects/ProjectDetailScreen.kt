@@ -52,8 +52,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
@@ -106,6 +109,14 @@ fun ProjectDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showMenu by remember { mutableStateOf(false) }
 
+    // Launcher for saving a downloaded file to a user-chosen location via SAF
+    val saveToDeviceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        uri?.let { viewModel.savePendingDownloadToUri(it, context) }
+            ?: viewModel.clearPendingDownload()
+    }
+
     // Initialize with project ID
     LaunchedEffect(projectId) {
         viewModel.init(projectId)
@@ -122,6 +133,33 @@ fun ProjectDetailScreen(
             snackbarHostState.showSnackbar(it)
             viewModel.clearActionMessage()
         }
+    }
+
+    // Download action dialog
+    state.pendingDownload?.let { pending ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { viewModel.clearPendingDownload() },
+            title = { Text(pending.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = { Text("Open with an app or save to device storage?") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.openPendingDownload(context) }) {
+                    Text("Open", color = LumiPurple500)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { viewModel.clearPendingDownload() }) {
+                        Text("Cancel")
+                    }
+                    TextButton(onClick = { saveToDeviceLauncher.launch(pending.filename) }) {
+                        Text("Save to Device", color = LumiPurple500)
+                    }
+                }
+            },
+            containerColor = LumiCard,
+            titleContentColor = LumiOnSurface,
+            textContentColor = LumiOnSurfaceSecondary
+        )
     }
 
     Scaffold(

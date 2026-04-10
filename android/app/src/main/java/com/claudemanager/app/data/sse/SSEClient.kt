@@ -72,20 +72,34 @@ class SSEClient {
     private var reconnectFuture: ScheduledFuture<*>? = null
 
     /**
-     * OkHttp client configured for SSE with a long read timeout (no timeout)
-     * since SSE connections are long-lived.
+     * Cache of the SSE-specific OkHttp client, keyed by URL scheme.
+     * We can't use a simple lazy because the URL (and required SSL config) may change
+     * between reconnects if the app was configured after the service first started.
      */
-    private val sseHttpClient: OkHttpClient by lazy {
+    private var sseHttpClientCache: OkHttpClient? = null
+    private var sseHttpClientScheme: String? = null
+
+    /**
+     * Returns an OkHttp client configured for SSE with a long read timeout (no timeout)
+     * since SSE connections are long-lived. The client is cached per URL scheme so that
+     * an HTTP→HTTPS transition (or vice versa) always gets the correct SSL configuration.
+     */
+    private fun getSseHttpClient(): OkHttpClient {
         val baseUrl = ApiClient.getBaseUrl()
-        val builder = if (baseUrl.startsWith("https://")) {
-            ApiClient.createTrustAllClient().newBuilder()
-        } else {
-            ApiClient.okHttpClient.newBuilder()
+        val scheme = if (baseUrl.startsWith("https://")) "https" else "http"
+        if (sseHttpClientCache == null || sseHttpClientScheme != scheme) {
+            val builder = if (scheme == "https") {
+                ApiClient.createTrustAllClient().newBuilder()
+            } else {
+                ApiClient.okHttpClient.newBuilder()
+            }
+            sseHttpClientCache = builder
+                .readTimeout(0, TimeUnit.SECONDS) // SSE connections are long-lived
+                .retryOnConnectionFailure(false)   // let our own backoff logic handle reconnects
+                .build()
+            sseHttpClientScheme = scheme
         }
-        builder
-            .readTimeout(0, TimeUnit.SECONDS) // SSE connections are long-lived
-            .retryOnConnectionFailure(true)
-            .build()
+        return sseHttpClientCache!!
     }
 
     /**
@@ -137,7 +151,7 @@ class SSEClient {
             .header("Accept", "text/event-stream")
             .build()
 
-        val factory = EventSources.createFactory(sseHttpClient)
+        val factory = EventSources.createFactory(getSseHttpClient())
 
         eventSource = factory.newEventSource(request, object : EventSourceListener() {
 

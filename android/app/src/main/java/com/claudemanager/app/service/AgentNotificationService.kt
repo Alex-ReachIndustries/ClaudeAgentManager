@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import com.claudemanager.app.ClaudeManagerApp
+import com.claudemanager.app.data.api.ApiClient
 import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.preferences.AppPreferences
 import com.claudemanager.app.data.sse.SSEClient
@@ -140,6 +141,15 @@ class AgentNotificationService : Service() {
                 Log.w(TAG, "No server URL configured, stopping service")
                 stopSelf()
                 return@launch
+            }
+
+            // Fix race condition: service may start (via START_STICKY or direct start) before
+            // ClaudeManagerApp's coroutine calls ApiClient.setBaseUrl(). Ensure the ApiClient
+            // is configured with the correct URL/key before the SSEClient reads it.
+            val apiKey = preferences.getApiKey()
+            ApiClient.setBaseUrl(serverUrl)
+            if (apiKey.isNotBlank()) {
+                ApiClient.setApiKey(apiKey)
             }
 
             // Use SSE directly — MQTT-over-WS is unreliable from mobile via Tailscale

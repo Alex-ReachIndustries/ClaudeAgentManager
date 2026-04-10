@@ -435,7 +435,18 @@ private fun UpdateBubble(update: AgentUpdate) {
                 .combinedClickable(
                     onClick = { expanded = !expanded },
                     onLongClick = {
-                        val text = update.summary ?: update.content
+                        // Copy full content — same as what's shown when expanded
+                        val text = when (content) {
+                            is UpdateContent.Text -> {
+                                val parts = listOfNotNull(update.summary, content.text.takeIf { !it.isNullOrBlank() })
+                                parts.joinToString("\n\n").ifBlank { update.content }
+                            }
+                            is UpdateContent.Progress -> listOfNotNull(content.description, update.summary).joinToString("\n").ifBlank { update.content }
+                            is UpdateContent.Error -> content.message
+                            is UpdateContent.Status -> content.status
+                            is UpdateContent.Diagram -> content.diagram
+                            else -> update.summary ?: update.content
+                        }
                         copyToClipboard(context, text)
                     }
                 )

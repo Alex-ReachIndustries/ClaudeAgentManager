@@ -95,9 +95,33 @@ fun AppNavGraph(
     val navController: NavHostController = rememberNavController()
     val serverUrl by preferences.serverUrlFlow.collectAsState(initial = "")
 
-    // Determine start destination: setup if no server URL, agents list otherwise
-    val startDestination = remember(serverUrl) {
-        if (serverUrl.isBlank()) Routes.SETUP else Routes.AGENTS
+    // Determine start destination: setup if no server URL, agents list otherwise.
+    // NOTE: startDestination is only used for the initial NavHost composition — subsequent
+    // changes to serverUrl don't automatically navigate. The LaunchedEffect below handles
+    // the race condition where DataStore emits the saved URL after the NavHost is already
+    // composed with Routes.SETUP (because the initial value was blank).
+    val startDestination = if (serverUrl.isBlank()) Routes.SETUP else Routes.AGENTS
+
+    // Observe current route to determine whether to show bottom nav
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
+    // Race-condition fix: if the URL was blank at first composition (showing Setup), but
+    // DataStore then emits a saved URL, navigate to Agents automatically. We only do this
+    // when the user is currently on the Setup screen (not when they intentionally navigated
+    // there via the settings gear icon from the Agents screen).
+    LaunchedEffect(serverUrl) {
+        if (serverUrl.isNotBlank() && currentRoute == Routes.SETUP) {
+            // Only auto-navigate if the Setup screen is the start of the back stack
+            // (i.e., we arrived here via the race condition, not via onSettingsClick).
+            val backStack = navController.currentBackStack.value
+            if (backStack.size <= 2) { // start destination + setup itself
+                navController.navigate(Routes.AGENTS) {
+                    popUpTo(Routes.SETUP) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
     }
 
     // Handle deep link navigation: navigate to agent detail with agents list in back stack
@@ -111,10 +135,6 @@ fun AppNavGraph(
             }
         }
     }
-
-    // Observe current route to determine whether to show bottom nav
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
     val showBottomNav = currentRoute in bottomNavRoutes
 
     Scaffold(

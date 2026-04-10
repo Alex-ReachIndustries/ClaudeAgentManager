@@ -286,8 +286,8 @@ fun ProjectListScreen(
     if (state.showCreateDialog) {
         CreateProjectDialog(
             onDismiss = { viewModel.showCreateDialog(false) },
-            onCreate = { name, description, folderPath ->
-                viewModel.createProject(name, description, folderPath)
+            onCreate = { name, description, folderPath, pmRole, pmEffort, pmModel, agentEffort, agentModel ->
+                viewModel.createProject(name, description, folderPath, pmRole, pmEffort, pmModel, agentEffort, agentModel)
             }
         )
     }
@@ -432,12 +432,23 @@ private fun StatusChip(status: String) {
 @Composable
 private fun CreateProjectDialog(
     onDismiss: () -> Unit,
-    onCreate: (name: String, description: String, folderPath: String) -> Unit
+    onCreate: (name: String, description: String, folderPath: String, pmRole: String?, pmEffort: String, pmModel: String, agentEffort: String, agentModel: String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var task by remember { mutableStateOf("") }
     var folderPath by remember { mutableStateOf("") }
     var showFolderPicker by remember { mutableStateOf(false) }
+    var pmRole by remember { mutableStateOf("") }
+    var pmEffort by remember { mutableStateOf("high") }
+    var pmModel by remember { mutableStateOf("claude-sonnet-4-6") }
+    var agentEffort by remember { mutableStateOf("high") }
+    var agentModel by remember { mutableStateOf("claude-sonnet-4-6") }
+    val effortOptions = listOf("low", "medium", "high")
+    val modelOptions = listOf(
+        "claude-haiku-4-5-20251001" to "Haiku 4.5",
+        "claude-sonnet-4-6" to "Sonnet 4.6",
+        "claude-opus-4-6" to "Opus 4.6"
+    )
 
     val textFieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = LumiPurple500,
@@ -507,11 +518,160 @@ private fun CreateProjectDialog(
                         }
                     )
                 }
+
+                // PM Role
+                OutlinedTextField(
+                    value = pmRole,
+                    onValueChange = { pmRole = it },
+                    label = { Text("PM Role (optional)") },
+                    placeholder = { Text("e.g. Research Director (defaults to PM)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = textFieldColors
+                )
+
+                // PM Effort + PM Model
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "PM Effort",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        var pmEffortExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedTextField(
+                                value = pmEffort.replaceFirstChar { it.uppercase() },
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = textFieldColors
+                            )
+                            Box(modifier = Modifier.matchParentSize().clickable { pmEffortExpanded = true })
+                            DropdownMenu(
+                                expanded = pmEffortExpanded,
+                                onDismissRequest = { pmEffortExpanded = false }
+                            ) {
+                                effortOptions.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option.replaceFirstChar { it.uppercase() }, color = LumiOnSurface) },
+                                        onClick = { pmEffort = option; pmEffortExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "PM Model",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        var pmModelExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedTextField(
+                                value = modelOptions.find { it.first == pmModel }?.second ?: pmModel,
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = textFieldColors
+                            )
+                            Box(modifier = Modifier.matchParentSize().clickable { pmModelExpanded = true })
+                            DropdownMenu(
+                                expanded = pmModelExpanded,
+                                onDismissRequest = { pmModelExpanded = false }
+                            ) {
+                                modelOptions.forEach { (value, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label, color = LumiOnSurface) },
+                                        onClick = { pmModel = value; pmModelExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Agent Effort + Agent Model
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Agent Effort",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        var agentEffortExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedTextField(
+                                value = agentEffort.replaceFirstChar { it.uppercase() },
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = textFieldColors
+                            )
+                            Box(modifier = Modifier.matchParentSize().clickable { agentEffortExpanded = true })
+                            DropdownMenu(
+                                expanded = agentEffortExpanded,
+                                onDismissRequest = { agentEffortExpanded = false }
+                            ) {
+                                effortOptions.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option.replaceFirstChar { it.uppercase() }, color = LumiOnSurface) },
+                                        onClick = { agentEffort = option; agentEffortExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Agent Model",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        var agentModelExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedTextField(
+                                value = modelOptions.find { it.first == agentModel }?.second ?: agentModel,
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = textFieldColors
+                            )
+                            Box(modifier = Modifier.matchParentSize().clickable { agentModelExpanded = true })
+                            DropdownMenu(
+                                expanded = agentModelExpanded,
+                                onDismissRequest = { agentModelExpanded = false }
+                            ) {
+                                modelOptions.forEach { (value, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label, color = LumiOnSurface) },
+                                        onClick = { agentModel = value; agentModelExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onCreate(name, task, folderPath) },
+                onClick = { onCreate(name, task, folderPath, pmRole.ifBlank { null }, pmEffort, pmModel, agentEffort, agentModel) },
                 enabled = name.isNotBlank() && task.isNotBlank() && folderPath.isNotBlank()
             ) {
                 Text("Create & Start", color = LumiPurple500)

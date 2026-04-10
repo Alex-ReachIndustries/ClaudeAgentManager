@@ -76,9 +76,12 @@ class AgentRepository {
         id: String,
         title: String? = null,
         status: String? = null,
-        pollDelayUntil: String? = null
+        pollDelayUntil: String? = null,
+        role: String? = null,
+        effort: String? = null,
+        model: String? = null
     ): Result<Agent> = apiCall {
-        api.updateAgent(id, UpdateAgentBody(title, status, pollDelayUntil))
+        api.updateAgent(id, UpdateAgentBody(title, status, pollDelayUntil, role, effort, model))
     }
 
     /**
@@ -247,7 +250,9 @@ class AgentRepository {
         resumeAgentId: String? = null,
         targetPid: Int? = null,
         role: String? = null,
-        task: String? = null
+        task: String? = null,
+        effort: String? = null,
+        model: String? = null
     ): Result<LaunchRequest> {
         return apiCall {
             api.createLaunchRequest(
@@ -257,7 +262,9 @@ class AgentRepository {
                     resumeAgentId = resumeAgentId,
                     targetPid = targetPid,
                     role = role,
-                    task = task
+                    task = task,
+                    effort = effort,
+                    model = model
                 )
             )
         }.map { it.request }
@@ -352,9 +359,14 @@ class AgentRepository {
         name: String,
         description: String,
         folderPath: String,
-        maxConcurrent: Int = 4
+        maxConcurrent: Int = 4,
+        pmRole: String? = null,
+        pmEffort: String? = null,
+        pmModel: String? = null,
+        agentEffort: String? = null,
+        agentModel: String? = null
     ): Result<Project> = apiCall {
-        api.createProject(CreateProjectBody(name, description, folderPath, maxConcurrent))
+        api.createProject(CreateProjectBody(name, description, folderPath, maxConcurrent, pmRole, pmEffort, pmModel, agentEffort, agentModel))
     }
 
     /**

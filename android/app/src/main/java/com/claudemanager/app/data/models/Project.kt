@@ -110,7 +110,22 @@ data class CreateProjectBody(
     val folderPath: String,
 
     @SerializedName("max_concurrent")
-    val maxConcurrent: Int = 4
+    val maxConcurrent: Int = 4,
+
+    @SerializedName("pm_role")
+    val pmRole: String? = null,
+
+    @SerializedName("pm_effort")
+    val pmEffort: String? = null,
+
+    @SerializedName("pm_model")
+    val pmModel: String? = null,
+
+    @SerializedName("agent_effort")
+    val agentEffort: String? = null,
+
+    @SerializedName("agent_model")
+    val agentModel: String? = null
 )
 
 /**
