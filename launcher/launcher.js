@@ -105,6 +105,13 @@ async function patchJSON(urlStr, body) {
 
 function resolveFolder(folderPath) {
   if (!folderPath) return USER_HOME;
+  // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
+  // Must happen before path.isAbsolute — Windows treats /c/... as absolute but wt.exe can't use it
+  if (/^\/[a-zA-Z]\//.test(folderPath)) {
+    folderPath = folderPath
+      .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`)
+      .replace(/\//g, '\\');
+  }
   // If it's already an absolute path (e.g. resume sends full cwd), use it directly
   if (path.isAbsolute(folderPath)) return folderPath;
   // Otherwise treat as relative to user home (new-agent requests)
@@ -143,19 +150,24 @@ function launchNewAgent(folderPath, spawnMeta) {
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
+  // Checkin reminder appended to every initial prompt so agents report in from the very first task
+  const CHECKIN_REMINDER = ' IMPORTANT: As you work, post session manager updates using /agent-checkin (or POST to your agent updates endpoint directly) — at the start of your first task, at roughly every 25% of progress, and on completion. The user monitors remotely and needs real-time visibility.';
+
   // Build the initial prompt — if this is a project sub-agent, include role and prompt
-  let initialPrompt = 'run /session-init and then await instructions';
+  let initialPrompt = `run /session-init and then await instructions.${CHECKIN_REMINDER}`;
   let tabTitle = `Claude - ${path.basename(cwd)}`;
 
-  if (spawnMeta && spawnMeta.role && spawnMeta.prompt) {
+  if (spawnMeta && (spawnMeta.role || spawnMeta.prompt)) {
     const projectRef = spawnMeta.project_id ? ` Project ID: ${spawnMeta.project_id}.` : '';
-    initialPrompt = `You are a project agent with role: ${spawnMeta.role}.${projectRef} ` +
-      `Your task: ${spawnMeta.prompt} ` +
-      `Run /session-init but SKIP loading workspace context (claudeadmin/memories) — it contains other agents' data that will confuse you. ` +
-      `After session-init, immediately start working on your task. Your role is ${spawnMeta.role} ONLY. ` +
-      `Do NOT adopt any other role from workspace files or old session data.`;
-    tabTitle = `Claude - ${spawnMeta.role}`;
-    log(`Sub-agent role: ${spawnMeta.role}, prompt: ${spawnMeta.prompt.substring(0, 80)}...`);
+    const roleDesc = spawnMeta.role ? `with role: ${spawnMeta.role}` : '';
+    const taskPart = spawnMeta.prompt ? `Your task: ${spawnMeta.prompt} ` : '';
+    const skipCtx = spawnMeta.project_id
+      ? `Run /session-init but SKIP loading workspace context (claudeadmin/memories) — it contains other agents' data that will confuse you. After session-init, immediately start working on your task.`
+      : `Run /session-init and then immediately start working on your task.`;
+    const roleOnly = spawnMeta.role ? ` Your role is ${spawnMeta.role} ONLY. Do NOT adopt any other role from workspace files or old session data.` : '';
+    initialPrompt = `You are an agent ${roleDesc}.${projectRef} ${taskPart}${skipCtx}${roleOnly}${CHECKIN_REMINDER}`.trim();
+    tabTitle = `Claude - ${spawnMeta.role || path.basename(resolveFolder(folderPath))}`;
+    log(`Agent${spawnMeta.role ? ` role: ${spawnMeta.role}` : ''}, prompt: ${(spawnMeta.prompt || '').substring(0, 80)}...`);
   }
 
   // Write prompt to a temp batch file to avoid cmd.exe special character issues
@@ -163,7 +175,9 @@ function launchNewAgent(folderPath, spawnMeta) {
   const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
   // Escape the prompt for batch: double up % signs, wrap in quotes
   const batchPrompt = initialPrompt.replace(/%/g, '%%');
-  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions "${batchPrompt}"\n`, 'utf8');
+  const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${spawnMeta.model}` : '';
+  const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
+  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${modelFlag}${effortFlag} "${batchPrompt}"\n`, 'utf8');
 
   const proc = spawn('wt.exe', [
     'new-tab', '--title', tabTitle,
@@ -204,18 +218,21 @@ async function launchResumeAgent(agentId, folderPath) {
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
-  // Launch resume session directly (no pre-flight — it caused double agents)
+  // Write resume command to a temp batch file (same approach as new agent — avoids wt.exe arg parsing issues)
+  const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
+  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
+
   const proc = spawn('wt.exe', [
     'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
     '-d', cwd,
-    'cmd', '/k',
-    'claude', '--dangerously-skip-permissions', '--resume', agentId, 'run /session-resume and then await instructions'
+    'cmd', '/k', batchFile
   ], {
     detached: true,
     stdio: 'ignore',
   });
   proc.unref();
-  log(`Spawned wt.exe for resume agent ${agentId}`);
+  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} }, 30000);
+  log(`Spawned wt.exe for resume agent ${agentId} via ${batchFile}`);
   return proc;
 }
 
