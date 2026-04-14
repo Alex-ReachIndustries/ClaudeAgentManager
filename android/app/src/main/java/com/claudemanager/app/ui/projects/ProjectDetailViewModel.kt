@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /**
@@ -71,9 +72,13 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
 
     private fun silentRefresh() {
         viewModelScope.launch {
-            repository.getProject(projectId).onSuccess { project ->
+            val projectD = async { repository.getProject(projectId) }
+            val agentsD  = async { repository.getProjectAgents(projectId) }
+            val updatesD = async { repository.getProjectUpdates(projectId) }
+            val filesD   = async { repository.getProjectFiles(projectId) }
+
+            projectD.await().onSuccess { project ->
                 _uiState.update { st ->
-                    // Auto-select PM agent if nothing selected yet
                     val sel = if (st.selectedAgentId == null && project.pmAgentId != null) {
                         project.pmAgentId
                     } else {
@@ -81,24 +86,18 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
                     }
                     st.copy(project = project, selectedAgentId = sel)
                 }
-                // If PM was auto-selected, load its messages
                 val currentSel = _uiState.value.selectedAgentId
                 if (currentSel != null && _uiState.value.agentMessages.isEmpty()) {
                     loadAgentMessages(currentSel)
                 }
             }
-            repository.getProjectAgents(projectId).onSuccess { agents ->
-                _uiState.update { it.copy(agents = agents) }
-            }
-            repository.getProjectUpdates(projectId).onSuccess { updates ->
-                _uiState.update { it.copy(updates = updates) }
-            }
-            repository.getProjectFiles(projectId).onSuccess { files ->
-                _uiState.update { it.copy(files = files) }
-            }
-            // Refresh messages for selected agent
+            agentsD.await().onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
+            updatesD.await().onSuccess { updates -> _uiState.update { it.copy(updates = updates) } }
+            filesD.await().onSuccess { files -> _uiState.update { it.copy(files = files) } }
+
+            // Refresh messages for selected agent (deduplicated — only if not already triggered above)
             _uiState.value.selectedAgentId?.let { agentId ->
-                loadAgentMessages(agentId)
+                if (_uiState.value.agentMessages.isNotEmpty()) loadAgentMessages(agentId)
             }
         }
     }
@@ -109,30 +108,22 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     private fun loadAll() {
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            repository.getProject(projectId)
-                .onSuccess { project ->
-                    _uiState.update { it.copy(project = project, isLoading = false, error = null) }
-                }
-                .onFailure { e ->
-                    _uiState.update {
-                        it.copy(isLoading = false, error = e.message ?: "Failed to load project")
-                    }
-                }
+            val projectD = async { repository.getProject(projectId) }
+            val agentsD  = async { repository.getProjectAgents(projectId) }
+            val updatesD = async { repository.getProjectUpdates(projectId) }
+            val filesD   = async { repository.getProjectFiles(projectId) }
 
-            repository.getProjectAgents(projectId)
-                .onSuccess { agents ->
-                    _uiState.update { it.copy(agents = agents) }
-                }
+            projectD.await()
+                .onSuccess { project -> _uiState.update { it.copy(project = project, error = null) } }
+                .onFailure { e -> _uiState.update { it.copy(error = e.message ?: "Failed to load project") } }
+            agentsD.await()
+                .onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
+            updatesD.await()
+                .onSuccess { updates -> _uiState.update { it.copy(updates = updates) } }
+            filesD.await()
+                .onSuccess { files -> _uiState.update { it.copy(files = files) } }
 
-            repository.getProjectUpdates(projectId)
-                .onSuccess { updates ->
-                    _uiState.update { it.copy(updates = updates) }
-                }
-
-            repository.getProjectFiles(projectId)
-                .onSuccess { files ->
-                    _uiState.update { it.copy(files = files) }
-                }
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
 

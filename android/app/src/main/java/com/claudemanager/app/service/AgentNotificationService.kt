@@ -152,6 +152,8 @@ class AgentNotificationService : Service() {
                 ApiClient.setApiKey(apiKey)
             }
 
+            Log.i(TAG, "SSE connecting to: $serverUrl (apiKey=${if (apiKey.isNotBlank()) "set (${apiKey.length} chars)" else "NOT SET"})")
+
             // Use SSE directly — MQTT-over-WS is unreliable from mobile via Tailscale
             startSSEFallback()
         }
@@ -194,17 +196,27 @@ class AgentNotificationService : Service() {
         when (event) {
             is SSEEvent.AgentUpdated -> {
                 val agent = event.agent
+                Log.d(TAG, "AgentUpdated: id=${agent.id}, title=${agent.title}, status=${agent.status}, summary=${agent.latestSummary?.take(60)}")
 
                 // Skip archived agents
-                if (agent.status == AgentStatus.ARCHIVED) return
+                if (agent.status == AgentStatus.ARCHIVED) {
+                    Log.d(TAG, "Skipping notification: agent archived")
+                    return
+                }
 
                 // Skip if no meaningful summary to show
                 val summary = agent.latestSummary
-                if (summary.isNullOrBlank()) return
+                if (summary.isNullOrBlank()) {
+                    Log.d(TAG, "Skipping notification: latestSummary is blank")
+                    return
+                }
 
                 // Suppress notifications when the app is in the foreground
                 val app = application as? ClaudeManagerApp
-                if (app?.isAppInForeground == true) return
+                if (app?.isAppInForeground == true) {
+                    Log.d(TAG, "Skipping notification: app in foreground")
+                    return
+                }
 
                 // Check quiet hours -- suppress notification if within quiet window
                 serviceScope.launch {
@@ -225,6 +237,7 @@ class AgentNotificationService : Service() {
                         }
                     }
 
+                    Log.d(TAG, "Showing notification for ${agent.title}: $summary")
                     NotificationHelper.showAgentNotification(
                         this@AgentNotificationService,
                         agent,

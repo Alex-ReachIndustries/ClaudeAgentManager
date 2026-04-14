@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /**
@@ -114,32 +115,20 @@ class AgentDetailViewModel(
     private fun loadAll() {
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            // Load agent details
-            repository.getAgent(agentId)
-                .onSuccess { agent ->
-                    _uiState.update { it.copy(agent = agent) }
-                }
-                .onFailure { e ->
-                    _uiState.update { it.copy(error = e.message ?: "Failed to load agent") }
-                }
+            val agentD   = async { repository.getAgent(agentId) }
+            val updatesD = async { repository.getUpdates(agentId) }
+            val messagesD = async { repository.getMessages(agentId) }
+            val filesD   = async { repository.getFiles(agentId) }
 
-            // Load updates
-            repository.getUpdates(agentId)
-                .onSuccess { updates ->
-                    _uiState.update { it.copy(updates = updates) }
-                }
-
-            // Load messages
-            repository.getMessages(agentId)
-                .onSuccess { messages ->
-                    _uiState.update { it.copy(messages = messages) }
-                }
-
-            // Load files
-            repository.getFiles(agentId)
-                .onSuccess { files ->
-                    _uiState.update { it.copy(files = files) }
-                }
+            agentD.await()
+                .onSuccess { agent -> _uiState.update { it.copy(agent = agent) } }
+                .onFailure { e -> _uiState.update { it.copy(error = e.message ?: "Failed to load agent") } }
+            updatesD.await()
+                .onSuccess { updates -> _uiState.update { it.copy(updates = updates) } }
+            messagesD.await()
+                .onSuccess { messages -> _uiState.update { it.copy(messages = messages) } }
+            filesD.await()
+                .onSuccess { files -> _uiState.update { it.copy(files = files) } }
 
             _uiState.update { it.copy(isLoading = false) }
         }
@@ -166,10 +155,14 @@ class AgentDetailViewModel(
     fun refreshAll() {
         _uiState.update { it.copy(isRefreshing = true) }
         viewModelScope.launch {
-            refreshAgent()
-            refreshUpdates()
-            refreshMessages()
-            refreshFiles()
+            val a = async { repository.getAgent(agentId) }
+            val u = async { repository.getUpdates(agentId) }
+            val m = async { repository.getMessages(agentId) }
+            val f = async { repository.getFiles(agentId) }
+            a.await().onSuccess { agent -> _uiState.update { it.copy(agent = agent) } }
+            u.await().onSuccess { updates -> _uiState.update { it.copy(updates = updates) } }
+            m.await().onSuccess { messages -> _uiState.update { it.copy(messages = messages) } }
+            f.await().onSuccess { files -> _uiState.update { it.copy(files = files) } }
             _uiState.update { it.copy(isRefreshing = false) }
         }
     }

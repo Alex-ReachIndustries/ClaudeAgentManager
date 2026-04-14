@@ -120,7 +120,7 @@ class AppPreferences(private val context: Context) {
      * When enabled, notifications are suppressed between [quietHoursStartFlow] and [quietHoursEndFlow].
      */
     val quietHoursEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_QUIET_HOURS_ENABLED] ?: true
+        prefs[KEY_QUIET_HOURS_ENABLED] ?: false
     }
 
     /**
