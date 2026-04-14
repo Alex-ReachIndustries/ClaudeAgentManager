@@ -442,8 +442,11 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                       addMessage(id, meta.pm_prompt);
                       logger.info({ agentId: id }, "Sent PM system prompt");
                     }
-                    // user_prompt is not sent separately — pm_prompt already embeds the project
-                    // description. user_prompt is only used on RESUME (handled in projects.ts).
+                  } else if (meta.prompt) {
+                    // Deliver task as a message — same clean flow as standalone agents.
+                    // Agent starts with /session-init, registers, then receives task.
+                    addMessage(id, meta.prompt as string);
+                    logger.info({ agentId: id, projectId: meta.project_id }, "Sent sub-agent task as message");
                   }
                 } else {
                   // Standalone agent (not part of a project) — store role/task in DB

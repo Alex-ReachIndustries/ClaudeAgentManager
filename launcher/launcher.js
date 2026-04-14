@@ -153,20 +153,14 @@ function launchNewAgent(folderPath, spawnMeta) {
   // Checkin reminder appended to every initial prompt so agents report in from the very first task
   const CHECKIN_REMINDER = ' IMPORTANT: As you work, post session manager updates using /agent-checkin (or POST to your agent updates endpoint directly) — at the start of your first task, at roughly every 25% of progress, and on completion. The user monitors remotely and needs real-time visibility.';
 
-  // Build the initial prompt — if this is a project sub-agent, include role and prompt
+  // All agents start with a clean session-init — task is delivered as a message
+  // after registration so it doesn't compete with workspace context loading.
   let initialPrompt = `run /session-init and then await instructions.${CHECKIN_REMINDER}`;
-  let tabTitle = `Claude - ${path.basename(cwd)}`;
+  let tabTitle = (spawnMeta && spawnMeta.role)
+    ? `Claude - ${spawnMeta.role}`
+    : `Claude - ${path.basename(cwd)}`;
 
   if (spawnMeta && (spawnMeta.role || spawnMeta.prompt)) {
-    const projectRef = spawnMeta.project_id ? ` Project ID: ${spawnMeta.project_id}.` : '';
-    const roleDesc = spawnMeta.role ? `with role: ${spawnMeta.role}` : '';
-    const taskPart = spawnMeta.prompt ? `Your task: ${spawnMeta.prompt} ` : '';
-    const skipCtx = spawnMeta.project_id
-      ? `Run /session-init but SKIP loading workspace context (claudeadmin/memories) — it contains other agents' data that will confuse you. After session-init, immediately start working on your task.`
-      : `Run /session-init and then immediately start working on your task.`;
-    const roleOnly = spawnMeta.role ? ` Your role is ${spawnMeta.role} ONLY. Do NOT adopt any other role from workspace files or old session data.` : '';
-    initialPrompt = `You are an agent ${roleDesc}.${projectRef} ${taskPart}${skipCtx}${roleOnly}${CHECKIN_REMINDER}`.trim();
-    tabTitle = `Claude - ${spawnMeta.role || path.basename(resolveFolder(folderPath))}`;
     log(`Agent${spawnMeta.role ? ` role: ${spawnMeta.role}` : ''}, prompt: ${(spawnMeta.prompt || '').substring(0, 80)}...`);
   }
 
