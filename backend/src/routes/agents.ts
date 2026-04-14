@@ -531,7 +531,27 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
         }
       }
     }
-    addUpdate(id, type, contentStr, summary);
+    // Suppress redundant status updates: if a richer update (text/progress/error) was
+    // posted within the last 60 seconds, a status update adds no visible value in the
+    // chat — skip the record but still update the agent's status field (done above).
+    let skipUpdateRecord = false;
+    if (type === "status") {
+      const db = getDb();
+      const recentRich = db.prepare(
+        `SELECT id FROM updates
+         WHERE agent_id = ? AND type IN ('text', 'progress', 'error')
+           AND timestamp > datetime('now', '-60 seconds')
+         LIMIT 1`
+      ).get(id) as Record<string, unknown> | undefined;
+      if (recentRich) {
+        skipUpdateRecord = true;
+        logger.debug({ agentId: id }, "Status update suppressed (rich update within 60s)");
+      }
+    }
+
+    if (!skipUpdateRecord) {
+      addUpdate(id, type, contentStr, summary);
+    }
 
     // Auto-acknowledge delivered messages (agent posting = it has seen them)
     acknowledgeMessages(id);
