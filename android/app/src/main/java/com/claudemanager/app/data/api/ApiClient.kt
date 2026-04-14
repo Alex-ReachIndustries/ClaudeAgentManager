@@ -88,6 +88,7 @@ object ApiClient {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .pingInterval(15, TimeUnit.SECONDS)  // detect dead connections quickly after backend restart
             .retryOnConnectionFailure(true)
             .build()
     }
@@ -114,6 +115,7 @@ object ApiClient {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .pingInterval(15, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
     }
