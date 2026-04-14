@@ -4,8 +4,13 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - agent-data:/app/data
+      - C:/ClaudeManager/agent-data:/app/data
       - ${HOST_HOME_PATH}:/host-home:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       - PORT=3001
       - DB_PATH=/app/data/agents.db
@@ -34,6 +39,11 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
     restart: unless-stopped
 
   mqtt:
@@ -43,6 +53,11 @@ services:
       - "9001:9001"
     volumes:
       - mqtt-data:/mosquitto/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
     environment:
       - MQTT_BACKEND_PASSWORD=${MQTT_BACKEND_PASSWORD:-claudemanager}
       - MQTT_AGENT_PASSWORD=${MQTT_AGENT_PASSWORD:-agentsidecar}
@@ -57,5 +72,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  agent-data:
   mqtt-data:

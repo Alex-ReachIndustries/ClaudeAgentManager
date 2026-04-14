@@ -19,6 +19,14 @@ export function getDb(): Database.Database {
   // Enable WAL mode for better concurrent read performance
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  // NORMAL is safe with WAL and avoids an fsync on every single write.
+  // Full durability is preserved — worst case on power loss is losing the
+  // last transaction, not corruption.
+  db.pragma("synchronous = NORMAL");
+  // Keep 10MB of WAL in memory before checkpointing to batch disk writes.
+  db.pragma("wal_autocheckpoint = 1000");
+  // 8MB page cache reduces read I/O on repeated queries.
+  db.pragma("cache_size = -8000");
 
   // Create tables
   db.exec(`
@@ -150,52 +158,64 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_launch_requests_status ON launch_requests(status);
   `);
 
+  // Helper: run a migration, silencing "duplicate column/index" but logging other failures
+  const migrate = (sql: string) => {
+    try {
+      db!.exec(sql);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name") && !msg.includes("already exists")) {
+        logger.warn({ sql, err: msg }, "Migration failed unexpectedly");
+      }
+    }
+  };
+
   // Migrations — add columns safely
-  try { db.exec("ALTER TABLE agents ADD COLUMN poll_delay_until TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN workspace TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN last_read_at TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'user'"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE files ADD COLUMN description TEXT NOT NULL DEFAULT ''"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN last_activity_at TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN cwd TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN pid INTEGER"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE launch_requests ADD COLUMN target_pid INTEGER"); } catch { /* exists */ }
+  migrate("ALTER TABLE agents ADD COLUMN poll_delay_until TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN workspace TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN last_read_at TEXT");
+  migrate("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'user'");
+  migrate("ALTER TABLE files ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+  migrate("ALTER TABLE agents ADD COLUMN last_activity_at TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN cwd TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN pid INTEGER");
+  migrate("ALTER TABLE launch_requests ADD COLUMN target_pid INTEGER");
   // Backfill last_activity_at from last_update_at where null
-  try { db.exec("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL"); } catch { /* ignore */ }
+  migrate("UPDATE agents SET last_activity_at = last_update_at WHERE last_activity_at IS NULL");
 
   // Project workflow columns on agents
-  try { db.exec("ALTER TABLE agents ADD COLUMN project_id TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN role TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN parent_agent_id TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN task TEXT"); } catch { /* exists */ }
+  migrate("ALTER TABLE agents ADD COLUMN project_id TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN role TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN parent_agent_id TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN task TEXT");
 
   // Feature 17: Agent-to-agent messaging source columns
-  try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE messages ADD COLUMN source_agent_id TEXT"); } catch { /* exists */ }
+  migrate("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'");
+  migrate("ALTER TABLE messages ADD COLUMN source_agent_id TEXT");
 
   // Feature 5: Computed field caching columns
-  try { db.exec("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN unread_update_count INTEGER DEFAULT 0"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN latest_summary TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN latest_message TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN last_message_at TEXT"); } catch { /* exists */ }
+  migrate("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0");
+  migrate("ALTER TABLE agents ADD COLUMN unread_update_count INTEGER DEFAULT 0");
+  migrate("ALTER TABLE agents ADD COLUMN latest_summary TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN latest_message TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN last_message_at TEXT");
 
   // Feature 6: External file storage column
-  try { db.exec("ALTER TABLE files ADD COLUMN file_path TEXT"); } catch { /* exists */ }
+  migrate("ALTER TABLE files ADD COLUMN file_path TEXT");
 
   // Task queue enhancement: priority on messages (higher = more urgent, default 0)
-  try { db.exec("ALTER TABLE messages ADD COLUMN priority INTEGER DEFAULT 0"); } catch { /* exists */ }
+  migrate("ALTER TABLE messages ADD COLUMN priority INTEGER DEFAULT 0");
 
   // Effort and model settings on agents
-  try { db.exec("ALTER TABLE agents ADD COLUMN effort TEXT DEFAULT 'high'"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE agents ADD COLUMN model TEXT DEFAULT 'claude-sonnet-4-6'"); } catch { /* exists */ }
+  migrate("ALTER TABLE agents ADD COLUMN effort TEXT DEFAULT 'high'");
+  migrate("ALTER TABLE agents ADD COLUMN model TEXT DEFAULT 'claude-sonnet-4-6'");
 
   // PM/agent effort and model settings on projects
-  try { db.exec("ALTER TABLE projects ADD COLUMN pm_role TEXT"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE projects ADD COLUMN pm_effort TEXT DEFAULT 'high'"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE projects ADD COLUMN pm_model TEXT DEFAULT 'claude-sonnet-4-6'"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE projects ADD COLUMN agent_effort TEXT DEFAULT 'high'"); } catch { /* exists */ }
-  try { db.exec("ALTER TABLE projects ADD COLUMN agent_model TEXT DEFAULT 'claude-sonnet-4-6'"); } catch { /* exists */ }
+  migrate("ALTER TABLE projects ADD COLUMN pm_role TEXT");
+  migrate("ALTER TABLE projects ADD COLUMN pm_effort TEXT DEFAULT 'high'");
+  migrate("ALTER TABLE projects ADD COLUMN pm_model TEXT DEFAULT 'claude-sonnet-4-6'");
+  migrate("ALTER TABLE projects ADD COLUMN agent_effort TEXT DEFAULT 'high'");
+  migrate("ALTER TABLE projects ADD COLUMN agent_model TEXT DEFAULT 'claude-sonnet-4-6'");
 
   // Feature 5: Triggers for computed field caching
   try {
@@ -692,12 +712,19 @@ export function getMessages(agentId: string, limit: number = 100, before?: numbe
   }
 }
 
+// In-memory gate: skip the DB write if we already wrote a heartbeat for this
+// agent within the last 30 seconds. Polling agents hit this every 5-15s;
+// without the gate every poll is an unnecessary SQLite write.
+const _lastHeartbeat = new Map<string, number>();
+const HEARTBEAT_THROTTLE_MS = 30_000;
+
 export function touchAgentHeartbeat(agentId: string) {
+  const now = Date.now();
+  const last = _lastHeartbeat.get(agentId) ?? 0;
+  if (now - last < HEARTBEAT_THROTTLE_MS) return;
+  _lastHeartbeat.set(agentId, now);
   const db = getDb();
-  const stmt = db.prepare(`
-    UPDATE agents SET last_update_at = datetime('now') WHERE id = ?
-  `);
-  return stmt.run(agentId);
+  db.prepare(`UPDATE agents SET last_update_at = datetime('now') WHERE id = ?`).run(agentId);
 }
 
 export function archiveInactiveAgents(inactiveMinutes: number = 30): string[] {

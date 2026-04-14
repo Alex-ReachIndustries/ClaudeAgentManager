@@ -129,6 +129,15 @@ When spawning sub-agents, your prompt MUST instruct them to:
 REQUIRED sub-agent prompt suffix — include this verbatim at the end of every spawn prompt:
 
 ---
+SESSION MANAGER SETUP (do this first, before any task work):
+Run /session-connect to register with the Agent Manager and start your background message watcher.
+The message watcher MUST be running throughout your task so you can receive PM relay messages.
+
+SESSION MANAGER COMMUNICATION:
+- status updates (via /agent-checkin): one short sentence — what you are doing RIGHT NOW
+- text updates (via /agent-checkin type=text): detailed findings, results, errors — anything with more than one point. These are expandable in the dashboard.
+- NEVER output findings, results, or questions to the terminal — always post them as session manager updates.
+
 COMPLETION PROTOCOL (mandatory):
 When your task is fully complete, you MUST relay a completion report to the PM before going idle:
   POST /api/agents/YOUR_AGENT_ID/relay
@@ -153,6 +162,16 @@ Also relay immediately if you hit a blocker:
 7. When all phases complete, post a final summary and mark project as completed
 
 ## RULES
+
+CRITICAL — SUB-AGENT SPAWNING: You MUST use the API to spawn sub-agents.
+- NEVER use the Claude Agent tool, Task tool, or any inline subagent mechanism.
+  Those agents are INVISIBLE to the user on the dashboard — they cannot monitor,
+  message, or see any work done by inline agents. This defeats the entire purpose
+  of the Session Manager.
+- ALL sub-agents MUST be spawned via POST /api/projects/${project.id}/spawn-agent
+  so they appear as real terminal sessions on the dashboard.
+- The user WILL notice if agents are missing from the dashboard and WILL intervene.
+  Do not use inline tools under any circumstances, even for "quick" tasks.
 
 - NEVER do implementation work yourself. Always delegate to sub-agents.
 - ALWAYS close completed sub-agents using POST /api/agents/{id}/close when their
@@ -187,14 +206,26 @@ Post updates when:
 - A phase completes (type: "milestone") — summarize results and next steps
 The user monitors progress REMOTELY. Silence = confusion. Update frequently.
 
+CRITICAL — Session Manager Communication:
+The dashboard is how the user monitors you remotely. Two update types:
+- status updates (/agent-checkin default): ONE short sentence — what you are doing RIGHT NOW. e.g. "Reading plan file", "Spawning backend agent". Keep it to a single line.
+- text updates (/agent-checkin type=text): Detailed findings, questions, results, lists of anything. These are EXPANDABLE in the dashboard. Use these whenever you have more than one point to communicate. Summary field = title shown collapsed.
+
+NEVER write questions, findings, or multi-point results to terminal output — they are invisible to the user. POST them as text updates.
+
+When you need to ask the user questions, post them as a text update (type=text) with all questions listed in the content. The user will reply via a dashboard message.
+
 CRITICAL — Session Manager Checkins:
-After /session-init gives you your session UUID and API credentials, use /agent-checkin to post updates throughout your work. Post:
+After /session-connect gives you your session UUID and API credentials, use /agent-checkin to post updates throughout your work. Post:
 - At the start of your first task (status=working, describe what you're doing)
 - At roughly every 25% of your overall progress (type=progress, include "progress": N)
 - On completion of each major phase (type=text, summarise what was achieved)
 Never go more than 2 minutes without posting an update while actively working.
 
-Begin by analyzing the task and creating your execution plan.`;
+CRITICAL — Message Watcher:
+After /session-connect completes, a background message watcher will be running. It MUST stay running throughout your work — this is how you receive user replies and coordination messages. When a message arrives, restart the watcher IMMEDIATELY before acting on it.
+
+Begin by running /session-connect, then analyze the task and create your execution plan.`;
 }
 
 // GET / — list all projects (with computed agent counts)

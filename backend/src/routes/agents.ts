@@ -403,17 +403,17 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     if (!existing) {
       createAgent(id, title || "Untitled Agent");
 
-      // Check for a VERY recent unclaimed launch request with project metadata.
-      // Only match requests created in the last 60 seconds that haven't been
-      // consumed yet. This prevents new plain agents from inheriting old PM roles.
+      // Check for a VERY recent launch request with project metadata.
+      // Match both 'claimed' (launcher spawning) and 'completed' (launcher done) to avoid
+      // race conditions where the agent registers before the launcher reports back.
       try {
         const db = getDb();
         const recentReqs = db.prepare(
           `SELECT * FROM launch_requests
-           WHERE status = 'completed'
+           WHERE status IN ('claimed', 'completed')
              AND agent_id LIKE '{%'
-             AND completed_at > datetime('now', '-600 seconds')
-           ORDER BY completed_at DESC LIMIT 3`
+             AND created_at > datetime('now', '-600 seconds')
+           ORDER BY created_at DESC LIMIT 3`
         ).all() as Record<string, unknown>[];
 
         for (const launchReq of recentReqs) {
@@ -840,8 +840,8 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       // Also re-surfaces any delivered-but-unacknowledged messages from previous poll cycles
       const rawMessages = getPendingMessages(id);
 
-      // Append checkin protocol reminder to every message so agents never forget the rules.
-      // This is injected at delivery time only — the DB record stays clean for the dashboard.
+      // Append checkin protocol + compact role reminder to every message.
+      // Injected at delivery time only — DB record stays clean for the dashboard.
       const CHECKIN_REMINDER = `
 
 ---
@@ -854,9 +854,23 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 Silence = the user cannot see what you are doing.
 ---`;
 
+      // Build a compact role reminder so agents never lose context of who they are.
+      const agentRole = agent.role as string | null;
+      const agentProjectId = agent.project_id as string | null;
+      let ROLE_REMINDER = "";
+      if (agentRole === "PM") {
+        ROLE_REMINDER = `
+
+[SYSTEM ROLE REMINDER] You are the PM — a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT. Before doing anything else: (1) check on your existing sub-agents via GET /api/agents/{id}/updates, (2) post a PM status update with what the project state is, (3) only then decide next actions. NEVER start implementing.`;
+      } else if (agentRole) {
+        ROLE_REMINDER = `
+
+[SYSTEM ROLE REMINDER] Your role is: ${agentRole}. Stay focused on your assigned task. Post status updates after every meaningful action. When done, relay completion to the PM via POST /api/agents/YOUR_ID/relay with target_agent_id set to the PM's agent ID${agentProjectId ? ` (find it via GET /api/projects/${agentProjectId})` : ""}. Do NOT go silent.`;
+      }
+
       const messages = (rawMessages as Record<string, unknown>[]).map(m => ({
         ...m,
-        content: typeof m.content === "string" ? m.content + CHECKIN_REMINDER : m.content,
+        content: typeof m.content === "string" ? m.content + CHECKIN_REMINDER + ROLE_REMINDER : m.content,
       }));
 
       // Include poll_delay_until so the agent knows to pause if set

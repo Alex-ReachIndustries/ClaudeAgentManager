@@ -15,5 +15,7 @@ debug.log
 certs/
 android/output/
 android/app/build/
+android/.gradle/
 frontend/public/app-debug.apk
 .agent_incoming_messages.json
+null
