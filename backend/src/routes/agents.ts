@@ -1070,6 +1070,23 @@ router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) =
       return;
     }
 
+    // Deduplicate: skip if the same sender sent a very similar message to the
+    // same target within the last 60 seconds.  Sub-agents often retry their
+    // COMPLETED relay multiple times, flooding the PM's inbox.
+    const db = getDb();
+    const recentDup = db.prepare(
+      `SELECT id FROM messages
+       WHERE agent_id = ? AND source_agent_id = ?
+         AND created_at > datetime('now', '-60 seconds')
+         AND substr(content, 1, 100) = substr(?, 1, 100)
+       LIMIT 1`
+    ).get(target_agent_id, senderId, content) as Record<string, unknown> | undefined;
+    if (recentDup) {
+      logger.info({ senderId, targetId: target_agent_id }, "Duplicate relay suppressed (same content within 60s)");
+      res.json({ ok: true, deduplicated: true });
+      return;
+    }
+
     // Create message on target agent with source info
     addMessage(target_agent_id, content, "agent", senderId);
     broadcast("message-queued", { agentId: target_agent_id, content, source: "agent", sourceAgentId: senderId });
