@@ -858,17 +858,21 @@ Silence = the user cannot see what you are doing.
 ---`;
 
       // Build a compact role reminder so agents never lose context of who they are.
+      // Skip for completed agents — they're done, no need to keep telling them to relay.
       const agentRole = agent.role as string | null;
       const agentProjectId = agent.project_id as string | null;
+      const agentStatus = agent.status as string | null;
       let ROLE_REMINDER = "";
-      if (agentRole === "PM") {
+      if (agentStatus === "completed") {
+        // No role reminder for completed agents — prevents re-relay loops
+      } else if (agentRole === "PM") {
         ROLE_REMINDER = `
 
 [SYSTEM ROLE REMINDER] You are the PM — a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT. Before doing anything else: (1) check on your existing sub-agents via GET /api/agents/{id}/updates, (2) post a PM status update with what the project state is, (3) only then decide next actions. NEVER start implementing.`;
       } else if (agentRole) {
         ROLE_REMINDER = `
 
-[SYSTEM ROLE REMINDER] Your role is: ${agentRole}. Stay focused on your assigned task. Post status updates after every meaningful action. When done, relay completion to the PM via POST /api/agents/YOUR_ID/relay with target_agent_id set to the PM's agent ID${agentProjectId ? ` (find it via GET /api/projects/${agentProjectId})` : ""}. Do NOT go silent.`;
+[SYSTEM ROLE REMINDER] Your role is: ${agentRole}. Stay focused on your assigned task. Post status updates after every meaningful action. When your task is fully done, relay completion ONCE to the PM via POST /api/agents/YOUR_ID/relay with target_agent_id set to the PM's agent ID${agentProjectId ? ` (find it via GET /api/projects/${agentProjectId})` : ""}. If you have already relayed completion, do NOT relay again — just acknowledge the message.`;
       }
 
       const messages = (rawMessages as Record<string, unknown>[]).map(m => ({
@@ -1071,13 +1075,14 @@ router.post("/:id/relay", validate(relaySchema), (req: Request, res: Response) =
     }
 
     // Deduplicate: skip if the same sender sent a very similar message to the
-    // same target within the last 60 seconds.  Sub-agents often retry their
-    // COMPLETED relay multiple times, flooding the PM's inbox.
+    // same target within the last 5 minutes.  Sub-agents often retry their
+    // COMPLETED relay multiple times (especially when PM nudges trigger
+    // re-relay via the ROLE_REMINDER), flooding the PM's inbox.
     const db = getDb();
     const recentDup = db.prepare(
       `SELECT id FROM messages
        WHERE agent_id = ? AND source_agent_id = ?
-         AND created_at > datetime('now', '-60 seconds')
+         AND created_at > datetime('now', '-300 seconds')
          AND substr(content, 1, 100) = substr(?, 1, 100)
        LIMIT 1`
     ).get(target_agent_id, senderId, content) as Record<string, unknown> | undefined;
