@@ -51,7 +51,7 @@ export const agentPatchSchema = z.object({
   workspace: z.string().max(500).optional(),
   cwd: z.string().max(500).optional(),
   pid: z.number().int().positive().nullable().optional(),
-  role: z.string().max(200).optional(),
+  role: z.string().max(65_536).optional(),
   task: z.string().max(65_536).optional(),
   effort: z.enum(["low", "medium", "high"]).optional(),
   model: z.string().max(100).optional(),
@@ -64,7 +64,7 @@ export const launchRequestSchema = z.object({
   folder_path: z.string().max(500).optional(),
   resume_agent_id: z.string().max(100).optional(),
   target_pid: z.number().int().positive().optional(),
-  role: z.string().max(200).optional(),
+  role: z.string().max(65_536).optional(),
   task: z.string().max(65_536).optional(),
   effort: z.enum(["low", "medium", "high"]).optional(),
   model: z.string().max(100).optional(),
@@ -159,7 +159,7 @@ export const projectCreateSchema = z.object({
   description: z.string().max(5000).default(""),
   folder_path: z.string().max(500).default(""),
   max_concurrent: z.number().int().min(1).max(10).default(4),
-  pm_role: z.string().max(200).optional(),
+  pm_role: z.string().max(65_536).optional(),
   pm_effort: z.enum(["low", "medium", "high"]).default("high"),
   pm_model: z.string().max(100).default("claude-sonnet-4-6"),
   agent_effort: z.enum(["low", "medium", "high"]).default("high"),
@@ -183,7 +183,7 @@ export const projectUpdateSchema = z.object({
 // --- Spawn agent (POST /projects/:id/spawn-agent) ---
 
 export const spawnAgentSchema = z.object({
-  role: z.string().min(1).max(100),
+  role: z.string().min(1).max(65_536),
   prompt: z.string().min(1).max(65_536),
   folder_path: z.string().max(500).optional(),
   effort: z.enum(["low", "medium", "high"]).optional(),
