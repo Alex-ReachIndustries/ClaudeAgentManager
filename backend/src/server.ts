@@ -12,6 +12,7 @@ import webhooksRouter from "./routes/webhooks.js";
 import workflowsRouter from "./routes/workflows.js";
 import retentionRouter from "./routes/retention.js";
 import projectsRouter from "./routes/projects.js";
+import rolesRouter from "./routes/roles.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
 import { archiveInactiveAgents, getAgent, getDb, touchAgentHeartbeat, updateAgent } from "./db.js";
 import { initPush } from "./push.js";
@@ -93,6 +94,7 @@ app.use("/api/webhooks", webhooksRouter);
 app.use("/api/workflows", workflowsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/retention", retentionRouter);
+app.use("/api/roles", rolesRouter);
 
 const server = app.listen(PORT, () => {
   logger.info(`Agent Manager backend listening on port ${PORT}`);

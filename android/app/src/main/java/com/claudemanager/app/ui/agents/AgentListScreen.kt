@@ -95,6 +95,9 @@ import com.claudemanager.app.ui.theme.LumiSuccess
 import com.claudemanager.app.ui.theme.LumiWarning
 import com.claudemanager.app.ui.theme.agentStatusColor
 import com.claudemanager.app.util.TimeUtils
+import com.claudemanager.app.ui.PredefinedRole
+import com.claudemanager.app.ui.PREDEFINED_ROLES
+
 
 /**
  * Agent list screen displaying all active and archived agents.
@@ -404,7 +407,9 @@ fun AgentListScreen(
     }
 
     if (showRoleTaskDialog && selectedFolder != null) {
-        var roleText by remember { mutableStateOf("") }
+        var selectedRoleIndex by remember { mutableStateOf(-1) }  // -1 = Custom
+        var roleDropdownExpanded by remember { mutableStateOf(false) }
+        var customRoleText by remember { mutableStateOf("") }
         var taskText by remember { mutableStateOf("") }
         var effortExpanded by remember { mutableStateOf(false) }
         var modelExpanded by remember { mutableStateOf(false) }
@@ -432,18 +437,52 @@ fun AgentListScreen(
                         color = LumiOnSurfaceSecondary,
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
-                    OutlinedTextField(
-                        value = roleText,
-                        onValueChange = { roleText = it },
-                        label = { Text("Role (optional)") },
-                        placeholder = { Text("e.g. Designer, PM, Reviewer") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = LumiPurple500,
-                            cursorColor = LumiPurple500
+                    // Role dropdown
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].displayName else "Custom",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Role (optional)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                androidx.compose.material3.IconButton(onClick = { roleDropdownExpanded = true }) {
+                                    Icon(Icons.Default.ExpandMore, contentDescription = null)
+                                }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LumiPurple500)
                         )
-                    )
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = roleDropdownExpanded,
+                            onDismissRequest = { roleDropdownExpanded = false }
+                        ) {
+                            PREDEFINED_ROLES.forEachIndexed { idx, role ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(role.displayName, color = if (idx == selectedRoleIndex) LumiPurple500 else LumiOnSurface) },
+                                    onClick = { selectedRoleIndex = idx; roleDropdownExpanded = false }
+                                )
+                            }
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("Custom", color = if (selectedRoleIndex < 0) LumiPurple500 else LumiOnSurface) },
+                                onClick = { selectedRoleIndex = -1; roleDropdownExpanded = false }
+                            )
+                        }
+                    }
+                    if (selectedRoleIndex < 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = customRoleText,
+                            onValueChange = { customRoleText = it },
+                            label = { Text("Custom role") },
+                            placeholder = { Text("e.g. Designer, PM, Reviewer") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = LumiPurple500,
+                                cursorColor = LumiPurple500
+                            )
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = taskText,
@@ -518,9 +557,11 @@ fun AgentListScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        val finalRole = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].fullDefinition
+                                        else customRoleText.takeIf { it.isNotBlank() }
                         viewModel.launchNewAgent(
                             selectedFolder!!,
-                            roleText.takeIf { it.isNotBlank() },
+                            finalRole,
                             taskText.takeIf { it.isNotBlank() },
                             selectedEffort,
                             selectedModel

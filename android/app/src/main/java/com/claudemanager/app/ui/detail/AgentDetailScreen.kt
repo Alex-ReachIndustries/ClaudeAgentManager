@@ -93,6 +93,9 @@ import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
 import com.claudemanager.app.ui.theme.LumiPurple500
 import com.claudemanager.app.ui.theme.agentStatusColor
 import com.claudemanager.app.util.TimeUtils
+import com.claudemanager.app.ui.PredefinedRole
+import com.claudemanager.app.ui.PREDEFINED_ROLES
+import androidx.compose.material.icons.filled.ExpandMore
 
 /**
  * Agent detail screen with tabs for Conversation and Info.
@@ -690,20 +693,68 @@ private fun AgentMetricsPanel(
             color = LumiOnSurfaceSecondary
         )
 
-        var roleInput by remember(agent.role) { mutableStateOf(agent.role ?: "") }
-        OutlinedTextField(
-            value = roleInput,
-            onValueChange = { roleInput = it },
-            label = { Text("Role") },
-            placeholder = { Text("e.g. PM, Designer, Reviewer") },
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = LumiPurple500,
-                cursorColor = LumiPurple500,
-                focusedTextColor = LumiOnSurface,
-                unfocusedTextColor = LumiOnSurface
+        // Initialise: if the current role matches a predefined full definition, select it;
+        // otherwise fall back to Custom with the current value as free text.
+        val initialRoleIndex = remember(agent.role) {
+            PREDEFINED_ROLES.indexOfFirst { it.fullDefinition == agent.role }
+        }
+        var selectedRoleIndex by remember(agent.role) { mutableStateOf(initialRoleIndex) }
+        var roleDropdownExpanded by remember { mutableStateOf(false) }
+        var customRoleInput by remember(agent.role) {
+            mutableStateOf(if (initialRoleIndex < 0) agent.role ?: "" else "")
+        }
+
+        // Role dropdown
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].displayName else "Custom",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Role") },
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = { roleDropdownExpanded = true }) {
+                        Icon(Icons.Default.ExpandMore, contentDescription = null, tint = LumiOnSurfaceSecondary)
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = LumiPurple500,
+                    focusedTextColor = LumiOnSurface,
+                    unfocusedTextColor = LumiOnSurface
+                )
             )
-        )
+            DropdownMenu(
+                expanded = roleDropdownExpanded,
+                onDismissRequest = { roleDropdownExpanded = false }
+            ) {
+                PREDEFINED_ROLES.forEachIndexed { idx, role ->
+                    DropdownMenuItem(
+                        text = { Text(role.displayName, color = if (idx == selectedRoleIndex) LumiPurple500 else LumiOnSurface) },
+                        onClick = { selectedRoleIndex = idx; roleDropdownExpanded = false }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Custom", color = if (selectedRoleIndex < 0) LumiPurple500 else LumiOnSurface) },
+                    onClick = { selectedRoleIndex = -1; roleDropdownExpanded = false }
+                )
+            }
+        }
+        if (selectedRoleIndex < 0) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = customRoleInput,
+                onValueChange = { customRoleInput = it },
+                label = { Text("Custom role") },
+                placeholder = { Text("e.g. PM, Designer, Reviewer") },
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = LumiPurple500,
+                    cursorColor = LumiPurple500,
+                    focusedTextColor = LumiOnSurface,
+                    unfocusedTextColor = LumiOnSurface
+                )
+            )
+        }
 
         // Effort dropdown
         val effortOptions = listOf("low" to "Low", "medium" to "Medium", "high" to "High")
@@ -775,8 +826,10 @@ private fun AgentMetricsPanel(
 
         Button(
             onClick = {
+                val finalRole = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].fullDefinition
+                               else customRoleInput.takeIf { it.isNotBlank() }
                 onUpdateFields(
-                    roleInput.takeIf { it.isNotBlank() },
+                    finalRole,
                     selectedEffort,
                     selectedModel
                 )
