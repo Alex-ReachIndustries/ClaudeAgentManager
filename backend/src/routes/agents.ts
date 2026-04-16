@@ -477,8 +477,20 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     }
 
     // Update title, status, workspace, cwd, pid if provided
-    const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number } = {};
-    if (title && existing) agentFields.title = title;
+    const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number; base_title?: string } = {};
+    if (title && existing) {
+      const storedBaseTitle = (existing as Record<string, unknown>).base_title as string | null;
+      if (storedBaseTitle && !title.startsWith(storedBaseTitle)) {
+        // Enforce fixed-name prefix: "BaseName — current status"
+        agentFields.title = `${storedBaseTitle} — ${title}`;
+      } else {
+        agentFields.title = title;
+        // First update for an existing agent without base_title: backfill it
+        if (!storedBaseTitle) {
+          agentFields.base_title = title;
+        }
+      }
+    }
 
     // Protect terminal statuses: don't allow a running agent to overwrite completed/archived
     // (e.g. a stale process posting a final checkin after close was triggered)

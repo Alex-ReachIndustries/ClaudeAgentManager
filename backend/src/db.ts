@@ -210,6 +210,9 @@ export function getDb(): Database.Database {
   migrate("ALTER TABLE agents ADD COLUMN effort TEXT DEFAULT 'high'");
   migrate("ALTER TABLE agents ADD COLUMN model TEXT DEFAULT 'claude-sonnet-4-6'");
 
+  // Fixed agent name prefix — first title becomes permanent identity prefix
+  migrate("ALTER TABLE agents ADD COLUMN base_title TEXT");
+
   // PM/agent effort and model settings on projects
   migrate("ALTER TABLE projects ADD COLUMN pm_role TEXT");
   migrate("ALTER TABLE projects ADD COLUMN pm_effort TEXT DEFAULT 'high'");
@@ -481,14 +484,14 @@ export function getAgent(id: string) {
 export function createAgent(id: string, title: string) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO agents (id, title) VALUES (?, ?)
+    INSERT INTO agents (id, title, base_title) VALUES (?, ?, ?)
   `);
-  return stmt.run(id, title);
+  return stmt.run(id, title, title);
 }
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null; base_title?: string }
 ) {
   const db = getDb();
 
@@ -540,6 +543,10 @@ export function updateAgent(
   if (fields.project_id !== undefined) {
     setClauses.push("project_id = ?");
     values.push(fields.project_id);
+  }
+  if (fields.base_title !== undefined) {
+    setClauses.push("base_title = ?");
+    values.push(fields.base_title);
   }
 
   if (setClauses.length === 0) return;
