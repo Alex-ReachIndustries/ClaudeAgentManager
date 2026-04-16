@@ -71,7 +71,8 @@ data class AgentUpdate(
                 }
                 UpdateType.STATUS -> {
                     val status = jsonElement.getStringOrNull("status") ?: content
-                    UpdateContent.Status(status)
+                    val progress = jsonElement.getIntOrNull("progress") ?: 0
+                    UpdateContent.Status(status, progress)
                 }
                 UpdateType.DIAGRAM -> {
                     val diagram = jsonElement.getStringOrNull("diagram") ?: content
@@ -112,7 +113,7 @@ sealed class UpdateContent {
     data class Text(val text: String) : UpdateContent()
     data class Progress(val description: String, val percentage: Int) : UpdateContent()
     data class Error(val message: String) : UpdateContent()
-    data class Status(val status: String) : UpdateContent()
+    data class Status(val status: String, val progress: Int = 0) : UpdateContent()
     data class Diagram(val diagram: String) : UpdateContent()
 
     /**

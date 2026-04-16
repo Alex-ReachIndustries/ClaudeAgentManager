@@ -537,12 +537,19 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
             contentStr = JSON.stringify({ message: content });
             break;
           case "status":
-            contentStr = JSON.stringify({ status: content });
+            contentStr = JSON.stringify({ status: content, ...(progress !== undefined ? { progress: Math.max(0, Math.min(100, progress)) } : {}) });
             break;
           default:
             contentStr = JSON.stringify({ text: content });
             break;
         }
+      } else if (type === "status" && progress !== undefined && typeof progress === "number") {
+        // Content was already JSON — merge progress into it
+        try {
+          const obj = JSON.parse(contentStr || "{}");
+          obj.progress = Math.max(0, Math.min(100, progress));
+          contentStr = JSON.stringify(obj);
+        } catch { /* keep existing content */ }
       }
     }
     // Suppress redundant status updates: if a richer update (text/progress/error) was
