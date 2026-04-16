@@ -397,7 +397,7 @@ router.get("/:id", (req: Request, res: Response) => {
 router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const { type = "text", content, summary, title, status, progress, projects, todos, workspace, cwd, pid } = req.body;
+    const { type = "text", content, summary, title, status, progress, projects, todos, workspace, cwd, pid, base_title: explicitBaseTitle } = req.body;
 
     // Create agent if it doesn't exist
     const existing = getAgent(id);
@@ -490,13 +490,18 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number; base_title?: string; progress?: number } = {};
     if (title && existing) {
       const storedBaseTitle = (existing as Record<string, unknown>).base_title as string | null;
-      if (storedBaseTitle && !title.startsWith(storedBaseTitle)) {
+      // explicitBaseTitle allows agents to reset their identity name on any registration
+      const effectiveBaseTitle = explicitBaseTitle || storedBaseTitle;
+      if (explicitBaseTitle) {
+        agentFields.base_title = explicitBaseTitle;
+      }
+      if (effectiveBaseTitle && !title.startsWith(effectiveBaseTitle)) {
         // Enforce fixed-name prefix: "BaseName — current status"
-        agentFields.title = `${storedBaseTitle} — ${title}`;
+        agentFields.title = `${effectiveBaseTitle} — ${title}`;
       } else {
         agentFields.title = title;
         // First update for an existing agent without base_title: backfill it
-        if (!storedBaseTitle) {
+        if (!effectiveBaseTitle) {
           agentFields.base_title = title;
         }
       }
@@ -951,6 +956,9 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 8. FILE UPLOADS — when the user asks you to "upload", "attach", or "share" a file to the session manager or dashboard, use the Files API:
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
    Files appear in the agent's Files tab and are downloadable from the dashboard. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
+9. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
+   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
+   Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID.
 Silence = the user cannot see what you are doing.
 ---`;
 

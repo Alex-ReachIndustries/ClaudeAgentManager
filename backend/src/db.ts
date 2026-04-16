@@ -403,6 +403,30 @@ export function getDb(): Database.Database {
     db.pragma("foreign_keys = ON");
   }
 
+  // Migration: add 'relay' to updates type CHECK constraint
+  const updatesTableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='updates'").get() as { sql: string } | undefined;
+  if (updatesTableInfo && !updatesTableInfo.sql.includes("'relay'")) {
+    const cols = db.prepare("PRAGMA table_info(updates)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).join(", ");
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS updates_new`);
+    db.exec(`
+      CREATE TABLE updates_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+        timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+        type TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text','progress','diagram','error','status','relay')),
+        content TEXT NOT NULL DEFAULT '{}',
+        summary TEXT
+      );
+      INSERT INTO updates_new (${colNames}) SELECT ${colNames} FROM updates;
+      DROP TABLE updates;
+      ALTER TABLE updates_new RENAME TO updates;
+      CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
   // Feature 6: Migrate existing BLOBs to filesystem
   migrateFilesToDisk(db);
 

@@ -15,6 +15,7 @@ const updateTypes = [
   "diagram",
   "error",
   "status",
+  "relay",
 ] as const;
 
 // --- Agent updates (POST /agents/:id/updates) ---
@@ -33,6 +34,7 @@ export const updateSchema = z.object({
   workspace: z.string().max(500).optional(),
   cwd: z.string().max(500).optional(),
   pid: z.number().int().positive().optional(),
+  base_title: z.string().max(200).optional(),
 });
 
 // --- Messages (POST /agents/:id/messages) ---
