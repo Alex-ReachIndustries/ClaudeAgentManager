@@ -948,6 +948,9 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 5. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue
 6. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
 7. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
+8. FILE UPLOADS — when the user asks you to "upload", "attach", or "share" a file to the session manager or dashboard, use the Files API:
+   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
+   Files appear in the agent's Files tab and are downloadable from the dashboard. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
 Silence = the user cannot see what you are doing.
 ---`;
 
