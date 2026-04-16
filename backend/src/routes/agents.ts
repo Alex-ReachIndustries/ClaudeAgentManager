@@ -621,8 +621,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string } = {};
+    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model, project_id } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string; project_id?: string | null } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -637,8 +637,25 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
     if (task !== undefined) fields.task = task;
     if (effort !== undefined) fields.effort = effort;
     if (model !== undefined) fields.model = model;
+    if (project_id !== undefined) fields.project_id = project_id;
 
     updateAgent(id, fields);
+
+    // If a PM agent is self-linking to a project, activate the project and set pm_agent_id
+    if (project_id) {
+      const effectiveRole = (role ?? (agent.role as string | null)) || "";
+      const isPM = effectiveRole.trimStart().toLowerCase().startsWith("you are a project manager") ||
+                   effectiveRole.trimStart().toLowerCase().startsWith("you are the pm") ||
+                   effectiveRole.trim() === "PM";
+      if (isPM) {
+        updateProject(project_id, {
+          pm_agent_id: id,
+          status: "active",
+          started_at: new Date().toISOString(),
+        });
+        logger.info({ agentId: id, projectId: project_id }, "Standalone PM self-linked to project, activated");
+      }
+    }
 
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);

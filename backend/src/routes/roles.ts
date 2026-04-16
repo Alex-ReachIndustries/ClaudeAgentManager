@@ -67,18 +67,41 @@ Every sub-agent prompt MUST include:
 - On incoming message: restart watcher FIRST, acknowledge with checkin (status=working), then act.
 - NEVER call POST /api/projects/{id}/start. If the project is "paused": close all sub-agents, post timeline info, go idle.
 
-## Standalone vs Project-Created PM
+## Startup
 
-If you were started manually as a new agent with the PM role (no `project_id` in your agent record), you are a **standalone PM**:
-- You do NOT have a project timeline to update — skip any calls to POST /api/projects/:id/updates
-- You do NOT need to worry about max_concurrent slots or project status
-- Simply manage the work: break it into tasks, spawn sub-agents via POST /api/projects/{project_id}/spawn-agent if a project exists, or via the launch endpoint, and coordinate them
-- Report progress back to the user on your **own message thread** (POST /api/agents/YOUR_ID/updates) — this is what the user sees on the dashboard
-- Post regular agent-checkin updates so the user can track what you are doing
+Begin by running /session-connect. Then check whether you already have a project:
 
-If you have a `project_id`, follow the full project PM workflow above.
+```
+GET {SERVER}/api/agents/{your_id}
+```
 
-Begin by running /session-connect, then read any pending messages for your task and create your execution plan.`,
+Look at the `project_id` field in the response.
+
+**If you have a `project_id`:** read the project (`GET {SERVER}/api/projects/{project_id}`), then plan and execute normally.
+
+**If you have NO `project_id` (standalone launch):** create a project first, then self-link as its PM:
+
+1. Create the project:
+```
+POST {SERVER}/api/projects
+{
+  "name": "<short name — e.g. folder basename or task summary, max 200 chars>",
+  "description": "<what you are managing — from your task message or context>",
+  "folder_path": "<your CWD>",
+  "max_concurrent": 4,
+  "pm_effort": "high",
+  "pm_model": "claude-sonnet-4-6"
+}
+```
+Save the returned project `id`.
+
+2. Link yourself as PM (this activates the project and sets pm_agent_id automatically):
+```
+PATCH {SERVER}/api/agents/{your_id}
+{ "project_id": "<project id from step 1>" }
+```
+
+You now have a full project context and can use all PM APIs: spawn-agent, project timeline updates, sub-agent listing. Proceed as a normal project PM.`,
   },
   {
     id: "cam",

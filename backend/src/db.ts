@@ -488,7 +488,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null }
 ) {
   const db = getDb();
 
@@ -536,6 +536,10 @@ export function updateAgent(
   if (fields.task !== undefined) {
     setClauses.push("task = ?");
     values.push(fields.task);
+  }
+  if (fields.project_id !== undefined) {
+    setClauses.push("project_id = ?");
+    values.push(fields.project_id);
   }
 
   if (setClauses.length === 0) return;

@@ -55,6 +55,7 @@ export const agentPatchSchema = z.object({
   task: z.string().max(65_536).optional(),
   effort: z.enum(["low", "medium", "high"]).optional(),
   model: z.string().max(100).optional(),
+  project_id: z.string().max(100).nullable().optional(),
 });
 
 // --- Launch requests (POST /launch-requests) ---
