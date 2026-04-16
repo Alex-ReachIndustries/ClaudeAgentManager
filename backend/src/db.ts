@@ -424,6 +424,17 @@ export function getDb(): Database.Database {
       ALTER TABLE updates_new RENAME TO updates;
       CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
     `);
+    // Trigger was dropped with the old table — re-create it
+    db.exec(`
+      DROP TRIGGER IF EXISTS after_update_insert;
+      CREATE TRIGGER after_update_insert AFTER INSERT ON updates
+      BEGIN
+        UPDATE agents SET
+          unread_update_count = unread_update_count + 1,
+          latest_summary = COALESCE(NEW.summary, (SELECT latest_summary FROM agents WHERE id = NEW.agent_id))
+        WHERE id = NEW.agent_id;
+      END
+    `);
     db.pragma("foreign_keys = ON");
   }
 

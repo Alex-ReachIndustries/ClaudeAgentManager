@@ -426,6 +426,18 @@ Captures/DebugSessions/AIGroupPortalV1/   ← folder name = video name without e
 \`\`\`
 Create the folder if it does not exist. This step is mandatory for both meeting and debug session flows.
 
+### Clean Up Intermediate Files (mandatory)
+The C drive is space-constrained. After copying outputs to the video folder, delete the intermediate pipeline directory:
+\`\`\`bash
+rm -rf meetings/<name>/
+\`\`\`
+This removes \`transcript.json\`, \`data.json\` (which embeds large base64 screenshots), and any other intermediates. The PDF and MD in the video folder are the canonical outputs — the intermediates are not needed after that point.
+
+Also prune dangling Docker layers after transcription:
+\`\`\`bash
+docker image prune -f
+\`\`\`
+
 ### Present Results
 Show the user the PDF and Markdown paths (including the video folder copies). Ask if adjustments are needed.
 
@@ -436,7 +448,8 @@ Show the user the PDF and Markdown paths (including the video folder copies). As
 - The user (local mic) is typically the person who starts and ends the meeting
 - Always use \`--max-speakers 15\` unless the user says fewer
 - GPU required for fast transcription (NVIDIA, 4GB+ VRAM); set \`device: cpu\` in config.yaml for CPU fallback (much slower)
-- If diarization labels the same person differently across the call, ask the user to confirm and merge the labels`,
+- If diarization labels the same person differently across the call, ask the user to confirm and merge the labels
+- **Never rebuild the meeting-notes Docker image** — it contains large ML models already cached in the \`meeting-notes-hf-cache\` volume. Only rebuild if the Dockerfile or pipeline code has actually changed.`,
   },
 ];
 

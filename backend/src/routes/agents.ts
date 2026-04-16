@@ -959,6 +959,7 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 9. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
    Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID.
+10. DISK SPACE — The C drive is nearly full (~25GB free). Before any Docker build, transcription, or Android APK build: check free space with df -h /c/. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
 Silence = the user cannot see what you are doing.
 ---`;
 
