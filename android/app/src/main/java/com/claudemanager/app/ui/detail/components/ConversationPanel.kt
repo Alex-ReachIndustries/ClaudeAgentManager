@@ -550,6 +550,29 @@ private fun UpdateBubble(update: AgentUpdate) {
                             maxLines = if (expanded) Int.MAX_VALUE else 4,
                             overflow = TextOverflow.Ellipsis
                         )
+                        if (content.progress > 0) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                LinearProgressIndicator(
+                                    progress = { content.progress / 100f },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp)),
+                                    color = LumiWarning,
+                                    trackColor = LumiCard
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${content.progress}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LumiOnSurfaceSecondary
+                                )
+                            }
+                        }
                     }
                     is UpdateContent.Diagram -> {
                         Text(
