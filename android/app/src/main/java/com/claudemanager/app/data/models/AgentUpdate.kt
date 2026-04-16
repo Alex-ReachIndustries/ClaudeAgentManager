@@ -78,6 +78,20 @@ data class AgentUpdate(
                     val diagram = jsonElement.getStringOrNull("diagram") ?: content
                     UpdateContent.Diagram(diagram)
                 }
+                UpdateType.RELAY -> {
+                    val direction = jsonElement.getStringOrNull("direction") ?: "sent"
+                    val otherId = if (direction == "sent")
+                        jsonElement.getStringOrNull("to_id") ?: ""
+                    else
+                        jsonElement.getStringOrNull("from_id") ?: ""
+                    val otherTitle = if (direction == "sent")
+                        jsonElement.getStringOrNull("to_title") ?: otherId
+                    else
+                        jsonElement.getStringOrNull("from_title") ?: otherId
+                    val message = jsonElement.getStringOrNull("message") ?: content
+                    UpdateContent.Relay(direction, otherId, otherTitle, message)
+                }
+                null -> UpdateContent.Text(content)
             }
         } catch (_: Exception) {
             // Fallback: treat raw content as text
@@ -103,7 +117,10 @@ enum class UpdateType {
     STATUS,
 
     @SerializedName("diagram")
-    DIAGRAM
+    DIAGRAM,
+
+    @SerializedName("relay")
+    RELAY
 }
 
 /**
@@ -115,6 +132,7 @@ sealed class UpdateContent {
     data class Error(val message: String) : UpdateContent()
     data class Status(val status: String, val progress: Int = 0) : UpdateContent()
     data class Diagram(val diagram: String) : UpdateContent()
+    data class Relay(val direction: String, val otherId: String, val otherTitle: String, val message: String) : UpdateContent()
 
     /**
      * Returns a human-readable summary of this content, suitable for display
@@ -126,6 +144,7 @@ sealed class UpdateContent {
         is Error -> message
         is Status -> status
         is Diagram -> "(diagram)"
+        is Relay -> if (direction == "sent") "→ $otherTitle: $message" else "← $otherTitle: $message"
     }
 }
 

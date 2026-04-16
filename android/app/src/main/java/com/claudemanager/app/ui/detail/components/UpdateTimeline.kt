@@ -217,6 +217,17 @@ private fun UpdateTimelineItem(update: AgentUpdate) {
                         color = LumiOnSurfaceSecondary
                     )
                 }
+
+                is UpdateContent.Relay -> {
+                    val arrow = if (content.direction == "sent") "→" else "←"
+                    Text(
+                        text = "$arrow ${content.otherTitle}: ${content.message}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LumiOnSurfaceSecondary,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -259,5 +270,10 @@ private fun updateTypeInfo(type: UpdateType): UpdateTypeInfo = when (type) {
         icon = Icons.Outlined.AccountTree,
         label = "Diagram",
         color = LumiSuccess
+    )
+    UpdateType.RELAY -> UpdateTypeInfo(
+        icon = Icons.Default.SwapHoriz,
+        label = "Relay",
+        color = LumiInfo
     )
 }

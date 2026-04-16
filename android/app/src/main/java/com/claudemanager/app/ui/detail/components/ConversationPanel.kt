@@ -581,6 +581,16 @@ private fun UpdateBubble(update: AgentUpdate) {
                             color = LumiOnSurfaceSecondary
                         )
                     }
+                    is UpdateContent.Relay -> {
+                        val arrow = if (content.direction == "sent") "→" else "←"
+                        Text(
+                            text = "$arrow ${content.otherTitle}: ${content.message}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LumiOnSurfaceSecondary,
+                            maxLines = if (expanded) Int.MAX_VALUE else 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -748,6 +758,7 @@ private fun updateTypeInfo(type: UpdateType): ConvUpdateTypeInfo = when (type) {
     UpdateType.ERROR -> ConvUpdateTypeInfo(Icons.Default.Error, "Error", LumiError)
     UpdateType.STATUS -> ConvUpdateTypeInfo(Icons.Default.SwapHoriz, "Status", LumiWarning)
     UpdateType.DIAGRAM -> ConvUpdateTypeInfo(Icons.Outlined.AccountTree, "Diagram", LumiSuccess)
+    UpdateType.RELAY -> ConvUpdateTypeInfo(Icons.Default.SwapHoriz, "Relay", LumiInfo)
 }
 
 /**
