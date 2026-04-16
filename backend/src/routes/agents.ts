@@ -401,9 +401,18 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
 
     // Create agent if it doesn't exist
     const existing = getAgent(id);
+    const existingStatus = (existing as Record<string, unknown> | null)?.status as string | undefined;
+    const isArchivedRehijack = existing && (existingStatus === "archived" || existingStatus === "completed");
+
     if (!existing) {
       createAgent(id, title || "Untitled Agent");
+    }
 
+    // Apply spawn metadata on first registration (new agent) OR when an archived/completed
+    // agent is being re-registered — this is the UUID-hijack guard. If a new Claude process
+    // accidentally picks up a closed agent's JSONL and registers with that UUID, we detect
+    // a recent spawn launch request and re-apply the correct role/task/project linkage.
+    if (!existing || isArchivedRehijack) {
       // Check for a VERY recent launch request with project metadata.
       // Match both 'claimed' (launcher spawning) and 'completed' (launcher done) to avoid
       // race conditions where the agent registers before the launcher reports back.

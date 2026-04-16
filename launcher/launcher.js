@@ -14,6 +14,7 @@
  */
 
 const { spawn } = require('child_process');
+const { randomUUID } = require('crypto');
 const https = require('https');
 const http = require('http');
 const path = require('path');
@@ -150,6 +151,30 @@ function launchNewAgent(folderPath, spawnMeta) {
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
+  // --- UUID isolation for project-spawned agents ---
+  // When a PM spawns a sub-agent, we pre-create an empty JSONL file with a
+  // fresh UUID and launch with `--resume <uuid>`. This guarantees Claude is
+  // bound to that specific file before session-connect runs `ls -t` to
+  // discover its UUID. Without this, the new process picks up the most
+  // recently modified JSONL — often the previous sub-agent's file — and
+  // inherits the wrong role and task.
+  let resumeFlag = '';
+  if (spawnMeta && spawnMeta.project_id) {
+    const agentUuid = randomUUID();
+    // Compute the Claude projects directory key (same logic as ensureWorkspaceTrusted)
+    const normalized = cwd.replace(/\\/g, '/');
+    const projectKey = normalized
+      .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toLowerCase()}--`)
+      .replace(/^([A-Z]):\//, (_, d) => `${d.toLowerCase()}--`)
+      .replace(/\//g, '-');
+    const projectDir = path.join(USER_HOME, '.claude', 'projects', projectKey);
+    fs.mkdirSync(projectDir, { recursive: true });
+    const jsonlPath = path.join(projectDir, `${agentUuid}.jsonl`);
+    fs.writeFileSync(jsonlPath, ''); // Empty file — fresh conversation with this UUID
+    log(`Pre-created JSONL for spawn: ${jsonlPath}`);
+    resumeFlag = ` --resume "${agentUuid}"`;
+  }
+
   // Checkin reminder appended to every initial prompt so agents report in from the very first task
   const CHECKIN_REMINDER = ' IMPORTANT: As you work, post session manager updates using /agent-checkin (or POST to your agent updates endpoint directly) — at the start of your first task, at roughly every 25% of progress, and on completion. The user monitors remotely and needs real-time visibility.';
 
@@ -177,7 +202,7 @@ function launchNewAgent(folderPath, spawnMeta) {
   const batchPrompt = initialPrompt.replace(/%/g, '%%');
   const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${spawnMeta.model}` : '';
   const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
-  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${modelFlag}${effortFlag} "${batchPrompt}"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
 
   const proc = spawn('wt.exe', [
     'new-tab', '--title', tabTitle,
