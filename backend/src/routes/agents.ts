@@ -943,6 +943,7 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 4. Post a completion update explaining exactly what was achieved when done
 5. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue
 6. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
+7. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
 Silence = the user cannot see what you are doing.
 ---`;
 
