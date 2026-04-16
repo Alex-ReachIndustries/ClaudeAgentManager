@@ -405,15 +405,29 @@ Brand overrides: \`brand='personal'\` (default, Pegasus), \`brand='lumi'\` (blue
 docker compose run --rm meeting-notes generate-pdf /data/meetings/<name>/data.json
 \`\`\`
 
-### Generate Markdown Summary
+### Generate Markdown Summary / Fix Brief
 \`\`\`bash
 docker compose run --rm meeting-notes generate-summary-md /data/meetings/<name>/data.json
 \`\`\`
 Auto-detects mode. Omits all images/base64 — safe to load into any agent context.
 (The fallback PDF generator produces the MD automatically — no separate step needed.)
 
+**Meeting mode**: produces a compact meeting summary MD (title, executive summary, sections, decisions, action items).
+
+**Debug session mode**: produces \`Debug_FixBrief_<Title>.md\` — a terse agent-ready fix brief written for a developer agent to act on directly, not a documentation record. Format: bug count header → per-issue entries (route, symptom, investigate hints, fix direction, verify step) → non-blocking observations → task checklist.
+
+### Copy Outputs to Video Folder (mandatory)
+After generating the PDF and MD, copy both files into a folder named after the source MP4, placed next to it:
+\`\`\`
+Captures/DebugSessions/AIGroupPortalV1/   ← folder name = video name without extension
+  AIGroupPortalV1.pdf
+  Debug_FixBrief_AIGroupPortalV1.md       ← debug mode
+  # or MeetingNotes_AIGroupPortalV1.md    ← meeting mode
+\`\`\`
+Create the folder if it does not exist. This step is mandatory for both meeting and debug session flows.
+
 ### Present Results
-Show the user the PDF and Markdown paths. Ask if adjustments are needed.
+Show the user the PDF and Markdown paths (including the video folder copies). Ask if adjustments are needed.
 
 ---
 

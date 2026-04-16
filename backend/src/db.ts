@@ -631,8 +631,11 @@ export function addUpdate(
 export function getPendingMessages(agentId: string) {
   const db = getDb();
 
+  // Exclude source='system' — these are auto-injected role reminders, not real tasks.
+  // They must not consume the watcher or the agent goes deaf between real messages.
   const selectPending = db.prepare(`
-    SELECT * FROM messages WHERE agent_id = ? AND status = 'pending' ORDER BY priority DESC, created_at ASC
+    SELECT * FROM messages WHERE agent_id = ? AND status = 'pending' AND source != 'system'
+    ORDER BY priority DESC, created_at ASC
   `);
   // Re-surface messages delivered to the agent but never acknowledged (e.g. agent was
   // interrupted before posting a checkin, or context was compressed mid-task).
@@ -640,6 +643,7 @@ export function getPendingMessages(agentId: string) {
   // has had time to post its acknowledgement checkin.
   const selectUnacknowledged = db.prepare(`
     SELECT * FROM messages WHERE agent_id = ? AND status = 'delivered' AND acknowledged_at IS NULL
+      AND source != 'system'
       AND delivered_at < datetime('now', '-30 seconds')
     ORDER BY priority DESC, created_at ASC
   `);
