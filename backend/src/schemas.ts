@@ -27,6 +27,7 @@ export const updateSchema = z.object({
   summary: z.string().max(500).optional(),
   title: z.string().max(200).optional(),
   status: z.enum(agentStatuses).optional(),
+  progress: z.number().int().min(0).max(100).optional(),
   projects: z.array(z.unknown()).optional(),
   todos: z.array(z.unknown()).optional(),
   workspace: z.string().max(500).optional(),
@@ -39,6 +40,8 @@ export const updateSchema = z.object({
 export const messageSchema = z.object({
   content: z.string().min(1).max(65_536).trim(),
   priority: z.number().int().min(0).max(10).default(0),
+  source: z.enum(["user", "agent"]).default("user"),
+  source_agent_id: z.string().max(100).optional(),
 });
 
 // --- Agent patch (PATCH /agents/:id) ---

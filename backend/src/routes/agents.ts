@@ -857,13 +857,13 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
       return;
     }
 
-    const { content, priority } = req.body;
+    const { content, priority, source = "user", source_agent_id } = req.body;
 
-    addMessage(id, content, "user", undefined, priority || 0);
+    addMessage(id, content, source, source_agent_id, priority || 0);
     broadcast("message-queued", { agentId: id, content, priority: priority || 0 });
 
     // Publish to MQTT for instant delivery to agent sidecar
-    publishAgentMessage(id, content, "user");
+    publishAgentMessage(id, content, source);
 
     // Dispatch webhook for new message
     dispatchWebhook("message.received", {
