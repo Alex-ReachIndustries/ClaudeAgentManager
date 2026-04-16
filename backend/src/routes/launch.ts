@@ -109,6 +109,26 @@ router.patch("/:id", (req: Request, res: Response) => {
 
     updateLaunchRequest(id, fields);
 
+    // For standalone agents (no project_id) that have role/prompt metadata, deliver them now
+    if (!projectMeta && agent_id && status === "completed" && existingRecord.agent_id) {
+      try {
+        const standaloneM = JSON.parse(existingRecord.agent_id as string) as Record<string, unknown>;
+        if (standaloneM && typeof standaloneM === "object" && !standaloneM.project_id) {
+          const db = getDb();
+          if (standaloneM.role && typeof standaloneM.role === "string") {
+            db.prepare("UPDATE agents SET role = ? WHERE id = ?").run(standaloneM.role, agent_id);
+            logger.info({ agent_id }, "Set standalone agent role from launch request");
+          }
+          if (standaloneM.prompt && typeof standaloneM.prompt === "string") {
+            addMessage(agent_id, standaloneM.prompt);
+            logger.info({ agent_id }, "Sent standalone agent task prompt via message");
+          }
+        }
+      } catch {
+        // Not JSON or missing fields — ignore
+      }
+    }
+
     // If we have project metadata and the real agent_id, link the agent to the project
     if (projectMeta && agent_id && status === "completed") {
       try {

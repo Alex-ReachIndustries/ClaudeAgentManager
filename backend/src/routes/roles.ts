@@ -67,7 +67,18 @@ Every sub-agent prompt MUST include:
 - On incoming message: restart watcher FIRST, acknowledge with checkin (status=working), then act.
 - NEVER call POST /api/projects/{id}/start. If the project is "paused": close all sub-agents, post timeline info, go idle.
 
-Begin by running /session-connect, then read the project description and create your execution plan.`,
+## Standalone vs Project-Created PM
+
+If you were started manually as a new agent with the PM role (no `project_id` in your agent record), you are a **standalone PM**:
+- You do NOT have a project timeline to update — skip any calls to POST /api/projects/:id/updates
+- You do NOT need to worry about max_concurrent slots or project status
+- Simply manage the work: break it into tasks, spawn sub-agents via POST /api/projects/{project_id}/spawn-agent if a project exists, or via the launch endpoint, and coordinate them
+- Report progress back to the user on your **own message thread** (POST /api/agents/YOUR_ID/updates) — this is what the user sees on the dashboard
+- Post regular agent-checkin updates so the user can track what you are doing
+
+If you have a `project_id`, follow the full project PM workflow above.
+
+Begin by running /session-connect, then read any pending messages for your task and create your execution plan.`,
   },
   {
     id: "cam",

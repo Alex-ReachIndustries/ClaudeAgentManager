@@ -156,9 +156,15 @@ function launchNewAgent(folderPath, spawnMeta) {
   // All agents start with a clean session-init — task is delivered as a message
   // after registration so it doesn't compete with workspace context loading.
   let initialPrompt = `run /session-init and then await instructions.${CHECKIN_REMINDER}`;
-  let tabTitle = (spawnMeta && spawnMeta.role)
-    ? `Claude - ${spawnMeta.role}`
-    : `Claude - ${path.basename(cwd)}`;
+  let tabTitle;
+  if (spawnMeta && spawnMeta.role) {
+    // Role may be a full multi-line definition — extract a short label for the tab title.
+    // Split on first sentence boundary or em dash so "You are Cam — ..." → "You are Cam".
+    const shortRole = spawnMeta.role.split(/\.\s|\s\u2014\s|\r?\n/)[0].trim().substring(0, 60);
+    tabTitle = `Claude - ${shortRole}`;
+  } else {
+    tabTitle = `Claude - ${path.basename(cwd)}`;
+  }
 
   if (spawnMeta && (spawnMeta.role || spawnMeta.prompt)) {
     log(`Agent${spawnMeta.role ? ` role: ${spawnMeta.role}` : ''}, prompt: ${(spawnMeta.prompt || '').substring(0, 80)}...`);
