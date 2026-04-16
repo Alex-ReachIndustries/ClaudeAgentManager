@@ -920,7 +920,7 @@ router.get("/:id/messages", (req: Request, res: Response) => {
         if (isPM) {
           ROLE_SECTION = `
 
-[ROLE] You are a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT via POST /api/projects/{project_id}/spawn-agent. Before doing anything else: (1) check on your existing sub-agents, (2) post a status update with the current project state, (3) only then decide next actions. NEVER start implementing.`;
+[ROLE] You are a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT via POST /api/projects/{project_id}/spawn-agent. ALWAYS call GET /api/roles first and use a predefined role's fullDefinition verbatim — only write a custom role if nothing fits. Before doing anything else: (1) check on your existing sub-agents, (2) post a status update with the current project state, (3) only then decide next actions. NEVER start implementing.`;
         } else {
           ROLE_SECTION = `
 
