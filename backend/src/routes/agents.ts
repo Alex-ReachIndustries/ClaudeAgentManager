@@ -577,19 +577,6 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     // Auto-acknowledge delivered messages (agent posting = it has seen them)
     acknowledgeMessages(id);
 
-    // When a PM/Lead/Manager agent starts or resumes, inject a role-reminder message
-    // to prevent context drift where the agent slips into implementation work.
-    if (type === "status") {
-      const agentForRole = getAgent(id);
-      const agentRole = ((agentForRole?.role as string) || "").toLowerCase();
-      const isPmRole = agentRole.includes("pm") || agentRole.includes("lead") || agentRole.includes("manager");
-      const isSessionEvent = (summary || "").toLowerCase().includes("start") || (summary || "").toLowerCase().includes("resum");
-      if (isPmRole && isSessionEvent) {
-        const pmRoleLabel = agentForRole?.role as string;
-        addMessage(id, `[SYSTEM ROLE REMINDER] You are the ${pmRoleLabel} — a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT. Before doing anything else: (1) check on your existing sub-agents via GET /api/agents/{id}/updates, (2) post a PM status update with what the project state is, (3) only then decide next actions. NEVER start implementing.`, "system");
-      }
-    }
-
     // Update project/todo tracking metadata if provided
     if (projects !== undefined || todos !== undefined) {
       const existing = getAgent(id);

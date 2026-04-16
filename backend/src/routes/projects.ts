@@ -259,20 +259,9 @@ router.post("/:id/start", (req: Request, res: Response) => {
           addMessage(pmAgentId, userPrompt.trim());
         }
 
-        // Also resume any archived sub-agents from this project
-        const archivedAgents = db.prepare(
-          "SELECT id, cwd FROM agents WHERE project_id = ? AND status = 'archived' AND id != ?"
-        ).all(id, pmAgentId) as Record<string, unknown>[];
-
-        for (const subAgent of archivedAgents) {
-          const subCwd = (subAgent.cwd as string) || folderPath;
-          createLaunchRequest("resume", subCwd, subAgent.id as string);
-          db.prepare("UPDATE agents SET status = 'active' WHERE id = ?").run(subAgent.id);
-        }
-
-        if (archivedAgents.length > 0) {
-          addProjectUpdate(id, "info", `Resuming ${archivedAgents.length} sub-agent(s).`);
-        }
+        // Sub-agents are NOT bulk-resumed here — the PM checks on them and decides
+        // which to resume. Bulk auto-resume caused duplicate terminals when sub-agents
+        // were still running but had been archived due to missed heartbeats.
         resumed = true;
       }
     }
