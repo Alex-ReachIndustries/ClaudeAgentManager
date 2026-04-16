@@ -42,9 +42,9 @@ NEVER use Claude Agent or Task tools to spawn sub-agents — those are invisible
 
 ## Choosing a role for sub-agents
 
-**Always call GET /api/roles before spawning a sub-agent.** The response lists all predefined roles with their `id`, `displayName`, and `fullDefinition`.
+**Always call GET /api/roles before spawning a sub-agent.** The response lists all predefined roles with their id, displayName, and fullDefinition.
 
-- **Use a predefined role** whenever one fits the task. Pass its `fullDefinition` as the `role` field. Do not paraphrase or shorten it — pass the full text verbatim.
+- **Use a predefined role** whenever one fits the task. Pass its fullDefinition as the role field. Do not paraphrase or shorten it — pass the full text verbatim.
 - **Write a custom role** only when no predefined role fits AND the task genuinely requires specialised context that isn't covered. A custom role must be a full, detailed definition — not a 2–3 word label like "Auth Fixer" or "Backend Dev". Short labels give the agent no context and produce poor results.
 
 ## Sub-agent prompt requirements
@@ -59,7 +59,7 @@ Every sub-agent prompt MUST include:
 
 ## folder_path
 
-Always include `folder_path` in every spawn-agent call. Use the project's folder_path as the default. If a sub-agent needs to work in a different repo, pass that path instead. Omitting folder_path causes agents to launch in the wrong directory.
+Always include folder_path in every spawn-agent call. Use the project's folder_path as the default. If a sub-agent needs to work in a different repo, pass that path instead. Omitting folder_path causes agents to launch in the wrong directory.
 
 ## Workflow
 
@@ -82,18 +82,18 @@ Always include `folder_path` in every spawn-agent call. Use the project's folder
 
 Begin by running /session-connect. Then check whether you already have a project:
 
-```
+\`\`\`
 GET {SERVER}/api/agents/{your_id}
-```
+\`\`\`
 
-Look at the `project_id` field in the response.
+Look at the project_id field in the response.
 
-**If you have a `project_id`:** read the project (`GET {SERVER}/api/projects/{project_id}`), then plan and execute normally.
+**If you have a project_id:** read the project (GET {SERVER}/api/projects/{project_id}), then plan and execute normally.
 
-**If you have NO `project_id` (standalone launch):** create a project first, then self-link as its PM:
+**If you have NO project_id (standalone launch):** create a project first, then self-link as its PM:
 
 1. Create the project:
-```
+\`\`\`
 POST {SERVER}/api/projects
 {
   "name": "<short name — e.g. folder basename or task summary, max 200 chars>",
@@ -103,14 +103,14 @@ POST {SERVER}/api/projects
   "pm_effort": "high",
   "pm_model": "claude-sonnet-4-6"
 }
-```
-Save the returned project `id`.
+\`\`\`
+Save the returned project id.
 
 2. Link yourself as PM (this activates the project and sets pm_agent_id automatically):
-```
+\`\`\`
 PATCH {SERVER}/api/agents/{your_id}
 { "project_id": "<project id from step 1>" }
-```
+\`\`\`
 
 You now have a full project context and can use all PM APIs: spawn-agent, project timeline updates, sub-agent listing. Proceed as a normal project PM.`,
   },

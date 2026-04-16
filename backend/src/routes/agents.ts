@@ -23,6 +23,7 @@ import {
   deleteAgentFiles,
   createLaunchRequest,
   updateProject,
+  getProject,
   addCostEvent,
   getCostEvents,
   getCostEventsSummary,
@@ -892,41 +893,64 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       // Also re-surfaces any delivered-but-unacknowledged messages from previous poll cycles
       const rawMessages = getPendingMessages(id);
 
-      // Append checkin protocol + compact role reminder to every message.
+      // Append structured reminders to every message at delivery time.
       // Injected at delivery time only — DB record stays clean for the dashboard.
-      const CHECKIN_REMINDER = `
-
----
-[SESSION MANAGER REMINDER — mandatory before acting on this message]
-1. Watcher restarted FIRST (before reading, before thinking)
-2. Post acknowledgement checkin NOW: status=working, confirm what you understood and what you will do
-3. Post a progress update at roughly every 25% of the task — do NOT batch all updates to the end
-4. Post a completion update explaining exactly what was achieved when done
-5. If a new message arrives while you are mid-task: read it, decide whether it changes your current work or should be queued after, acknowledge it with a checkin, then continue working
-Silence = the user cannot see what you are doing.
----`;
-
-      // Build a compact role reminder so agents never lose context of who they are.
-      // Skip for completed agents — they're done, no need to keep telling them to relay.
+      // Three sections: ROLE (if set), PM RULES (if under a PM), SESSION MANAGER RULES (always).
       const agentRole = agent.role as string | null;
       const agentProjectId = agent.project_id as string | null;
       const agentStatus = agent.status as string | null;
-      let ROLE_REMINDER = "";
-      if (agentStatus === "completed") {
-        // No role reminder for completed agents — prevents re-relay loops
-      } else if (agentRole === "PM") {
-        ROLE_REMINDER = `
 
-[SYSTEM ROLE REMINDER] You are the PM — a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT. Before doing anything else: (1) check on your existing sub-agents via GET /api/agents/{id}/updates, (2) post a PM status update with what the project state is, (3) only then decide next actions. NEVER start implementing.`;
-      } else if (agentRole) {
-        ROLE_REMINDER = `
+      const isPM = agentRole === "PM" ||
+        (typeof agentRole === "string" && agentRole.trimStart().toLowerCase().startsWith("you are a project manager"));
 
-[SYSTEM ROLE REMINDER] Your role is: ${agentRole}. Stay focused on your assigned task. Post status updates after every meaningful action. When your task is fully done, relay completion ONCE to the PM via POST /api/agents/YOUR_ID/relay with target_agent_id set to the PM's agent ID${agentProjectId ? ` (find it via GET /api/projects/${agentProjectId})` : ""}. If you have already relayed completion, do NOT relay again — just acknowledge the message.`;
+      // Look up the project's PM agent ID (only for non-PM sub-agents with a project)
+      let pmAgentId: string | null = null;
+      if (agentProjectId && !isPM && agentStatus !== "completed") {
+        const proj = getProject(agentProjectId);
+        pmAgentId = (proj?.pm_agent_id as string | null) ?? null;
       }
+
+      // Section 1: ROLE (if role set and agent not completed)
+      let ROLE_SECTION = "";
+      if (agentStatus !== "completed" && agentRole) {
+        if (isPM) {
+          ROLE_SECTION = `
+
+[ROLE] You are a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT via POST /api/projects/{project_id}/spawn-agent. Before doing anything else: (1) check on your existing sub-agents, (2) post a status update with the current project state, (3) only then decide next actions. NEVER start implementing.`;
+        } else {
+          ROLE_SECTION = `
+
+[ROLE] ${agentRole}`;
+        }
+      }
+
+      // Section 2: PM RULES (only if this agent is a sub-agent working under a PM)
+      let PM_RULES_SECTION = "";
+      if (agentStatus !== "completed" && pmAgentId) {
+        PM_RULES_SECTION = `
+
+[PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}). Take direction from the PM. When your assigned task is fully done, relay completion ONCE via POST /api/agents/YOUR_ID/relay with target_agent_id set to ${pmAgentId}. Do NOT relay again if already done — just acknowledge.`;
+      }
+
+      // Section 3: SESSION MANAGER RULES (always appended)
+      const SESSION_RULES_SECTION = `
+
+---
+[SESSION MANAGER RULES — mandatory, always follow]
+1. Restart your message watcher IMMEDIATELY after processing this message
+2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do
+3. Post progress updates at roughly 25%, 50%, 75% of the task — do NOT batch all updates to the end
+4. Post a completion update explaining exactly what was achieved when done
+5. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue
+6. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
+Silence = the user cannot see what you are doing.
+---`;
 
       const messages = (rawMessages as Record<string, unknown>[]).map(m => ({
         ...m,
-        content: typeof m.content === "string" ? m.content + CHECKIN_REMINDER + ROLE_REMINDER : m.content,
+        content: typeof m.content === "string"
+          ? m.content + ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION
+          : m.content,
       }));
 
       // Include poll_delay_until so the agent knows to pause if set
