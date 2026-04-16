@@ -213,6 +213,9 @@ export function getDb(): Database.Database {
   // Fixed agent name prefix — first title becomes permanent identity prefix
   migrate("ALTER TABLE agents ADD COLUMN base_title TEXT");
 
+  // Per-agent progress tracking (0-100), updated from status/progress updates
+  migrate("ALTER TABLE agents ADD COLUMN progress INTEGER DEFAULT 0");
+
   // PM/agent effort and model settings on projects
   migrate("ALTER TABLE projects ADD COLUMN pm_role TEXT");
   migrate("ALTER TABLE projects ADD COLUMN pm_effort TEXT DEFAULT 'high'");
@@ -491,7 +494,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null; base_title?: string }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null; base_title?: string; progress?: number }
 ) {
   const db = getDb();
 
@@ -547,6 +550,10 @@ export function updateAgent(
   if (fields.base_title !== undefined) {
     setClauses.push("base_title = ?");
     values.push(fields.base_title);
+  }
+  if (fields.progress !== undefined) {
+    setClauses.push("progress = ?");
+    values.push(fields.progress);
   }
 
   if (setClauses.length === 0) return;

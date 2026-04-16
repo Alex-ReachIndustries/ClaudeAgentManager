@@ -478,7 +478,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     }
 
     // Update title, status, workspace, cwd, pid if provided
-    const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number; base_title?: string } = {};
+    const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number; base_title?: string; progress?: number } = {};
     if (title && existing) {
       const storedBaseTitle = (existing as Record<string, unknown>).base_title as string | null;
       if (storedBaseTitle && !title.startsWith(storedBaseTitle)) {
@@ -505,6 +505,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     if (workspace) agentFields.workspace = workspace;
     if (cwd) agentFields.cwd = cwd;
     if (pid !== undefined) agentFields.pid = pid;
+    if (progress !== undefined && typeof progress === "number") agentFields.progress = Math.max(0, Math.min(100, progress));
     if (Object.keys(agentFields).length > 0) {
       updateAgent(id, agentFields);
     }

@@ -86,6 +86,19 @@ function AgentCard({ agent }: AgentCardProps) {
         <p className="text-sm text-dark-600 italic mb-4">No updates yet</p>
       )}
 
+      {/* Progress bar */}
+      {(agent.progress ?? 0) > 0 && ['working', 'active'].includes(agent.status) && (
+        <div className="mb-3">
+          <div className="flex items-center justify-between text-xs text-dark-500 mb-1">
+            <span>Progress</span>
+            <span>{Math.round(agent.progress!)}%</span>
+          </div>
+          <div className="w-full h-1 bg-dark-700 rounded-full overflow-hidden">
+            <div className="h-full bg-lumi-500 rounded-full transition-all" style={{ width: `${Math.min(100, agent.progress!)}%` }} />
+          </div>
+        </div>
+      )}
+
       {/* Stats row */}
       <div className="flex items-center gap-4 text-xs text-dark-500">
         <span className="flex items-center gap-1">

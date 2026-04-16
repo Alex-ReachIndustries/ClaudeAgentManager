@@ -22,6 +22,7 @@ export interface Agent {
   parent_agent_id?: string;
   effort?: string;
   model?: string;
+  progress?: number;
 }
 
 export interface AgentUpdate {
