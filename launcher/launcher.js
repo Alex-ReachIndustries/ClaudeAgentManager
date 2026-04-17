@@ -151,29 +151,11 @@ function launchNewAgent(folderPath, spawnMeta) {
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
-  // --- UUID isolation for project-spawned agents ---
-  // When a PM spawns a sub-agent, we pre-create an empty JSONL file with a
-  // fresh UUID and launch with `--resume <uuid>`. This guarantees Claude is
-  // bound to that specific file before session-connect runs `ls -t` to
-  // discover its UUID. Without this, the new process picks up the most
-  // recently modified JSONL — often the previous sub-agent's file — and
-  // inherits the wrong role and task.
-  let resumeFlag = '';
-  if (spawnMeta && spawnMeta.project_id) {
-    const agentUuid = randomUUID();
-    // Compute the Claude projects directory key (same logic as ensureWorkspaceTrusted)
-    const normalized = cwd.replace(/\\/g, '/');
-    const projectKey = normalized
-      .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toLowerCase()}--`)
-      .replace(/^([A-Z]):\//, (_, d) => `${d.toLowerCase()}--`)
-      .replace(/\//g, '-');
-    const projectDir = path.join(USER_HOME, '.claude', 'projects', projectKey);
-    fs.mkdirSync(projectDir, { recursive: true });
-    const jsonlPath = path.join(projectDir, `${agentUuid}.jsonl`);
-    fs.writeFileSync(jsonlPath, ''); // Empty file — fresh conversation with this UUID
-    log(`Pre-created JSONL for spawn: ${jsonlPath}`);
-    resumeFlag = ` --resume "${agentUuid}"`;
-  }
+  // No pre-created UUID: launch a plain new session. Claude creates its own
+  // JSONL automatically; session-connect discovers it via `ls -t`. Pre-creating
+  // an empty JSONL and using --resume broke because Claude requires a file with
+  // actual content to resume — an empty file causes "No conversation found".
+  const resumeFlag = '';
 
   // Checkin reminder appended to every initial prompt so agents report in from the very first task
   const CHECKIN_REMINDER = ' IMPORTANT: As you work, post session manager updates using /agent-checkin (or POST to your agent updates endpoint directly) — at the start of your first task, at roughly every 25% of progress, and on completion. The user monitors remotely and needs real-time visibility.';
