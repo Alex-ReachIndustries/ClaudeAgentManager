@@ -65,7 +65,7 @@ function AgentCard({ agent }: AgentCardProps) {
       {agent.project_id && agent.role && (
         <p className="inline-flex items-center gap-1.5 px-2 py-0.5 mb-1 bg-lumi-600/10 border border-lumi-500/20 rounded-full text-xs text-lumi-400 truncate">
           <FolderKanban size={10} />
-          <span className="truncate">{agent.project_name || 'Project'} · {agent.role}</span>
+          <span className="truncate">{agent.project_name || 'Project'} · {agent.role_label ?? 'Custom'}</span>
         </p>
       )}
 

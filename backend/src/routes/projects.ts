@@ -498,12 +498,12 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     const { role: rawRole, prompt, folder_path, effort: requestedEffort, model: requestedModel } = req.body;
 
-    // Resolve short role IDs/display names (e.g. "pm", "PM") to their full definitions.
-    // Agents need the full definition as their system context — short labels give no context.
+    // Normalize role to predefined ID if it matches by ID, displayName, or full definition.
+    // IDs are stored in the DB; the full definition is resolved at message injection time.
     const resolvedPredefined = PREDEFINED_ROLES.find(
-      (r) => r.id === rawRole || r.displayName === rawRole
+      (r) => r.id === rawRole || r.displayName === rawRole || r.fullDefinition === rawRole
     );
-    const role = resolvedPredefined ? resolvedPredefined.fullDefinition : rawRole;
+    const role = resolvedPredefined ? resolvedPredefined.id : rawRole;
 
     // Check active agent count vs max_concurrent
     const activeCount = getActiveProjectAgentCount(id);

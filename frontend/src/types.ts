@@ -19,6 +19,7 @@ export interface Agent {
   project_id?: string;
   project_name?: string;
   role?: string;
+  role_label?: string | null;
   parent_agent_id?: string;
   effort?: string;
   model?: string;

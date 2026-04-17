@@ -815,8 +815,9 @@ private fun AgentCard(
                         Text(
                             text = buildString {
                                 append(agent.projectName ?: "Project")
-                                if (!agent.role.isNullOrBlank()) {
-                                    append(" \u00B7 ${agent.role}")
+                                val roleDisplay = agent.roleLabel ?: if (!agent.role.isNullOrBlank()) "Custom" else null
+                                if (roleDisplay != null) {
+                                    append(" \u00B7 $roleDisplay")
                                 }
                             },
                             style = MaterialTheme.typography.labelSmall,

@@ -37,6 +37,29 @@ import { logger } from "../logger.js";
 import { dispatchWebhook } from "../webhook-dispatcher.js";
 import { onAgentStatusChange } from "../workflow-engine.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
+import { PREDEFINED_ROLES } from "./roles.js";
+
+// Resolves a role (predefined ID, displayName, or full definition) to its display name.
+function resolveRoleLabel(role: unknown): string | null {
+  if (!role || typeof role !== "string") return null;
+  const match = PREDEFINED_ROLES.find(
+    (r) => r.id === role || r.displayName === role || r.fullDefinition === role
+  );
+  return match ? match.displayName : null;
+}
+
+// Resolves a role to its full definition for injection into agent messages.
+// If the stored value is a predefined ID or displayName, returns the full definition.
+// Otherwise returns the raw string (custom role).
+function resolveRoleDefinition(role: string | null | undefined): string | null {
+  if (!role) return null;
+  const match = PREDEFINED_ROLES.find((r) => r.id === role || r.displayName === role);
+  return match ? match.fullDefinition : role;
+}
+
+function withRoleLabel(agent: Record<string, unknown>): Record<string, unknown> {
+  return { ...agent, role_label: resolveRoleLabel(agent.role) };
+}
 
 // Disk storage for file uploads
 const storage = multer.diskStorage({
@@ -77,7 +100,7 @@ router.get("/", (req: Request, res: Response) => {
     const limit = parseIntQuery(req.query.limit, 50, 100);
     const cursor = req.query.cursor as string | undefined;
     const result = getAllAgents(limit, cursor);
-    res.json(result);
+    res.json({ ...result, data: result.data.map(withRoleLabel) });
   } catch (err) {
     logger.error({ err }, "Error listing agents");
     res.status(500).json({ error: "Failed to list agents" });
@@ -386,7 +409,7 @@ router.get("/:id", (req: Request, res: Response) => {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    res.json(agent);
+    res.json(withRoleLabel(agent as Record<string, unknown>));
   } catch (err) {
     logger.error({ err }, "Error getting agent");
     res.status(500).json({ error: "Failed to get agent" });
@@ -909,8 +932,9 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       const agentProjectId = agent.project_id as string | null;
       const agentStatus = agent.status as string | null;
 
-      const isPM = agentRole === "PM" ||
-        (typeof agentRole === "string" && agentRole.trimStart().toLowerCase().startsWith("you are a project manager"));
+      const isPM = agentRole === "pm" || agentRole === "PM" ||
+        (typeof agentRole === "string" && agentRole.trimStart().toLowerCase().startsWith("you are a project manager")) ||
+        resolveRoleDefinition(agentRole)?.trimStart().toLowerCase().startsWith("you are a project manager");
 
       // Look up the project's PM agent ID (only for non-PM sub-agents with a project)
       let pmAgentId: string | null = null;
@@ -920,8 +944,10 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       }
 
       // Section 1: ROLE (if role set and agent not completed)
+      // Resolve role ID/displayName to full definition before injection.
       let ROLE_SECTION = "";
       if (agentStatus !== "completed" && agentRole) {
+        const roleDefinition = resolveRoleDefinition(agentRole) ?? agentRole;
         if (isPM) {
           ROLE_SECTION = `
 
@@ -929,7 +955,7 @@ router.get("/:id/messages", (req: Request, res: Response) => {
         } else {
           ROLE_SECTION = `
 
-[ROLE] ${agentRole}`;
+[ROLE] ${roleDefinition}`;
         }
       }
 
