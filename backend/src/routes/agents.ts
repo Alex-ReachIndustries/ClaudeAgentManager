@@ -39,12 +39,24 @@ import { onAgentStatusChange } from "../workflow-engine.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
+// Prefix length used for fuzzy-matching stored role text against predefined definitions.
+// Definitions may evolve over time; matching on the first N chars is robust to updates.
+const ROLE_PREFIX_LEN = 80;
+
+function matchesPredefinedRole(role: string, candidate: { id: string; displayName: string; fullDefinition: string }): boolean {
+  if (candidate.id === role || candidate.displayName === role || candidate.fullDefinition === role) return true;
+  if (role.length >= ROLE_PREFIX_LEN) {
+    const rolePrefix = role.trim().slice(0, ROLE_PREFIX_LEN);
+    const defPrefix = candidate.fullDefinition.trim().slice(0, ROLE_PREFIX_LEN);
+    return rolePrefix === defPrefix;
+  }
+  return false;
+}
+
 // Resolves a role (predefined ID, displayName, or full definition) to its display name.
 function resolveRoleLabel(role: unknown): string | null {
   if (!role || typeof role !== "string") return null;
-  const match = PREDEFINED_ROLES.find(
-    (r) => r.id === role || r.displayName === role || r.fullDefinition === role
-  );
+  const match = PREDEFINED_ROLES.find((r) => matchesPredefinedRole(role, r));
   return match ? match.displayName : null;
 }
 
@@ -53,7 +65,7 @@ function resolveRoleLabel(role: unknown): string | null {
 // Otherwise returns the raw string (custom role).
 function resolveRoleDefinition(role: string | null | undefined): string | null {
   if (!role) return null;
-  const match = PREDEFINED_ROLES.find((r) => r.id === role || r.displayName === role);
+  const match = PREDEFINED_ROLES.find((r) => matchesPredefinedRole(role, r));
   return match ? match.fullDefinition : role;
 }
 
