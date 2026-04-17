@@ -20,6 +20,7 @@ import { broadcast } from "../sse.js";
 import { validate } from "../middleware/validate.js";
 import { projectCreateSchema, projectUpdateSchema, spawnAgentSchema } from "../schemas.js";
 import { logger } from "../logger.js";
+import { PREDEFINED_ROLES } from "./roles.js";
 
 const router = Router();
 
@@ -495,7 +496,14 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
       return;
     }
 
-    const { role, prompt, folder_path, effort: requestedEffort, model: requestedModel } = req.body;
+    const { role: rawRole, prompt, folder_path, effort: requestedEffort, model: requestedModel } = req.body;
+
+    // Resolve short role IDs/display names (e.g. "pm", "PM") to their full definitions.
+    // Agents need the full definition as their system context — short labels give no context.
+    const resolvedPredefined = PREDEFINED_ROLES.find(
+      (r) => r.id === rawRole || r.displayName === rawRole
+    );
+    const role = resolvedPredefined ? resolvedPredefined.fullDefinition : rawRole;
 
     // Check active agent count vs max_concurrent
     const activeCount = getActiveProjectAgentCount(id);
