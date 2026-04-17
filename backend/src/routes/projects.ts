@@ -498,11 +498,16 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     const { role: rawRole, prompt, folder_path, effort: requestedEffort, model: requestedModel } = req.body;
 
-    // Normalize role to predefined ID if it matches by ID, displayName, or full definition.
+    // Normalize role to predefined ID if it matches by ID, displayName, or full definition prefix.
     // IDs are stored in the DB; the full definition is resolved at message injection time.
-    const resolvedPredefined = PREDEFINED_ROLES.find(
-      (r) => r.id === rawRole || r.displayName === rawRole || r.fullDefinition === rawRole
-    );
+    const ROLE_PREFIX_LEN = 80;
+    const resolvedPredefined = PREDEFINED_ROLES.find((r) => {
+      if (r.id === rawRole || r.displayName === rawRole || r.fullDefinition === rawRole) return true;
+      if (rawRole && rawRole.length >= ROLE_PREFIX_LEN) {
+        return rawRole.trim().slice(0, ROLE_PREFIX_LEN) === r.fullDefinition.trim().slice(0, ROLE_PREFIX_LEN);
+      }
+      return false;
+    });
     const role = resolvedPredefined ? resolvedPredefined.id : rawRole;
 
     // Check active agent count vs max_concurrent
