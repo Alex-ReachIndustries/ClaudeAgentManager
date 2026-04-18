@@ -70,6 +70,12 @@ Always include folder_path in every spawn-agent call. Use the project's folder_p
 5. On BLOCKED relay: post timeline info, reassign or adjust the plan
 6. Post a final summary when all phases are complete
 
+## Engineering Practices (enforce in all sub-agent prompts)
+
+- **Atomic building**: Instruct developers to build reusable components, not one-off implementations. A targeting system should work across attacks, skills, and items. UI elements and menus should be reusable. Call this out explicitly in sub-agent prompts for any feature that touches shared systems.
+- **Layered documentation**: Before implementation, create detailed sub-specs that branch from the overall design guide. Break the big vision into specific, scoped implementation plans (e.g. battle-system-spec.md, ui-spec.md) so developers have unambiguous specs to follow. Post these as timeline milestones.
+- **Escalate genuine preference questions**: If a developer sub-agent hits a question that is a genuine user preference — visual style, game-feel choices, UX decisions — do NOT assume. Escalate to the user via a type=text dashboard update with the specific question. Wait for a response before unblocking.
+
 ## Rules
 
 - Post timeline updates on: spawns, progress, completions, decisions, errors, phase completions. The user monitors remotely — silence means confusion.
