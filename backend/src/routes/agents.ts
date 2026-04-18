@@ -73,6 +73,15 @@ function withRoleLabel(agent: Record<string, unknown>): Record<string, unknown> 
   return { ...agent, role_label: resolveRoleLabel(agent.role) };
 }
 
+// Normalizes a role value to its predefined ID if it matches any predefined role.
+// Accepts IDs, displayNames, full definitions, or prefix-matching text.
+// Returns the raw string unchanged for custom (non-predefined) roles.
+function normalizeRole(role: string | null | undefined): string | null | undefined {
+  if (!role) return role;
+  const match = PREDEFINED_ROLES.find((r) => matchesPredefinedRole(role, r));
+  return match ? match.id : role;
+}
+
 // Disk storage for file uploads
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -690,7 +699,7 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
     if (workspace !== undefined) fields.workspace = workspace;
     if (cwd !== undefined) fields.cwd = cwd;
     if (pid !== undefined) fields.pid = pid;
-    if (role !== undefined) fields.role = role;
+    if (role !== undefined) fields.role = normalizeRole(role) ?? role;
     if (task !== undefined) fields.task = task;
     if (effort !== undefined) fields.effort = effort;
     if (model !== undefined) fields.model = model;
@@ -700,10 +709,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
 
     // If a PM agent is self-linking to a project, activate the project and set pm_agent_id
     if (project_id) {
-      const effectiveRole = (role ?? (agent.role as string | null)) || "";
-      const isPM = effectiveRole.trimStart().toLowerCase().startsWith("you are a project manager") ||
-                   effectiveRole.trimStart().toLowerCase().startsWith("you are the pm") ||
-                   effectiveRole.trim() === "PM";
+      const effectiveRole = normalizeRole(role ?? (agent.role as string | null)) || "";
+      const isPM = effectiveRole === "pm" || resolveRoleDefinition(effectiveRole)?.trimStart().toLowerCase().startsWith("you are a project manager");
       if (isPM) {
         updateProject(project_id, {
           pm_agent_id: id,

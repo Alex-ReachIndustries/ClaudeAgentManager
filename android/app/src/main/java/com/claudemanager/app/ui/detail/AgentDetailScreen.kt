@@ -693,14 +693,18 @@ private fun AgentMetricsPanel(
             color = LumiOnSurfaceSecondary
         )
 
-        // Initialise: if the current role matches a predefined full definition, select it;
-        // otherwise fall back to Custom with the current value as free text.
-        val initialRoleIndex = remember(agent.role) {
-            PREDEFINED_ROLES.indexOfFirst { it.fullDefinition == agent.role }
+        // Initialise: use role_label from API (already resolved server-side) to find the
+        // matching predefined role by displayName. Falls back to Custom for non-predefined roles.
+        val initialRoleIndex = remember(agent.role, agent.roleLabel) {
+            if (!agent.roleLabel.isNullOrBlank()) {
+                PREDEFINED_ROLES.indexOfFirst { it.displayName == agent.roleLabel }
+            } else {
+                PREDEFINED_ROLES.indexOfFirst { it.id == agent.role || it.fullDefinition == agent.role }
+            }
         }
-        var selectedRoleIndex by remember(agent.role) { mutableStateOf(initialRoleIndex) }
+        var selectedRoleIndex by remember(agent.role, agent.roleLabel) { mutableStateOf(initialRoleIndex) }
         var roleDropdownExpanded by remember { mutableStateOf(false) }
-        var customRoleInput by remember(agent.role) {
+        var customRoleInput by remember(agent.role, agent.roleLabel) {
             mutableStateOf(if (initialRoleIndex < 0) agent.role ?: "" else "")
         }
 
@@ -826,7 +830,7 @@ private fun AgentMetricsPanel(
 
         Button(
             onClick = {
-                val finalRole = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].fullDefinition
+                val finalRole = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].id
                                else customRoleInput.takeIf { it.isNotBlank() }
                 onUpdateFields(
                     finalRole,
