@@ -992,7 +992,7 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 ---
 [SESSION MANAGER RULES — mandatory, always follow]
 1. Restart your message watcher IMMEDIATELY after processing this message
-2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do
+2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do. CRITICAL: posting any status update auto-acknowledges ALL delivered messages on the server — NEVER add ID-based filtering to the watcher to suppress a repeating message. If a message keeps reappearing it is unacknowledged; post a checkin and it will stop. Filtering the whole batch by message ID causes silent loss of any other messages in that batch.
 3. Post progress updates at roughly 25%, 50%, 75% of the task — do NOT batch all updates to the end
 4. Post a completion update explaining exactly what was achieved when done
 5. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue
