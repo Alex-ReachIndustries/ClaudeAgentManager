@@ -7,6 +7,8 @@ import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.sse.SSEClient
+import com.claudemanager.app.ui.PredefinedRole
+import com.claudemanager.app.ui.PREDEFINED_ROLES
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +39,8 @@ data class AgentListUiState(
     val sortOption: SortOption = SortOption.ACTIVITY,
     val isMultiSelectMode: Boolean = false,
     val selectedAgentIds: Set<String> = emptySet(),
-    val isArchiving: Boolean = false
+    val isArchiving: Boolean = false,
+    val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES
 )
 
 /**
@@ -59,7 +62,18 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         loadAgents()
+        loadRoles()
         startPolling()
+    }
+
+    private fun loadRoles() {
+        viewModelScope.launch {
+            repository.getRoles().onSuccess { roles ->
+                _uiState.update {
+                    it.copy(predefinedRoles = roles.map { r -> PredefinedRole(r.id, r.displayName, r.fullDefinition) })
+                }
+            }
+        }
     }
 
     private fun startPolling() {

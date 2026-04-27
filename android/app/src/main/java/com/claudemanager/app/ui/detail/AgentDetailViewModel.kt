@@ -15,6 +15,8 @@ import com.claudemanager.app.data.models.AgentStatus
 import com.claudemanager.app.data.models.AgentCostBreakdownResponse
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.sse.SSEEvent
+import com.claudemanager.app.ui.PredefinedRole
+import com.claudemanager.app.ui.PREDEFINED_ROLES
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,7 +78,8 @@ data class AgentDetailUiState(
     val isSharingFile: Boolean = false,
     val costBreakdown: AgentCostBreakdownResponse? = null,
     val isLoadingCosts: Boolean = false,
-    val pendingDownload: PendingDownload? = null
+    val pendingDownload: PendingDownload? = null,
+    val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES
 )
 
 /**
@@ -104,9 +107,20 @@ class AgentDetailViewModel(
 
     init {
         loadAll()
+        loadRoles()
         markRead()
         startPolling()
         listenForTerminalOutput()
+    }
+
+    private fun loadRoles() {
+        viewModelScope.launch {
+            repository.getRoles().onSuccess { roles ->
+                _uiState.update {
+                    it.copy(predefinedRoles = roles.map { r -> PredefinedRole(r.id, r.displayName, r.fullDefinition) })
+                }
+            }
+        }
     }
 
     /**

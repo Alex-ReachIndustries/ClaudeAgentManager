@@ -52,6 +52,11 @@ class AgentRepository {
     private val api: AgentApi
         get() = ApiClient.getAgentApi()
 
+    // ── Roles ────────────────────────────────────────────────────────────
+
+    /** Fetch predefined roles from the server. */
+    suspend fun getRoles() = apiCall { api.getRoles() }
+
     // ── Agents ──────────────────────────────────────────────────────────
 
     /**

@@ -17,6 +17,7 @@ import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.HealthResponse
 import com.claudemanager.app.data.models.OkResponse
+import com.claudemanager.app.data.models.PredefinedRoleResponse
 import com.claudemanager.app.data.models.Project
 import com.claudemanager.app.data.models.ProjectFile
 import com.claudemanager.app.data.models.ProjectUpdate
@@ -62,6 +63,12 @@ interface AgentApi {
 
     @GET("api/health")
     suspend fun checkHealth(): Response<HealthResponse>
+
+    // ── Roles ────────────────────────────────────────────────────────────
+
+    /** Fetch all predefined agent roles from the server. */
+    @GET("api/roles")
+    suspend fun getRoles(): Response<List<PredefinedRoleResponse>>
 
     // ── Agents CRUD ─────────────────────────────────────────────────────
 

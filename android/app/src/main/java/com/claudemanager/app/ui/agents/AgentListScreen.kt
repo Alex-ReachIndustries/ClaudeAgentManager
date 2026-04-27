@@ -96,7 +96,6 @@ import com.claudemanager.app.ui.theme.LumiWarning
 import com.claudemanager.app.ui.theme.agentStatusColor
 import com.claudemanager.app.util.TimeUtils
 import com.claudemanager.app.ui.PredefinedRole
-import com.claudemanager.app.ui.PREDEFINED_ROLES
 
 
 /**
@@ -407,6 +406,7 @@ fun AgentListScreen(
     }
 
     if (showRoleTaskDialog && selectedFolder != null) {
+        val predefinedRoles = state.predefinedRoles
         var selectedRoleIndex by remember { mutableStateOf(-1) }  // -1 = Custom
         var roleDropdownExpanded by remember { mutableStateOf(false) }
         var customRoleText by remember { mutableStateOf("") }
@@ -440,7 +440,7 @@ fun AgentListScreen(
                     // Role dropdown
                     Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
-                            value = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].displayName else "Custom",
+                            value = if (selectedRoleIndex >= 0) predefinedRoles[selectedRoleIndex].displayName else "Custom",
                             onValueChange = {},
                             readOnly = true,
                             label = { Text("Role (optional)") },
@@ -456,7 +456,7 @@ fun AgentListScreen(
                             expanded = roleDropdownExpanded,
                             onDismissRequest = { roleDropdownExpanded = false }
                         ) {
-                            PREDEFINED_ROLES.forEachIndexed { idx, role ->
+                            predefinedRoles.forEachIndexed { idx, role ->
                                 androidx.compose.material3.DropdownMenuItem(
                                     text = { Text(role.displayName, color = if (idx == selectedRoleIndex) LumiPurple500 else LumiOnSurface) },
                                     onClick = { selectedRoleIndex = idx; roleDropdownExpanded = false }
@@ -557,7 +557,7 @@ fun AgentListScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val finalRole = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].fullDefinition
+                        val finalRole = if (selectedRoleIndex >= 0) predefinedRoles[selectedRoleIndex].fullDefinition
                                         else customRoleText.takeIf { it.isNotBlank() }
                         viewModel.launchNewAgent(
                             selectedFolder!!,

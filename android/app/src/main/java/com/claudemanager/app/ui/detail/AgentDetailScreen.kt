@@ -94,7 +94,6 @@ import com.claudemanager.app.ui.theme.LumiPurple500
 import com.claudemanager.app.ui.theme.agentStatusColor
 import com.claudemanager.app.util.TimeUtils
 import com.claudemanager.app.ui.PredefinedRole
-import com.claudemanager.app.ui.PREDEFINED_ROLES
 import androidx.compose.material.icons.filled.ExpandMore
 
 /**
@@ -473,6 +472,7 @@ fun AgentDetailScreen(
                                 files = state.files,
                                 otherAgents = state.otherAgents,
                                 isSharingFile = state.isSharingFile,
+                                predefinedRoles = state.predefinedRoles,
                                 onFileClick = { fileId ->
                                     val file = state.files.find { it.id == fileId }
                                     val filename = file?.filename ?: "download"
@@ -555,6 +555,7 @@ private fun InfoTab(
     files: List<com.claudemanager.app.data.models.FileInfo>,
     otherAgents: List<Agent>,
     isSharingFile: Boolean,
+    predefinedRoles: List<PredefinedRole>,
     onFileClick: (Long) -> Unit,
     onShareFile: (Long, String) -> Unit,
     onLoadOtherAgents: () -> Unit,
@@ -565,6 +566,7 @@ private fun InfoTab(
         AgentMetricsPanel(
             agent = agent,
             messages = messages,
+            predefinedRoles = predefinedRoles,
             onUpdateFields = onUpdateFields,
             modifier = Modifier
                 .fillMaxWidth()
@@ -592,6 +594,7 @@ private fun InfoTab(
 private fun AgentMetricsPanel(
     agent: Agent?,
     messages: List<com.claudemanager.app.data.models.AgentMessage>,
+    predefinedRoles: List<PredefinedRole>,
     onUpdateFields: (role: String?, effort: String?, model: String?) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
@@ -695,23 +698,24 @@ private fun AgentMetricsPanel(
 
         // Initialise: use role_label from API (already resolved server-side) to find the
         // matching predefined role by displayName. Falls back to Custom for non-predefined roles.
-        val initialRoleIndex = remember(agent.role, agent.roleLabel) {
+        // predefinedRoles.size is a key so this recomputes once when server roles are fetched.
+        val initialRoleIndex = remember(agent.role, agent.roleLabel, predefinedRoles.size) {
             if (!agent.roleLabel.isNullOrBlank()) {
-                PREDEFINED_ROLES.indexOfFirst { it.displayName == agent.roleLabel }
+                predefinedRoles.indexOfFirst { it.displayName == agent.roleLabel }
             } else {
-                PREDEFINED_ROLES.indexOfFirst { it.id == agent.role || it.fullDefinition == agent.role }
+                predefinedRoles.indexOfFirst { it.id == agent.role || it.fullDefinition == agent.role }
             }
         }
-        var selectedRoleIndex by remember(agent.role, agent.roleLabel) { mutableStateOf(initialRoleIndex) }
+        var selectedRoleIndex by remember(agent.role, agent.roleLabel, predefinedRoles.size) { mutableStateOf(initialRoleIndex) }
         var roleDropdownExpanded by remember { mutableStateOf(false) }
-        var customRoleInput by remember(agent.role, agent.roleLabel) {
+        var customRoleInput by remember(agent.role, agent.roleLabel, predefinedRoles.size) {
             mutableStateOf(if (initialRoleIndex < 0) agent.role ?: "" else "")
         }
 
         // Role dropdown
         Box(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
-                value = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].displayName else "Custom",
+                value = if (selectedRoleIndex >= 0) predefinedRoles[selectedRoleIndex].displayName else "Custom",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Role") },
@@ -731,7 +735,7 @@ private fun AgentMetricsPanel(
                 expanded = roleDropdownExpanded,
                 onDismissRequest = { roleDropdownExpanded = false }
             ) {
-                PREDEFINED_ROLES.forEachIndexed { idx, role ->
+                predefinedRoles.forEachIndexed { idx, role ->
                     DropdownMenuItem(
                         text = { Text(role.displayName, color = if (idx == selectedRoleIndex) LumiPurple500 else LumiOnSurface) },
                         onClick = { selectedRoleIndex = idx; roleDropdownExpanded = false }
@@ -830,7 +834,7 @@ private fun AgentMetricsPanel(
 
         Button(
             onClick = {
-                val finalRole = if (selectedRoleIndex >= 0) PREDEFINED_ROLES[selectedRoleIndex].id
+                val finalRole = if (selectedRoleIndex >= 0) predefinedRoles[selectedRoleIndex].id
                                else customRoleInput.takeIf { it.isNotBlank() }
                 onUpdateFields(
                     finalRole,
