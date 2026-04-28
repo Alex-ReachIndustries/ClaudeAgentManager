@@ -162,7 +162,7 @@ export const retentionSettingsSchema = z.object({
 
 export const projectCreateSchema = z.object({
   name: z.string().min(1).max(200),
-  description: z.string().max(5000).default(""),
+  description: z.string().max(65_536).default(""),
   folder_path: z.string().max(500).default(""),
   max_concurrent: z.number().int().min(1).max(10).default(4),
   pm_role: z.string().max(65_536).optional(),
