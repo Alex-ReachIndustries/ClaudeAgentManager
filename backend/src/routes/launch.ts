@@ -87,6 +87,13 @@ router.patch("/:id", (req: Request, res: Response) => {
       return;
     }
 
+    // Atomic claim guard: reject if already claimed/completed to prevent double-spawn
+    // when two concurrent launcher invocations race to claim the same request.
+    if (status === "claimed" && (existing as Record<string, unknown>).status !== "pending") {
+      res.status(409).json({ error: `Cannot claim request with status '${(existing as Record<string, unknown>).status}'` });
+      return;
+    }
+
     // Check if the existing agent_id contains project metadata (JSON from project start/spawn)
     const existingRecord = existing as Record<string, unknown>;
     let projectMeta: { project_id?: string; role?: string; prompt?: string; parent_agent_id?: string } | null = null;

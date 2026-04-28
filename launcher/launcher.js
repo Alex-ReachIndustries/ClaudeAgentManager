@@ -415,9 +415,16 @@ async function processPendingRequests() {
   }
 }
 
-// Main loop
+// Main loop — use recursive setTimeout so concurrent invocations can't overlap.
+// setInterval does not await async callbacks, meaning if a poll takes >3s (e.g.
+// HTTPS Tailscale latency), the next tick fires before the first finishes and
+// both invocations see the same 'pending' request → double spawn.
 log(`Agent Launcher started — polling ${SERVER_URL} every ${POLL_INTERVAL / 1000}s`);
 log(`User home: ${USER_HOME}`);
 
-setInterval(processPendingRequests, POLL_INTERVAL);
-processPendingRequests(); // Run immediately on start
+async function schedulePoll() {
+  await processPendingRequests();
+  setTimeout(schedulePoll, POLL_INTERVAL);
+}
+
+schedulePoll();

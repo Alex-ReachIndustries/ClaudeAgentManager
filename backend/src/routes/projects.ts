@@ -541,8 +541,23 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
         : maxModel
       : maxModel;
 
-    // Create launch request with project metadata
+    // Deduplication: reject if an identical spawn was already requested within the last 10s.
+    // Prevents double-spawns caused by PM retry-on-slow-response or rapid double-click.
     const db = getDb();
+    const recent = db.prepare(
+      `SELECT id FROM launch_requests
+       WHERE type = 'new'
+         AND status IN ('pending', 'claimed')
+         AND agent_id LIKE '%"project_id":"' || ? || '"%'
+         AND agent_id LIKE '%"role":"' || ? || '"%'
+         AND created_at > datetime('now', '-10 seconds')`
+    ).get(id, role);
+    if (recent) {
+      res.status(409).json({ error: `Duplicate spawn: an identical request was already submitted within the last 10 seconds (launch request ${(recent as Record<string, unknown>).id})` });
+      return;
+    }
+
+    // Create launch request with project metadata
     const launchResult = createLaunchRequest("new", agentFolderPath);
     const launchRequestId = launchResult.id as number;
 
