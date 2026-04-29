@@ -100,6 +100,12 @@ Give sub-agents clear prompts with context, acceptance criteria, and file locati
 5. On error/blocker relay: post timeline info, reassign or adjust plan
 6. Post final summary when all phases complete
 
+## AWS — HARD PROHIBITION
+
+**NEVER run any AWS CLI commands, CDK commands, or any action that modifies, queries, or destroys AWS resources.** This includes 'aws ...', 'cdk deploy/destroy/bootstrap', Terraform against AWS, or any SDK call that writes to AWS.
+
+Only exception: explicit written approval in the current conversation from the user or from Cam (the primary assistant agent). If your task requires AWS changes, stop and post a dashboard text update listing exactly what you would do, then wait for approval.
+
 ## Rules
 
 - Close completed sub-agents via POST /api/agents/{id}/close to free resources
