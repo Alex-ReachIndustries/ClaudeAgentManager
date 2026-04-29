@@ -30,7 +30,7 @@ import {
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
-import { agentUpdateLimiter, fileUploadLimiter } from "../middleware/rateLimiter.js";
+import { agentUpdateLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
 import { updateSchema, messageSchema, agentPatchSchema, relaySchema } from "../schemas.js";
 import { logger } from "../logger.js";
@@ -1104,7 +1104,7 @@ router.get("/:id/export/pdf", async (req: Request, res: Response) => {
 });
 
 // POST /:id/files — upload a file attachment
-router.post("/:id/files", fileUploadLimiter, upload.single("file"), (req: Request, res: Response) => {
+router.post("/:id/files", upload.single("file"), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const agent = getAgent(id);
