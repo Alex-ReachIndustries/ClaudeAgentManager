@@ -1,11 +1,14 @@
 package com.claudemanager.app.ui.detail.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -18,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material3.HorizontalDivider
@@ -26,6 +31,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,12 +55,6 @@ import com.claudemanager.app.ui.theme.LumiSuccess
 import com.claudemanager.app.ui.theme.LumiWarning
 import com.claudemanager.app.util.TimeUtils
 
-/**
- * Scrollable list of agent updates displayed in reverse chronological order (newest first).
- *
- * Each update shows a type icon, timestamp, and content rendered according to its type
- * (text, progress bar, error message, status transition, or diagram placeholder).
- */
 @Composable
 fun UpdateTimeline(
     updates: List<AgentUpdate>,
@@ -71,7 +74,6 @@ fun UpdateTimeline(
         return
     }
 
-    // Show newest first
     val sortedUpdates = updates.sortedByDescending { it.id }
 
     LazyColumn(
@@ -93,21 +95,38 @@ fun UpdateTimeline(
     }
 }
 
-/**
- * A single update item in the timeline.
- */
 @Composable
 private fun UpdateTimelineItem(update: AgentUpdate) {
     val content = update.parsedContent()
     val typeInfo = updateTypeInfo(update.type)
 
+    // Determine if this item has expandable detail beyond the summary line.
+    // Status: verbose content.status vs short summary.
+    // Text: full content.text vs short summary.
+    val detailText: String? = when (content) {
+        is UpdateContent.Status ->
+            if (!update.summary.isNullOrBlank() && content.status.isNotBlank() && content.status.trim() != update.summary!!.trim())
+                content.status
+            else null
+        is UpdateContent.Text ->
+            if (!update.summary.isNullOrBlank() && content.text.isNotBlank() && content.text.trim() != update.summary!!.trim())
+                content.text
+            else null
+        else -> null
+    }
+    val isExpandable = detailText != null
+    var expanded by remember(update.id) { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (isExpandable) Modifier.clickable { expanded = !expanded }
+                else Modifier
+            )
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.Top
     ) {
-        // Type icon
         Icon(
             imageVector = typeInfo.icon,
             contentDescription = typeInfo.label,
@@ -118,7 +137,6 @@ private fun UpdateTimelineItem(update: AgentUpdate) {
         Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            // Timestamp
             Text(
                 text = TimeUtils.formatTimestamp(update.timestamp),
                 style = MaterialTheme.typography.labelSmall,
@@ -127,17 +145,33 @@ private fun UpdateTimelineItem(update: AgentUpdate) {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Content based on type
             when (content) {
                 is UpdateContent.Text -> {
-                    val displayText = update.summary ?: content.text
+                    // Show summary collapsed, full text when expanded
+                    val collapsed = update.summary ?: content.text
                     Text(
-                        text = displayText,
+                        text = collapsed,
                         style = MaterialTheme.typography.bodyMedium,
                         color = LumiOnSurface,
-                        maxLines = 6,
+                        maxLines = if (isExpandable) 2 else 6,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (isExpandable) {
+                        AnimatedVisibility(
+                            visible = expanded,
+                            enter = expandVertically(),
+                            exit = shrinkVertically()
+                        ) {
+                            Column {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = detailText!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = LumiOnSurfaceSecondary
+                                )
+                            }
+                        }
+                    }
                 }
 
                 is UpdateContent.Progress -> {
@@ -180,11 +214,31 @@ private fun UpdateTimelineItem(update: AgentUpdate) {
                 }
 
                 is UpdateContent.Status -> {
+                    // Show summary collapsed, full verbose content when expanded
+                    val collapsed = update.summary ?: content.status
                     Text(
-                        text = content.status,
+                        text = collapsed,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = LumiOnSurface
+                        color = LumiOnSurface,
+                        maxLines = if (isExpandable) 2 else Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis
                     )
+                    if (isExpandable) {
+                        AnimatedVisibility(
+                            visible = expanded,
+                            enter = expandVertically(),
+                            exit = shrinkVertically()
+                        ) {
+                            Column {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = detailText!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = LumiOnSurfaceSecondary
+                                )
+                            }
+                        }
+                    }
                     if (content.progress > 0) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
@@ -230,21 +284,28 @@ private fun UpdateTimelineItem(update: AgentUpdate) {
                 }
             }
         }
+
+        // Chevron indicator for expandable items
+        if (isExpandable) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = LumiOnSurfaceTertiary,
+                modifier = Modifier
+                    .size(16.dp)
+                    .align(Alignment.CenterVertically)
+            )
+        }
     }
 }
 
-/**
- * Visual metadata for each update type.
- */
 private data class UpdateTypeInfo(
     val icon: ImageVector,
     val label: String,
     val color: androidx.compose.ui.graphics.Color
 )
 
-/**
- * Returns the icon, label, and color for a given [UpdateType].
- */
 private fun updateTypeInfo(type: UpdateType): UpdateTypeInfo = when (type) {
     UpdateType.TEXT -> UpdateTypeInfo(
         icon = Icons.Default.Description,
