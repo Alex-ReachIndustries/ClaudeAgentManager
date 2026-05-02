@@ -68,10 +68,11 @@ export const agentPatchSchema = z.object({
 // --- Launch requests (POST /launch-requests) ---
 
 export const launchRequestSchema = z.object({
-  type: z.enum(["new", "resume", "terminate"]),
+  type: z.enum(["new", "resume", "terminate", "terminate-resume"]),
   folder_path: z.string().max(500).optional(),
   resume_agent_id: z.string().max(100).optional(),
   target_pid: z.number().int().positive().optional(),
+  wt_window: z.string().max(200).nullable().optional(),
   role: z.string().max(65_536).optional(),
   task: z.string().max(65_536).optional(),
   effort: z.enum(["low", "medium", "high"]).optional(),

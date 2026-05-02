@@ -135,6 +135,8 @@ fun AgentListScreen(
     val displayAgents = state.filteredAgents
     val activeAgents = displayAgents.filter { it.status != AgentStatus.ARCHIVED }
     val archivedAgents = displayAgents.filter { it.status == AgentStatus.ARCHIVED }
+    // Auto-expand archived section when the ARCHIVED filter chip is active
+    val shouldShowArchived = showArchived || state.selectedFilter == AgentStatus.ARCHIVED
     val pullRefreshState = rememberPullRefreshState(
         refreshing = state.isRefreshing,
         onRefresh = viewModel::refresh
@@ -277,11 +279,13 @@ fun AgentListScreen(
                         }
                     }
                 } else {
-                    // Compute groups from non-archived agents
+                    // Compute groups from non-archived agents.
+                    // Agents with a wtWindow are grouped by that; agents in a project
+                    // with no wtWindow fall back to grouping by project name.
                     val groupedActive = activeAgents
-                        .filter { it.wtWindow != null }
-                        .groupBy { it.wtWindow!! }
-                    val ungroupedActive = activeAgents.filter { it.wtWindow == null }
+                        .filter { it.wtWindow != null || it.projectName != null }
+                        .groupBy { it.wtWindow ?: it.projectName!! }
+                    val ungroupedActive = activeAgents.filter { it.wtWindow == null && it.projectName == null }
 
                     LazyColumn(
                         modifier = Modifier
@@ -311,7 +315,9 @@ fun AgentListScreen(
                                     agents = groupAgents,
                                     isExpanded = isExpanded,
                                     onToggle = { viewModel.toggleGroupExpanded(groupName) },
-                                    onResume = { viewModel.resumeGroup(groupName) }
+                                    onResume = { viewModel.resumeGroup(groupName) },
+                                    onTerminate = { viewModel.terminateGroup(groupName) },
+                                    onTerminateAndResume = { viewModel.terminateAndResumeGroup(groupName) }
                                 )
                             }
                             if (isExpanded) {
@@ -383,15 +389,15 @@ fun AgentListScreen(
                                     )
                                     Spacer(modifier = Modifier.weight(1f))
                                     Icon(
-                                        imageVector = if (showArchived) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                        contentDescription = if (showArchived) "Collapse" else "Expand",
+                                        imageVector = if (shouldShowArchived) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (shouldShowArchived) "Collapse" else "Expand",
                                         tint = LumiOnSurfaceTertiary,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
 
-                            if (showArchived) {
+                            if (shouldShowArchived) {
                                 items(archivedAgents, key = { it.id }) { agent ->
                                     AgentCard(
                                         agent = agent,
@@ -1169,6 +1175,7 @@ private fun SortChipRow(
 
 /**
  * Card representing a named window group with its agents shown as nested cards when expanded.
+ * Tap to expand/collapse. Long-press to open Resume / Terminate / Terminate+Resume actions.
  */
 @Composable
 private fun GroupCard(
@@ -1176,9 +1183,13 @@ private fun GroupCard(
     agents: List<Agent>,
     isExpanded: Boolean,
     onToggle: () -> Unit,
-    onResume: () -> Unit
+    onResume: () -> Unit,
+    onTerminate: () -> Unit,
+    onTerminateAndResume: () -> Unit
 ) {
     val liveCount = agents.count { it.isLive }
+    var showActions by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1189,7 +1200,10 @@ private fun GroupCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onToggle() }
+                .combinedClickable(
+                    onClick = onToggle,
+                    onLongClick = { showActions = true }
+                )
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1214,19 +1228,6 @@ private fun GroupCard(
                     color = LumiOnSurfaceSecondary
                 )
             }
-            if (liveCount > 0) {
-                IconButton(
-                    onClick = onResume,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Resume group",
-                        tint = LumiPurple500,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
             Icon(
                 imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = if (isExpanded) "Collapse" else "Expand",
@@ -1235,6 +1236,70 @@ private fun GroupCard(
             )
         }
     }
+
+    if (showActions) {
+        GroupActionDialog(
+            groupName = groupName,
+            hasLiveAgents = liveCount > 0,
+            onDismiss = { showActions = false },
+            onResume = { showActions = false; onResume() },
+            onTerminate = { showActions = false; onTerminate() },
+            onTerminateAndResume = { showActions = false; onTerminateAndResume() }
+        )
+    }
+}
+
+@Composable
+private fun GroupActionDialog(
+    groupName: String,
+    hasLiveAgents: Boolean,
+    onDismiss: () -> Unit,
+    onResume: () -> Unit,
+    onTerminate: () -> Unit,
+    onTerminateAndResume: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(groupName) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onResume,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = LumiPurple500)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Resume group")
+                }
+                if (hasLiveAgents) {
+                    Button(
+                        onClick = onTerminate,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = LumiError)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Terminate all")
+                    }
+                    Button(
+                        onClick = onTerminateAndResume,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = LumiError)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Terminate + Resume")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        containerColor = LumiCard
+    )
 }
 
 /**

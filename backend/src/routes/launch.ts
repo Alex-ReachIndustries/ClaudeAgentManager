@@ -38,8 +38,13 @@ router.post("/", launchLimiter, validate(launchRequestSchema), (req: Request, re
       return;
     }
 
-    const { target_pid, role, task, effort, model } = req.body;
-    const request = createLaunchRequest(type, folder_path || "", resume_agent_id, target_pid);
+    if (type === "terminate-resume" && !resume_agent_id) {
+      res.status(400).json({ error: "resume_agent_id is required for terminate-resume requests" });
+      return;
+    }
+
+    const { target_pid, role, task, effort, model, wt_window } = req.body;
+    const request = createLaunchRequest(type, folder_path || "", resume_agent_id, target_pid, wt_window);
 
     // If role/task/effort/model provided (from Android new-agent UI), store as metadata for the launcher
     if ((role || task || effort || model) && request.id) {

@@ -113,8 +113,13 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun agentsInGroup(groupName: String): List<Agent> =
+        _uiState.value.agents.filter { agent ->
+            agent.wtWindow == groupName || (agent.wtWindow == null && agent.projectName == groupName)
+        }
+
     fun resumeGroup(groupName: String) {
-        val liveAgents = _uiState.value.agents.filter { it.wtWindow == groupName && it.isLive }
+        val liveAgents = agentsInGroup(groupName).filter { it.isLive }
         viewModelScope.launch {
             liveAgents.forEach { agent ->
                 val cwdPath = (agent.cwd ?: "").replace("\\", "/")
@@ -122,6 +127,37 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     type = "resume",
                     folderPath = cwdPath.ifEmpty { agent.workspace ?: "" },
                     resumeAgentId = agent.id,
+                    wtWindow = groupName
+                )
+            }
+            refresh()
+        }
+    }
+
+    fun terminateGroup(groupName: String) {
+        val liveAgents = agentsInGroup(groupName).filter { it.isLive && it.pid != null }
+        viewModelScope.launch {
+            liveAgents.forEach { agent ->
+                repository.createLaunchRequest(
+                    type = "terminate",
+                    folderPath = "",
+                    targetPid = agent.pid
+                )
+            }
+            refresh()
+        }
+    }
+
+    fun terminateAndResumeGroup(groupName: String) {
+        val targetAgents = agentsInGroup(groupName).filter { it.status != AgentStatus.ARCHIVED }
+        viewModelScope.launch {
+            targetAgents.forEach { agent ->
+                val cwdPath = (agent.cwd ?: "").replace("\\", "/")
+                repository.createLaunchRequest(
+                    type = "terminate-resume",
+                    folderPath = cwdPath.ifEmpty { agent.workspace ?: "" },
+                    resumeAgentId = agent.id,
+                    targetPid = agent.pid,
                     wtWindow = groupName
                 )
             }

@@ -406,6 +406,12 @@ function terminateAgent(pid) {
   }
 }
 
+// Track the last time each wt window name was used in the current process run,
+// so that multiple same-window launches are staggered and the first window has
+// time to register before the second wt.exe fires.
+const wtWindowLastLaunch = new Map();
+const WT_WINDOW_STAGGER_MS = 1500;
+
 async function processPendingRequests() {
   try {
     const requests = await fetchJSON(`${SERVER_URL}/api/launch-requests?status=pending`);
@@ -425,13 +431,95 @@ async function processPendingRequests() {
             log(`Terminate request #${req.id} has no target_pid — skipping`);
           }
         } else if (req.type === 'resume' && req.resume_agent_id) {
-          await launchResumeAgent(req.resume_agent_id, req.folder_path, req.wt_window || null);
+          const wtWin = req.wt_window || null;
+          // Guard: skip if the agent is live unless its PID is confirmed dead.
+          // Primary check: agent status (catches agents with no stored PID).
+          // Secondary check: PID liveness (catches crashed agents still in live status).
+          const LIVE_STATUSES = ['active', 'working', 'idle', 'waiting-for-input', 'standby'];
+          // Recency threshold: if the agent posted an update within this window it is
+          // almost certainly still running, even if its stored PID is stale.
+          const RECENT_THRESHOLD_MS = 90 * 1000; // 90 seconds
+          let agentPid = null;
+          let agentStatus = null;
+          let agentRecentlyActive = false;
+          try {
+            const agent = await fetchJSON(`${SERVER_URL}/api/agents/${req.resume_agent_id}`);
+            agentPid = agent && agent.pid;
+            agentStatus = agent && agent.status;
+            // Check last_update_at recency as a belt-and-suspenders guard
+            const lastUpdate = agent && (agent.last_activity_at || agent.last_update_at);
+            if (lastUpdate) {
+              const msSince = Date.now() - new Date(lastUpdate + 'Z').getTime();
+              agentRecentlyActive = msSince < RECENT_THRESHOLD_MS;
+              if (agentRecentlyActive) {
+                log(`Agent ${req.resume_agent_id} was active ${Math.round(msSince/1000)}s ago`);
+              }
+            }
+          } catch {}
+          const agentIsLive = LIVE_STATUSES.includes(agentStatus);
+          const pidConfirmedDead = agentPid ? !isPidRunning(agentPid) : false;
+          // Skip if: live status AND (recently active OR PID still running)
+          if (agentIsLive && (agentRecentlyActive || !pidConfirmedDead)) {
+            log(`Agent ${req.resume_agent_id} is live (status: ${agentStatus}, recentlyActive: ${agentRecentlyActive}, pidAlive: ${!pidConfirmedDead}) — skipping resume`);
+          } else {
+            if (agentIsLive) {
+              log(`Agent ${req.resume_agent_id} status=${agentStatus} but PID dead and not recently active — allowing resume`);
+            }
+            if (wtWin) {
+              const last = wtWindowLastLaunch.get(wtWin) || 0;
+              const elapsed = Date.now() - last;
+              if (elapsed < WT_WINDOW_STAGGER_MS) {
+                const wait = WT_WINDOW_STAGGER_MS - elapsed;
+                log(`Staggering ${wait}ms for window "${wtWin}" so first tab registers`);
+                await new Promise(r => setTimeout(r, wait));
+              }
+              wtWindowLastLaunch.set(wtWin, Date.now());
+            }
+            await launchResumeAgent(req.resume_agent_id, req.folder_path, wtWin);
+          }
+        } else if (req.type === 'terminate-resume' && req.resume_agent_id) {
+          // Kill existing terminal tab if alive, then resume in a fresh tab.
+          // Look up live PID from DB if not in the request (agent may have updated it since request was made).
+          let terminatePid = req.target_pid || null;
+          try {
+            const agent = await fetchJSON(`${SERVER_URL}/api/agents/${req.resume_agent_id}`);
+            if (agent && agent.pid) terminatePid = agent.pid;
+          } catch {}
+          if (terminatePid && isPidRunning(terminatePid)) {
+            log(`Terminating PID ${terminatePid} before resume of agent ${req.resume_agent_id}`);
+            terminateAgent(terminatePid);
+            await new Promise(r => setTimeout(r, 1500));
+          } else {
+            log(`No live PID to terminate for agent ${req.resume_agent_id} — resuming directly`);
+          }
+          const wtWin = req.wt_window || null;
+          if (wtWin) {
+            const last = wtWindowLastLaunch.get(wtWin) || 0;
+            const elapsed = Date.now() - last;
+            if (elapsed < WT_WINDOW_STAGGER_MS) {
+              const wait = WT_WINDOW_STAGGER_MS - elapsed;
+              log(`Staggering ${wait}ms for window "${wtWin}" so first tab registers`);
+              await new Promise(r => setTimeout(r, wait));
+            }
+            wtWindowLastLaunch.set(wtWin, Date.now());
+          }
+          await launchResumeAgent(req.resume_agent_id, req.folder_path, wtWin);
         } else if (req.type === 'new') {
           let spawnMeta = null;
           if (req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')) {
             try { spawnMeta = JSON.parse(req.agent_id); } catch {}
           }
           const wtWindow = req.wt_window || (spawnMeta && spawnMeta.wt_window) || null;
+          if (wtWindow) {
+            const last = wtWindowLastLaunch.get(wtWindow) || 0;
+            const elapsed = Date.now() - last;
+            if (elapsed < WT_WINDOW_STAGGER_MS) {
+              const wait = WT_WINDOW_STAGGER_MS - elapsed;
+              log(`Staggering ${wait}ms for window "${wtWindow}" so first tab registers`);
+              await new Promise(r => setTimeout(r, wait));
+            }
+            wtWindowLastLaunch.set(wtWindow, Date.now());
+          }
           launchNewAgent(req.folder_path, spawnMeta, wtWindow);
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
@@ -469,8 +557,14 @@ let poolCheckCounter = 0;
 function isPidRunning(pid) {
   if (!pid) return false;
   try {
-    process.kill(pid, 0);
-    return true;
+    // Use PowerShell for a reliable Windows process check.
+    // process.kill(pid, 0) is unreliable on Windows (cmd.exe children of wt.exe).
+    const { execSync } = require('child_process');
+    const result = execSync(
+      `powershell.exe -NoProfile -NonInteractive -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue) -ne $null"`,
+      { windowsHide: true, timeout: 3000 }
+    ).toString().trim();
+    return result === 'True';
   } catch {
     return false;
   }

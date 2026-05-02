@@ -520,6 +520,35 @@ export function getDb(): Database.Database {
     db.pragma("foreign_keys = ON");
   }
 
+  // Migration: add 'terminate-resume' to launch_requests type CHECK constraint + wt_window in INSERT
+  const lrTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='launch_requests'").get() as { sql: string } | undefined;
+  if (lrTable && !lrTable.sql.includes("'terminate-resume'")) {
+    const lrCols = db.prepare("PRAGMA table_info(launch_requests)").all() as { name: string }[];
+    const lrColNames = lrCols.map((c) => c.name).join(", ");
+    db.pragma("foreign_keys = OFF");
+    db.exec(`DROP TABLE IF EXISTS launch_requests_new`);
+    db.exec(`
+      CREATE TABLE launch_requests_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL DEFAULT 'new' CHECK(type IN ('new','resume','terminate','signal','input','terminate-resume')),
+        folder_path TEXT NOT NULL DEFAULT '',
+        resume_agent_id TEXT,
+        target_pid INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','claimed','completed','failed')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        claimed_at TEXT,
+        completed_at TEXT,
+        agent_id TEXT,
+        wt_window TEXT
+      );
+      INSERT INTO launch_requests_new (${lrColNames}) SELECT ${lrColNames} FROM launch_requests;
+      DROP TABLE launch_requests;
+      ALTER TABLE launch_requests_new RENAME TO launch_requests;
+      CREATE INDEX IF NOT EXISTS idx_launch_requests_status ON launch_requests(status);
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
   // Feature 6: Migrate existing BLOBs to filesystem
   migrateFilesToDisk(db);
 
@@ -619,7 +648,7 @@ export function createAgent(id: string, title: string) {
 
 export function updateAgent(
   id: string,
-  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null; base_title?: string; progress?: number }
+  fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; last_read_at?: string; cwd?: string; pid?: number; role?: string; task?: string; project_id?: string | null; base_title?: string; progress?: number; effort?: string; model?: string; wt_window?: string | null }
 ) {
   const db = getDb();
 
@@ -679,6 +708,18 @@ export function updateAgent(
   if (fields.progress !== undefined) {
     setClauses.push("progress = ?");
     values.push(fields.progress);
+  }
+  if (fields.effort !== undefined) {
+    setClauses.push("effort = ?");
+    values.push(fields.effort);
+  }
+  if (fields.model !== undefined) {
+    setClauses.push("model = ?");
+    values.push(fields.model);
+  }
+  if (fields.wt_window !== undefined) {
+    setClauses.push("wt_window = ?");
+    values.push(fields.wt_window);
   }
 
   if (setClauses.length === 0) return;
@@ -968,13 +1009,13 @@ export function deleteAgentFiles(agentId: string): string[] {
 
 // --- Launch requests ---
 
-export function createLaunchRequest(type: string, folderPath: string, resumeAgentId?: string, targetPid?: number) {
+export function createLaunchRequest(type: string, folderPath: string, resumeAgentId?: string, targetPid?: number, wtWindow?: string | null) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO launch_requests (type, folder_path, resume_agent_id, target_pid) VALUES (?, ?, ?, ?)
+    INSERT INTO launch_requests (type, folder_path, resume_agent_id, target_pid, wt_window) VALUES (?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(type, folderPath, resumeAgentId ?? null, targetPid ?? null);
-  return { id: result.lastInsertRowid, type, folder_path: folderPath, resume_agent_id: resumeAgentId ?? null, target_pid: targetPid ?? null, status: 'pending' };
+  const result = stmt.run(type, folderPath, resumeAgentId ?? null, targetPid ?? null, wtWindow ?? null);
+  return { id: result.lastInsertRowid, type, folder_path: folderPath, resume_agent_id: resumeAgentId ?? null, target_pid: targetPid ?? null, wt_window: wtWindow ?? null, status: 'pending' };
 }
 
 export function getLaunchRequestsByStatus(status: string) {

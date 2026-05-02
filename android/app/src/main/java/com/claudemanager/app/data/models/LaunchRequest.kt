@@ -49,7 +49,10 @@ enum class LaunchRequestType {
     RESUME,
 
     @SerializedName("terminate")
-    TERMINATE
+    TERMINATE,
+
+    @SerializedName("terminate-resume")
+    TERMINATE_RESUME
 }
 
 /**
