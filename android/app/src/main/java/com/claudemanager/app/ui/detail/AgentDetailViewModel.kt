@@ -344,13 +344,30 @@ class AgentDetailViewModel(
         viewModelScope.launch {
             repository.createLaunchRequest(
                 type = "resume",
-                folderPath = agent.cwd ?: "",
-                resumeAgentId = agentId
+                folderPath = agent.cwd ?: agent.workspace ?: "",
+                resumeAgentId = agentId,
+                wtWindow = agent.wtWindow
             ).onSuccess {
                 _uiState.update { it.copy(error = null) }
                 refreshAgent()
             }.onFailure { e ->
                 _uiState.update { it.copy(error = e.message ?: "Failed to resume agent") }
+            }
+        }
+    }
+
+    fun terminateAgent() {
+        val agent = _uiState.value.agent ?: return
+        val pid = agent.pid ?: return
+        viewModelScope.launch {
+            repository.createLaunchRequest(
+                type = "terminate",
+                folderPath = "",
+                targetPid = pid
+            ).onSuccess {
+                refreshAgent()
+            }.onFailure { e ->
+                _uiState.update { it.copy(error = e.message ?: "Failed to terminate agent") }
             }
         }
     }
@@ -428,23 +445,22 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Terminate the agent and immediately resume it (restart).
+     * Terminate the agent and immediately resume it (restart) in the same window.
      */
     fun terminateAndResume() {
+        val agent = _uiState.value.agent ?: return
         viewModelScope.launch {
-            repository.closeAgent(agentId)
-                .onSuccess {
-                    // Brief delay to let terminate propagate
-                    kotlinx.coroutines.delay(1000)
-                    repository.resumeAgent(agentId)
-                        .onSuccess { refreshAgent() }
-                        .onFailure { e ->
-                            _uiState.update { it.copy(error = "Resume failed: ${e.message}") }
-                        }
-                }
-                .onFailure { e ->
-                    _uiState.update { it.copy(error = "Terminate failed: ${e.message}") }
-                }
+            repository.createLaunchRequest(
+                type = "terminate-resume",
+                folderPath = agent.cwd ?: agent.workspace ?: "",
+                resumeAgentId = agentId,
+                targetPid = agent.pid,
+                wtWindow = agent.wtWindow
+            ).onSuccess {
+                refreshAgent()
+            }.onFailure { e ->
+                _uiState.update { it.copy(error = "Terminate & Resume failed: ${e.message}") }
+            }
         }
     }
 

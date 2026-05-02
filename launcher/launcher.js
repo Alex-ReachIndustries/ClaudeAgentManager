@@ -432,38 +432,24 @@ async function processPendingRequests() {
           }
         } else if (req.type === 'resume' && req.resume_agent_id) {
           const wtWin = req.wt_window || null;
-          // Guard: skip if the agent is live unless its PID is confirmed dead.
-          // Primary check: agent status (catches agents with no stored PID).
-          // Secondary check: PID liveness (catches crashed agents still in live status).
+          // Guard: skip only if the agent has a confirmed-alive PID. Recency is not
+          // used — it incorrectly blocks agents that were just manually closed.
           const LIVE_STATUSES = ['active', 'working', 'idle', 'waiting-for-input', 'standby'];
-          // Recency threshold: if the agent posted an update within this window it is
-          // almost certainly still running, even if its stored PID is stale.
-          const RECENT_THRESHOLD_MS = 90 * 1000; // 90 seconds
           let agentPid = null;
           let agentStatus = null;
-          let agentRecentlyActive = false;
           try {
             const agent = await fetchJSON(`${SERVER_URL}/api/agents/${req.resume_agent_id}`);
             agentPid = agent && agent.pid;
             agentStatus = agent && agent.status;
-            // Check last_update_at recency as a belt-and-suspenders guard
-            const lastUpdate = agent && (agent.last_activity_at || agent.last_update_at);
-            if (lastUpdate) {
-              const msSince = Date.now() - new Date(lastUpdate + 'Z').getTime();
-              agentRecentlyActive = msSince < RECENT_THRESHOLD_MS;
-              if (agentRecentlyActive) {
-                log(`Agent ${req.resume_agent_id} was active ${Math.round(msSince/1000)}s ago`);
-              }
-            }
           } catch {}
           const agentIsLive = LIVE_STATUSES.includes(agentStatus);
-          const pidConfirmedDead = agentPid ? !isPidRunning(agentPid) : false;
-          // Skip if: live status AND (recently active OR PID still running)
-          if (agentIsLive && (agentRecentlyActive || !pidConfirmedDead)) {
-            log(`Agent ${req.resume_agent_id} is live (status: ${agentStatus}, recentlyActive: ${agentRecentlyActive}, pidAlive: ${!pidConfirmedDead}) — skipping resume`);
+          // No stored PID means we can't confirm liveness → allow resume
+          const pidIsAlive = agentPid ? isPidRunning(agentPid) : false;
+          if (agentIsLive && pidIsAlive) {
+            log(`Agent ${req.resume_agent_id} is live with running PID ${agentPid} — skipping resume`);
           } else {
             if (agentIsLive) {
-              log(`Agent ${req.resume_agent_id} status=${agentStatus} but PID dead and not recently active — allowing resume`);
+              log(`Agent ${req.resume_agent_id} status=${agentStatus} but PID ${agentPid || 'none'} is not running — allowing resume`);
             }
             if (wtWin) {
               const last = wtWindowLastLaunch.get(wtWin) || 0;

@@ -25,10 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material.icons.filled.KeyboardReturn
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
@@ -86,7 +82,6 @@ import com.claudemanager.app.ui.detail.components.TerminalPanel
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
-import com.claudemanager.app.ui.theme.LumiSuccess
 import com.claudemanager.app.ui.theme.LumiOnSurface
 import com.claudemanager.app.ui.theme.LumiOnSurfaceSecondary
 import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
@@ -121,8 +116,6 @@ fun AgentDetailScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showOverflowMenu by remember { mutableStateOf(false) }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var showRelayDialog by remember { mutableStateOf(false) }
     val pullRefreshState = rememberPullRefreshState(
         refreshing = state.isRefreshing,
         onRefresh = viewModel::refreshAll
@@ -213,30 +206,6 @@ fun AgentDetailScreen(
                     }
                 },
                 actions = {
-                    // Ctrl+C button
-                    IconButton(onClick = { viewModel.sendSignal("ctrl-c") }) {
-                        Icon(
-                            imageVector = Icons.Default.StopCircle,
-                            contentDescription = "Send Ctrl+C",
-                            tint = LumiError
-                        )
-                    }
-                    // Enter button
-                    IconButton(onClick = { viewModel.sendSignal("enter") }) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardReturn,
-                            contentDescription = "Send Enter",
-                            tint = LumiOnSurfaceSecondary
-                        )
-                    }
-                    // Continue button — types "continue" + Enter into the agent's terminal
-                    IconButton(onClick = { viewModel.sendInput("continue") }) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Continue",
-                            tint = LumiSuccess
-                        )
-                    }
                     Box {
                         IconButton(onClick = { showOverflowMenu = true }) {
                             Icon(
@@ -251,116 +220,53 @@ fun AgentDetailScreen(
                         ) {
                             val agent = state.agent
                             if (agent != null) {
-                                // Resume (for archived/completed agents)
                                 if (!agent.isLive) {
                                     DropdownMenuItem(
                                         text = { Text("Resume") },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            viewModel.resumeAgent()
-                                        }
+                                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                                        onClick = { showOverflowMenu = false; viewModel.resumeAgent() }
                                     )
                                 }
-
-                                // PDF Export
+                                if (agent.isLive) {
+                                    DropdownMenuItem(
+                                        text = { Text("Terminate") },
+                                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null, tint = LumiError) },
+                                        onClick = { showOverflowMenu = false; viewModel.terminateAgent() }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Terminate & Resume") },
+                                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                                        onClick = { showOverflowMenu = false; viewModel.terminateAndResume() }
+                                    )
+                                }
+                                if (agent.status == AgentStatus.ARCHIVED) {
+                                    DropdownMenuItem(
+                                        text = { Text("Unarchive") },
+                                        leadingIcon = { Icon(Icons.Default.Unarchive, contentDescription = null) },
+                                        onClick = { showOverflowMenu = false; viewModel.unarchiveAgent() }
+                                    )
+                                } else {
+                                    DropdownMenuItem(
+                                        text = { Text("Archive") },
+                                        leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
+                                        onClick = { showOverflowMenu = false; viewModel.archiveAgent() }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = {
                                         if (state.isExporting) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Text("Exporting PDF...")
                                                 Spacer(modifier = Modifier.width(8.dp))
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(16.dp),
-                                                    color = LumiPurple500,
-                                                    strokeWidth = 2.dp
-                                                )
+                                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = LumiPurple500, strokeWidth = 2.dp)
                                             }
                                         } else {
                                             Text("Export PDF")
                                         }
                                     },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.PictureAsPdf, contentDescription = null)
-                                    },
+                                    leadingIcon = { Icon(Icons.Default.PictureAsPdf, contentDescription = null) },
                                     enabled = !state.isExporting,
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        viewModel.exportPdf(context)
-                                    }
-                                )
-
-                                // Send to Agent (relay)
-                                if (agent.isLive) {
-                                    DropdownMenuItem(
-                                        text = { Text("Send to Agent") },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Link, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            viewModel.loadOtherAgents()
-                                            showRelayDialog = true
-                                        }
-                                    )
-                                }
-
-                                if (agent.status == AgentStatus.ARCHIVED) {
-                                    DropdownMenuItem(
-                                        text = { Text("Unarchive") },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Unarchive, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            viewModel.unarchiveAgent()
-                                        }
-                                    )
-                                } else {
-                                    DropdownMenuItem(
-                                        text = { Text("Archive") },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.Archive, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            viewModel.archiveAgent()
-                                        }
-                                    )
-                                    if (agent.isLive) {
-                                        DropdownMenuItem(
-                                            text = { Text("Close & Terminate") },
-                                            leadingIcon = {
-                                                Icon(Icons.Default.Close, contentDescription = null)
-                                            },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                viewModel.closeAgent()
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Terminate & Resume") },
-                                            leadingIcon = {
-                                                Icon(Icons.Default.Refresh, contentDescription = null)
-                                            },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                viewModel.terminateAndResume()
-                                            }
-                                        )
-                                    }
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Delete", color = LumiError) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Delete, contentDescription = null, tint = LumiError)
-                                    },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        showDeleteConfirm = true
-                                    }
+                                    onClick = { showOverflowMenu = false; viewModel.exportPdf(context) }
                                 )
                             }
                         }
@@ -501,49 +407,6 @@ fun AgentDetailScreen(
         }
     }
 
-    // Delete confirmation dialog
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Delete Agent?") },
-            text = {
-                Text(
-                    "This will permanently delete the agent and all its updates, messages, and files. This action cannot be undone."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDeleteConfirm = false
-                        viewModel.deleteAgent(onDeleted = onBack)
-                    }
-                ) {
-                    Text("Delete", color = LumiError)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("Cancel")
-                }
-            },
-            containerColor = LumiCard,
-            titleContentColor = LumiOnSurface,
-            textContentColor = LumiOnSurfaceSecondary
-        )
-    }
-
-    // Relay to another agent dialog
-    if (showRelayDialog) {
-        RelayDialog(
-            otherAgents = state.otherAgents,
-            isRelaying = state.isRelaying,
-            onDismiss = { showRelayDialog = false },
-            onRelay = { targetId, content ->
-                viewModel.relayMessage(targetId, content)
-                showRelayDialog = false
-            }
-        )
-    }
 }
 
 /**
@@ -990,133 +853,3 @@ class AgentDetailViewModelFactory(
     }
 }
 
-/**
- * Dialog for relaying a message from the current agent to another agent.
- * Shows a list of other active agents to select as target, plus a message input.
- */
-@Composable
-private fun RelayDialog(
-    otherAgents: List<com.claudemanager.app.data.models.Agent>,
-    isRelaying: Boolean,
-    onDismiss: () -> Unit,
-    onRelay: (String, String) -> Unit
-) {
-    var selectedAgentId by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Send to Agent") },
-        text = {
-            Column {
-                if (otherAgents.isEmpty()) {
-                    Text(
-                        text = "No other active agents available",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = LumiOnSurfaceTertiary
-                    )
-                } else {
-                    Text(
-                        text = "Select target agent",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = LumiOnSurfaceSecondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    LazyColumn(
-                        modifier = Modifier.height(150.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        items(otherAgents, key = { it.id }) { agent ->
-                            val isSelected = agent.id == selectedAgentId
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (isSelected) LumiPurple500.copy(alpha = 0.15f)
-                                        else LumiCard
-                                    )
-                                    .clickable { selectedAgentId = agent.id }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(agentStatusColor(agent.status))
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = agent.title,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = LumiOnSurface,
-                                        maxLines = 1
-                                    )
-                                    if (!agent.workspace.isNullOrBlank()) {
-                                        Text(
-                                            text = agent.workspace!!.substringAfterLast('/').substringAfterLast('\\'),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = LumiOnSurfaceTertiary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = message,
-                        onValueChange = { message = it },
-                        label = { Text("Message") },
-                        placeholder = { Text("Message to relay...") },
-                        minLines = 2,
-                        maxLines = 4,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = LumiPurple500,
-                            unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
-                            cursorColor = LumiPurple500,
-                            focusedTextColor = LumiOnSurface,
-                            unfocusedTextColor = LumiOnSurface,
-                            focusedLabelColor = LumiPurple500,
-                            unfocusedLabelColor = LumiOnSurfaceTertiary
-                        )
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    selectedAgentId?.let { targetId ->
-                        onRelay(targetId, message)
-                    }
-                },
-                enabled = selectedAgentId != null && message.isNotBlank() && !isRelaying
-            ) {
-                if (isRelaying) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        color = LumiPurple500,
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Text("Send", color = LumiPurple500)
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-        containerColor = LumiCard,
-        titleContentColor = LumiOnSurface,
-        textContentColor = LumiOnSurfaceSecondary
-    )
-}
