@@ -438,6 +438,83 @@ export function getDb(): Database.Database {
     db.pragma("foreign_keys = ON");
   }
 
+  // Pool slot column for standby agent pool feature
+  migrate("ALTER TABLE agents ADD COLUMN pool_slot INTEGER");
+
+  // Migration: add 'standby' to agents status CHECK constraint
+  // NOTE: must drop triggers referencing 'agents' BEFORE rebuilding the table, otherwise
+  // SQLite 3.26+ invalidates them during ALTER TABLE RENAME (it revalidates all references).
+  const agentTableStandby = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
+  if (agentTableStandby && !agentTableStandby.sql.includes("'standby'")) {
+    const cols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+    const colNames = cols.map((c) => c.name).join(", ");
+    db.pragma("foreign_keys = OFF");
+    // Drop triggers that reference agents first — they'd fail validation during RENAME otherwise
+    db.exec(`
+      DROP TRIGGER IF EXISTS after_message_insert;
+      DROP TRIGGER IF EXISTS after_update_insert;
+    `);
+    db.exec(`DROP TABLE IF EXISTS agents_new`);
+    db.exec(`
+      CREATE TABLE agents_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT 'Untitled Agent',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','idle','working','waiting-for-input','completed','archived','standby')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_update_at TEXT NOT NULL DEFAULT (datetime('now')),
+        update_count INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        poll_delay_until TEXT,
+        workspace TEXT,
+        last_read_at TEXT,
+        last_activity_at TEXT,
+        cwd TEXT,
+        pid INTEGER,
+        project_id TEXT,
+        role TEXT,
+        parent_agent_id TEXT,
+        task TEXT,
+        pending_message_count INTEGER DEFAULT 0,
+        unread_update_count INTEGER DEFAULT 0,
+        latest_summary TEXT,
+        latest_message TEXT,
+        last_message_at TEXT,
+        effort TEXT DEFAULT 'high',
+        model TEXT DEFAULT 'claude-sonnet-4-6',
+        base_title TEXT,
+        progress INTEGER DEFAULT 0,
+        pool_slot INTEGER
+      );
+      INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
+      DROP TABLE agents;
+      ALTER TABLE agents_new RENAME TO agents;
+      CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_files_agent_id ON files(agent_id);
+    `);
+    // Recreate triggers after agents table is back in place
+    db.exec(`
+      CREATE TRIGGER after_message_insert AFTER INSERT ON messages
+      BEGIN
+        UPDATE agents SET
+          pending_message_count = pending_message_count + 1,
+          latest_message = NEW.content,
+          last_message_at = NEW.created_at
+        WHERE id = NEW.agent_id;
+      END
+    `);
+    db.exec(`
+      CREATE TRIGGER after_update_insert AFTER INSERT ON updates
+      BEGIN
+        UPDATE agents SET
+          unread_update_count = unread_update_count + 1,
+          latest_summary = COALESCE(NEW.summary, (SELECT latest_summary FROM agents WHERE id = NEW.agent_id))
+        WHERE id = NEW.agent_id;
+      END
+    `);
+    db.pragma("foreign_keys = ON");
+  }
+
   // Feature 6: Migrate existing BLOBs to filesystem
   migrateFilesToDisk(db);
 
@@ -509,6 +586,14 @@ export function getAllAgents(limit: number = 50, cursor?: string): PaginatedResu
       has_more: rows.length === limit,
     };
   }
+}
+
+/** Returns all non-archived pool agents (pool_slot IS NOT NULL) across all projects. */
+export function getPoolAgents(): Record<string, unknown>[] {
+  const db = getDb();
+  return db.prepare(
+    "SELECT a.*, p.name as project_name FROM agents a LEFT JOIN projects p ON a.project_id = p.id WHERE a.pool_slot IS NOT NULL AND a.status != 'archived'"
+  ).all() as Record<string, unknown>[];
 }
 
 export function getAgent(id: string) {

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import {
   getDb,
   getAllAgents,
+  getPoolAgents,
   getAgent,
   createAgent,
   updateAgent,
@@ -115,9 +116,13 @@ function parseIntQuery(value: unknown, defaultVal: number, max: number): number 
   return Math.min(n, max);
 }
 
-// GET / — list all agents
+// GET / — list all agents (pool_only=true returns only standby pool agents for the launcher)
 router.get("/", (req: Request, res: Response) => {
   try {
+    if (req.query.pool_only === "true") {
+      const agents = getPoolAgents();
+      return res.json(agents);
+    }
     const limit = parseIntQuery(req.query.limit, 50, 100);
     const cursor = req.query.cursor as string | undefined;
     const result = getAllAgents(limit, cursor);

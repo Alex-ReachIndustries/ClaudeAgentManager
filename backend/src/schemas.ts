@@ -7,6 +7,7 @@ const agentStatuses = [
   "waiting-for-input",
   "completed",
   "archived",
+  "standby",
 ] as const;
 
 const updateTypes = [

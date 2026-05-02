@@ -104,6 +104,41 @@ async function patchJSON(urlStr, body) {
   });
 }
 
+async function postJSON(urlStr, body) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlStr);
+    const mod = url.protocol === 'https:' ? https : http;
+    const payload = JSON.stringify(body);
+    const req = mod.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          ...(API_KEY ? { 'Authorization': `Bearer ${API_KEY}` } : {}),
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve(data);
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 function resolveFolder(folderPath) {
   if (!folderPath) return USER_HOME;
   // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
@@ -415,6 +450,49 @@ async function processPendingRequests() {
   }
 }
 
+/**
+ * Pool recovery — runs every 30s as a safety net.
+ * Finds standby pool agents whose OS process has died (stale PID) and
+ * creates resume launch requests so they restart automatically.
+ * The PM also does its own pool recovery on startup; this catches mid-session deaths.
+ */
+const POOL_CHECK_INTERVAL = 30000;
+let poolCheckCounter = 0;
+
+function isPidRunning(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function processPoolAgents() {
+  try {
+    const agents = await fetchJSON(`${SERVER_URL}/api/agents?pool_only=true`);
+    if (!Array.isArray(agents) || agents.length === 0) return;
+
+    for (const agent of agents) {
+      if (agent.status === 'archived') continue;
+      if (isPidRunning(agent.pid)) continue;
+
+      // Dead pool agent — create a resume request
+      log(`Pool agent ${agent.id} (slot ${agent.pool_slot}) PID ${agent.pid} is dead — queuing resume`);
+      await postJSON(`${SERVER_URL}/api/launch-requests`, {
+        type: 'resume',
+        resume_agent_id: agent.id,
+        folder_path: agent.workspace || agent.cwd || '',
+      });
+    }
+  } catch (err) {
+    if (!err.message?.includes('ECONNREFUSED')) {
+      log(`Pool check error: ${err.message}`);
+    }
+  }
+}
+
 // Main loop — use recursive setTimeout so concurrent invocations can't overlap.
 // setInterval does not await async callbacks, meaning if a poll takes >3s (e.g.
 // HTTPS Tailscale latency), the next tick fires before the first finishes and
@@ -424,6 +502,14 @@ log(`User home: ${USER_HOME}`);
 
 async function schedulePoll() {
   await processPendingRequests();
+
+  // Run pool check every ~30s (every 10th poll at 3s interval)
+  poolCheckCounter++;
+  if (poolCheckCounter >= 10) {
+    poolCheckCounter = 0;
+    await processPoolAgents();
+  }
+
   setTimeout(schedulePoll, POLL_INTERVAL);
 }
 
