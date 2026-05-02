@@ -346,7 +346,7 @@ class AgentDetailViewModel(
                 type = "resume",
                 folderPath = agent.cwd ?: agent.workspace ?: "",
                 resumeAgentId = agentId,
-                wtWindow = agent.wtWindow
+                wtWindow = agent.wtWindow ?: agent.projectName
             ).onSuccess {
                 _uiState.update { it.copy(error = null) }
                 refreshAgent()
@@ -455,7 +455,7 @@ class AgentDetailViewModel(
                 folderPath = agent.cwd ?: agent.workspace ?: "",
                 resumeAgentId = agentId,
                 targetPid = agent.pid,
-                wtWindow = agent.wtWindow
+                wtWindow = agent.wtWindow ?: agent.projectName
             ).onSuccess {
                 refreshAgent()
             }.onFailure { e ->
