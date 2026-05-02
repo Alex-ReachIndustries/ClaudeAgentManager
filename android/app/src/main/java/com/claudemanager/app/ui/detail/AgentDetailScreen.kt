@@ -220,13 +220,11 @@ fun AgentDetailScreen(
                         ) {
                             val agent = state.agent
                             if (agent != null) {
-                                if (!agent.isLive) {
-                                    DropdownMenuItem(
-                                        text = { Text("Resume") },
-                                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
-                                        onClick = { showOverflowMenu = false; viewModel.resumeAgent() }
-                                    )
-                                }
+                                DropdownMenuItem(
+                                    text = { Text("Resume") },
+                                    leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                                    onClick = { showOverflowMenu = false; viewModel.resumeAgent() }
+                                )
                                 if (agent.isLive) {
                                     DropdownMenuItem(
                                         text = { Text("Terminate") },
