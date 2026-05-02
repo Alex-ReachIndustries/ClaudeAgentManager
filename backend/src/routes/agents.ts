@@ -116,6 +116,20 @@ function parseIntQuery(value: unknown, defaultVal: number, max: number): number 
   return Math.min(n, max);
 }
 
+// GET /wt-windows — list distinct non-null wt_window values for the window group selector
+router.get("/wt-windows", (_req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const rows = db.prepare(
+      "SELECT DISTINCT wt_window FROM agents WHERE wt_window IS NOT NULL AND wt_window != '' AND status != 'archived' ORDER BY wt_window"
+    ).all() as { wt_window: string }[];
+    res.json(rows.map((r) => r.wt_window));
+  } catch (err) {
+    logger.error({ err }, "Error fetching wt_windows");
+    res.status(500).json({ error: "Failed to fetch window groups" });
+  }
+});
+
 // GET / — list all agents (pool_only=true returns only standby pool agents for the launcher)
 router.get("/", (req: Request, res: Response) => {
   try {

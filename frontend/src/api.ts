@@ -150,10 +150,14 @@ export async function sendSignal(agentId: string, signal: 'ctrl-c' | 'enter'): P
 }
 
 // --- Launch requests ---
-export async function createLaunchRequest(type: 'new' | 'resume', folderPath: string, resumeAgentId?: string): Promise<{ ok: boolean; request: unknown }> {
+export async function fetchWtWindows(): Promise<string[]> {
+  return request<string[]>('/agents/wt-windows');
+}
+
+export async function createLaunchRequest(type: 'new' | 'resume', folderPath: string, resumeAgentId?: string, wtWindow?: string): Promise<{ ok: boolean; request: unknown }> {
   return request<{ ok: boolean; request: unknown }>('/launch-requests', {
     method: 'POST',
-    body: JSON.stringify({ type, folder_path: folderPath, resume_agent_id: resumeAgentId }),
+    body: JSON.stringify({ type, folder_path: folderPath, resume_agent_id: resumeAgentId, wt_window: wtWindow || undefined }),
   });
 }
 

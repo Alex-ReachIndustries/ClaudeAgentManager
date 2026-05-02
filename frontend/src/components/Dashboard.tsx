@@ -52,9 +52,9 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
     return Array.from(names);
   }, [agents]);
 
-  const handleLaunch = async (folderPath: string) => {
+  const handleLaunch = async (folderPath: string, wtWindow?: string) => {
     try {
-      await createLaunchRequest('new', folderPath);
+      await createLaunchRequest('new', folderPath, undefined, wtWindow);
       setShowFolderPicker(false);
     } catch (err) {
       console.error('Failed to create launch request:', err);
