@@ -101,7 +101,7 @@ router.patch("/:id", (req: Request, res: Response) => {
 
     // Check if the existing agent_id contains project metadata (JSON from project start/spawn)
     const existingRecord = existing as Record<string, unknown>;
-    let projectMeta: { project_id?: string; role?: string; prompt?: string; parent_agent_id?: string } | null = null;
+    let projectMeta: { project_id?: string; role?: string; prompt?: string; parent_agent_id?: string; wt_window?: string } | null = null;
     if (existingRecord.agent_id && typeof existingRecord.agent_id === "string") {
       try {
         const parsed = JSON.parse(existingRecord.agent_id as string);
@@ -151,10 +151,9 @@ router.patch("/:id", (req: Request, res: Response) => {
           if (projectMeta.role) (agentFields as Record<string, string>).role = projectMeta.role;
           if (projectMeta.parent_agent_id) (agentFields as Record<string, string>).parent_agent_id = projectMeta.parent_agent_id;
 
-          // Use raw SQL since updateAgent doesn't know about project fields yet
           const db = getDb();
-          db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ? WHERE id = ?")
-            .run(projectMeta.project_id || null, projectMeta.role || null, projectMeta.parent_agent_id || null, agent_id);
+          db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, wt_window = ? WHERE id = ?")
+            .run(projectMeta.project_id || null, projectMeta.role || null, projectMeta.parent_agent_id || null, projectMeta.wt_window || null, agent_id);
 
           // If this is a PM agent, link it to the project and send prompts via messages
           if (projectMeta.role === "PM" && projectMeta.project_id) {

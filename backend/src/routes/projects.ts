@@ -297,7 +297,7 @@ router.post("/:id/start", (req: Request, res: Response) => {
       const pmAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(pmAgentId) as Record<string, unknown> | undefined;
       if (pmAgent && (pmAgent.status === "archived" || pmAgent.status === "completed")) {
         const pmCwd = (pmAgent.cwd as string) || folderPath;
-        createLaunchRequest("resume", pmCwd, pmAgentId);
+        createLaunchRequest("resume", pmCwd, pmAgentId, undefined, project.name as string);
         db.prepare("UPDATE agents SET status = 'active' WHERE id = ?").run(pmAgentId);
 
         addProjectUpdate(id, "info", "Project resumed. PM agent being restarted.");
@@ -322,7 +322,8 @@ router.post("/:id/start", (req: Request, res: Response) => {
 
       addProjectUpdate(id, "info", `Project started. PM agent launch request created (ID: ${launchRequestId}).`);
 
-      db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
+      const pmWtWindow = project.name as string;
+      db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
         .run(JSON.stringify({
           project_id: id,
           role: project.pm_role as string || "PM",
@@ -330,7 +331,8 @@ router.post("/:id/start", (req: Request, res: Response) => {
           user_prompt: userPrompt,
           effort: project.pm_effort as string || "high",
           model: project.pm_model as string || "claude-sonnet-4-6",
-        }), launchRequestId);
+          wt_window: pmWtWindow,
+        }), pmWtWindow, launchRequestId);
     }
 
     // Update project status
@@ -607,8 +609,7 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
     const launchResult = createLaunchRequest("new", agentFolderPath);
     const launchRequestId = launchResult.id as number;
 
-    // All project agents share a terminal window named after the project ID
-    const wtWindow = `proj-${id.slice(0, 8)}`;
+    const wtWindow = project.name as string;
     db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
       .run(JSON.stringify({
         project_id: id, role, prompt,
