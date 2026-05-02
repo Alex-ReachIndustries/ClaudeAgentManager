@@ -78,7 +78,10 @@ data class CreateLaunchRequestBody(
     val effort: String? = null,
 
     @SerializedName("model")
-    val model: String? = null
+    val model: String? = null,
+
+    @SerializedName("wt_window")
+    val wtWindow: String? = null
 )
 
 /**
@@ -150,5 +153,8 @@ data class UpdateAgentBody(
     val effort: String? = null,
 
     @SerializedName("model")
-    val model: String? = null
+    val model: String? = null,
+
+    @SerializedName("wt_window")
+    val wtWindow: String? = null
 )

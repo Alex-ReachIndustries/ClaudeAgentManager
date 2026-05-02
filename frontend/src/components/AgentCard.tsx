@@ -11,6 +11,7 @@ const statusConfig = {
   'waiting-for-input': { color: 'bg-orange-400', label: 'Waiting for Input' },
   completed: { color: 'bg-dark-500', label: 'Completed' },
   archived: { color: 'bg-dark-600', label: 'Archived' },
+  standby: { color: 'bg-purple-400', label: 'Standby' },
 } as const;
 
 interface AgentCardProps {

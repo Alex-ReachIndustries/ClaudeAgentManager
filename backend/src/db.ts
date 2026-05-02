@@ -441,6 +441,10 @@ export function getDb(): Database.Database {
   // Pool slot column for standby agent pool feature
   migrate("ALTER TABLE agents ADD COLUMN pool_slot INTEGER");
 
+  // Window group for terminal tab grouping
+  migrate("ALTER TABLE agents ADD COLUMN wt_window TEXT");
+  migrate("ALTER TABLE launch_requests ADD COLUMN wt_window TEXT");
+
   // Migration: add 'standby' to agents status CHECK constraint
   // NOTE: must drop triggers referencing 'agents' BEFORE rebuilding the table, otherwise
   // SQLite 3.26+ invalidates them during ALTER TABLE RENAME (it revalidates all references).
@@ -483,7 +487,8 @@ export function getDb(): Database.Database {
         model TEXT DEFAULT 'claude-sonnet-4-6',
         base_title TEXT,
         progress INTEGER DEFAULT 0,
-        pool_slot INTEGER
+        pool_slot INTEGER,
+        wt_window TEXT
       );
       INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
       DROP TABLE agents;

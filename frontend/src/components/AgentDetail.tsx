@@ -19,6 +19,7 @@ const statusConfig = {
   'waiting-for-input': { color: 'bg-orange-400', label: 'Waiting for Input' },
   completed: { color: 'bg-dark-500', label: 'Completed' },
   archived: { color: 'bg-dark-600', label: 'Archived' },
+  standby: { color: 'bg-purple-400', label: 'Standby' },
 } as const;
 
 function AgentDetail() {
@@ -36,6 +37,8 @@ function AgentDetail() {
   const [effortInput, setEffortInput] = useState('high');
   const [modelInput, setModelInput] = useState('claude-sonnet-4-6');
   const [savingSettings, setSavingSettings] = useState(false);
+  const [wtWindowInput, setWtWindowInput] = useState('');
+  const [savingWtWindow, setSavingWtWindow] = useState(false);
 
   // Fetch files for inline timeline display
   useEffect(() => {
@@ -52,8 +55,9 @@ function AgentDetail() {
       setRoleInput(agent.role ?? '');
       setEffortInput(agent.effort ?? 'high');
       setModelInput(agent.model ?? 'claude-sonnet-4-6');
+      setWtWindowInput(agent.wt_window ?? '');
     }
-  }, [agent?.role, agent?.effort, agent?.model]);
+  }, [agent?.role, agent?.effort, agent?.model, agent?.wt_window]);
 
   // Mark agent as read when viewing detail page
   useEffect(() => {
@@ -336,6 +340,39 @@ function AgentDetail() {
               className="mt-3 w-full px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-dark-300 hover:text-dark-100 rounded-lg border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {savingSettings ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
+          {/* Terminal Window grouping */}
+          <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
+            <h3 className="text-sm font-semibold text-dark-300 mb-3">Terminal Window</h3>
+            <p className="text-xs text-dark-500 mb-2">Group this agent into a named Windows Terminal window. All agents sharing the same name will open as tabs in the same window.</p>
+            <input
+              type="text"
+              value={wtWindowInput}
+              onChange={e => setWtWindowInput(e.target.value)}
+              placeholder="e.g. assistants, proj-abc123"
+              className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-600 focus:outline-none focus:border-dark-600"
+            />
+            {agent.pool_slot != null && (
+              <p className="text-xs text-dark-600 mt-1">Pool slot: {agent.pool_slot}</p>
+            )}
+            <button
+              onClick={async () => {
+                if (!id || savingWtWindow) return;
+                setSavingWtWindow(true);
+                try {
+                  await updateAgent(id, { wt_window: wtWindowInput || null });
+                  refetch();
+                } catch (err) {
+                  console.error('wt_window update failed:', err);
+                } finally {
+                  setSavingWtWindow(false);
+                }
+              }}
+              disabled={savingWtWindow}
+              className="mt-2 w-full px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-dark-300 hover:text-dark-100 rounded-lg border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingWtWindow ? 'Saving...' : 'Save Window'}
             </button>
           </div>
           <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />

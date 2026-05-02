@@ -489,10 +489,12 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                   }
                 }
 
+                const wtWindow = meta.wt_window || (launchReq.wt_window as string | null) || null;
+
                 if (meta.project_id) {
                   // Link the agent to the project and store its task
-                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ? WHERE id = ?")
-                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, id);
+                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ?, wt_window = ? WHERE id = ?")
+                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, id);
 
                   if (meta.role === "PM") {
                     updateProject(meta.project_id, { pm_agent_id: id });
@@ -509,8 +511,8 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                   }
                 } else {
                   // Standalone agent (not part of a project) — store role/task in DB
-                  db.prepare("UPDATE agents SET role = ?, task = ? WHERE id = ?")
-                    .run(meta.role || null, meta.prompt || null, id);
+                  db.prepare("UPDATE agents SET role = ?, task = ?, wt_window = ? WHERE id = ?")
+                    .run(meta.role || null, meta.prompt || null, wtWindow, id);
 
                   if (meta.prompt) {
                     addMessage(id, meta.prompt as string);
@@ -692,8 +694,8 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model, project_id } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string; project_id?: string | null } = {};
+    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model, project_id, wt_window } = req.body;
+    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string; project_id?: string | null; wt_window?: string | null } = {};
 
     if (title !== undefined) fields.title = title;
     if (status !== undefined) fields.status = status;
@@ -709,6 +711,7 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
     if (effort !== undefined) fields.effort = effort;
     if (model !== undefined) fields.model = model;
     if (project_id !== undefined) fields.project_id = project_id;
+    if (wt_window !== undefined) fields.wt_window = wt_window;
 
     updateAgent(id, fields);
 

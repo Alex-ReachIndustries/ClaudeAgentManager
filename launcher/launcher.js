@@ -179,9 +179,9 @@ function ensureWorkspaceTrusted(absolutePath) {
 // Track sidecar processes for cleanup
 // MQTT sidecar removed — agents poll HTTP directly via background watcher
 
-function launchNewAgent(folderPath, spawnMeta) {
+function launchNewAgent(folderPath, spawnMeta, wtWindow) {
   const cwd = resolveFolder(folderPath);
-  log(`Launching NEW agent in: ${cwd}`);
+  log(`Launching NEW agent in: ${cwd}${wtWindow ? ` [window: ${wtWindow}]` : ''}`);
 
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
@@ -221,11 +221,11 @@ function launchNewAgent(folderPath, spawnMeta) {
   const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
   fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
 
-  const proc = spawn('wt.exe', [
-    'new-tab', '--title', tabTitle,
-    '-d', cwd,
-    'cmd', '/k', batchFile
-  ], {
+  const wtArgs = wtWindow
+    ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
+    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
+
+  const proc = spawn('wt.exe', wtArgs, {
     detached: true,
     stdio: 'ignore',
   });
@@ -236,8 +236,9 @@ function launchNewAgent(folderPath, spawnMeta) {
   return proc;
 }
 
-async function launchResumeAgent(agentId, folderPath) {
+async function launchResumeAgent(agentId, folderPath, wtWindow) {
   let cwd = resolveFolder(folderPath);
+  let resolvedWtWindow = wtWindow || null;
 
   // If folder_path wasn't absolute, try fetching the agent's stored cwd from the server
   if (!path.isAbsolute(folderPath || '')) {
@@ -250,12 +251,16 @@ async function launchResumeAgent(agentId, folderPath) {
           .replace(/\//g, '\\');
         log(`Using agent's stored cwd: ${cwd}`);
       }
+      // Also pick up the stored wt_window if not passed explicitly
+      if (!resolvedWtWindow && agent && agent.wt_window) {
+        resolvedWtWindow = agent.wt_window;
+      }
     } catch (err) {
       log(`Could not fetch agent cwd from server: ${err.message}`);
     }
   }
 
-  log(`Resuming agent ${agentId} in: ${cwd}`);
+  log(`Resuming agent ${agentId} in: ${cwd}${resolvedWtWindow ? ` [window: ${resolvedWtWindow}]` : ''}`);
 
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
@@ -264,11 +269,12 @@ async function launchResumeAgent(agentId, folderPath) {
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
   fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
 
-  const proc = spawn('wt.exe', [
-    'new-tab', '--title', `Claude - ${path.basename(cwd)}`,
-    '-d', cwd,
-    'cmd', '/k', batchFile
-  ], {
+  const tabTitle = `Claude - ${path.basename(cwd)}`;
+  const wtArgs = resolvedWtWindow
+    ? ['-w', resolvedWtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
+    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
+
+  const proc = spawn('wt.exe', wtArgs, {
     detached: true,
     stdio: 'ignore',
   });
@@ -419,13 +425,14 @@ async function processPendingRequests() {
             log(`Terminate request #${req.id} has no target_pid — skipping`);
           }
         } else if (req.type === 'resume' && req.resume_agent_id) {
-          await launchResumeAgent(req.resume_agent_id, req.folder_path);
+          await launchResumeAgent(req.resume_agent_id, req.folder_path, req.wt_window || null);
         } else if (req.type === 'new') {
           let spawnMeta = null;
           if (req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')) {
             try { spawnMeta = JSON.parse(req.agent_id); } catch {}
           }
-          launchNewAgent(req.folder_path, spawnMeta);
+          const wtWindow = req.wt_window || (spawnMeta && spawnMeta.wt_window) || null;
+          launchNewAgent(req.folder_path, spawnMeta, wtWindow);
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
         } else if (req.type === 'input') {

@@ -1,7 +1,7 @@
 export interface Agent {
   id: string;
   title: string;
-  status: 'active' | 'working' | 'idle' | 'waiting-for-input' | 'completed' | 'archived';
+  status: 'active' | 'working' | 'idle' | 'waiting-for-input' | 'completed' | 'archived' | 'standby';
   created_at: string;
   last_update_at: string;
   update_count: number;
@@ -24,6 +24,8 @@ export interface Agent {
   effort?: string;
   model?: string;
   progress?: number;
+  wt_window?: string | null;
+  pool_slot?: number | null;
 }
 
 export interface AgentUpdate {

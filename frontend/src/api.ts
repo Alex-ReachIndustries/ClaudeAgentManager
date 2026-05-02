@@ -93,7 +93,7 @@ export async function deleteAgent(agentId: string): Promise<void> {
 
 export async function updateAgent(
   agentId: string,
-  fields: Partial<Pick<Agent, 'title' | 'status' | 'poll_delay_until' | 'role' | 'effort' | 'model'>>,
+  fields: Partial<Pick<Agent, 'title' | 'status' | 'poll_delay_until' | 'role' | 'effort' | 'model' | 'wt_window'>>,
 ): Promise<Agent> {
   return request<Agent>(`/agents/${agentId}`, {
     method: 'PATCH',

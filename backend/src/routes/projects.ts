@@ -607,14 +607,16 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
     const launchResult = createLaunchRequest("new", agentFolderPath);
     const launchRequestId = launchResult.id as number;
 
-    // Store project linkage metadata in agent_id field (will be resolved when agent registers)
-    db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?")
+    // All project agents share a terminal window named after the project ID
+    const wtWindow = `proj-${id.slice(0, 8)}`;
+    db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
       .run(JSON.stringify({
         project_id: id, role, prompt,
         parent_agent_id: project.pm_agent_id || null,
         effort: resolvedEffort,
         model: resolvedModel,
-      }), launchRequestId);
+        wt_window: wtWindow,
+      }), wtWindow, launchRequestId);
 
     addProjectUpdate(id, "info", `Sub-agent spawn requested: ${role} (launch request ID: ${launchRequestId})`);
 

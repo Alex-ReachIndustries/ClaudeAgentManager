@@ -76,7 +76,13 @@ data class Agent(
     val effort: String? = null,
 
     @SerializedName("model")
-    val model: String? = null
+    val model: String? = null,
+
+    @SerializedName("pool_slot")
+    val poolSlot: Int? = null,
+
+    @SerializedName("wt_window")
+    val wtWindow: String? = null
 ) {
     /**
      * Whether this agent has unread updates since the last time it was marked read.
@@ -116,7 +122,10 @@ enum class AgentStatus {
     COMPLETED,
 
     @SerializedName("archived")
-    ARCHIVED;
+    ARCHIVED,
+
+    @SerializedName("standby")
+    STANDBY;
 
     /**
      * Human-readable display label.
@@ -129,6 +138,7 @@ enum class AgentStatus {
             WAITING_FOR_INPUT -> "Waiting for Input"
             COMPLETED -> "Completed"
             ARCHIVED -> "Archived"
+            STANDBY -> "Standby"
         }
 }
 
