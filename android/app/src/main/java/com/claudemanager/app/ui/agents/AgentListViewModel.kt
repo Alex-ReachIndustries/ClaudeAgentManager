@@ -40,7 +40,10 @@ data class AgentListUiState(
     val isMultiSelectMode: Boolean = false,
     val selectedAgentIds: Set<String> = emptySet(),
     val isArchiving: Boolean = false,
-    val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES
+    val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES,
+    val wtWindows: List<String> = emptyList(),
+    val expandedGroups: Set<String> = emptySet(),
+    val isGrouping: Boolean = false
 )
 
 /**
@@ -63,6 +66,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         loadAgents()
         loadRoles()
+        loadWtWindows()
         startPolling()
     }
 
@@ -73,6 +77,55 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(predefinedRoles = roles.map { r -> PredefinedRole(r.id, r.displayName, r.fullDefinition) })
                 }
             }
+        }
+    }
+
+    fun loadWtWindows() {
+        viewModelScope.launch {
+            repository.getWtWindows().onSuccess { windows ->
+                _uiState.update { it.copy(wtWindows = windows) }
+            }
+        }
+    }
+
+    fun toggleGroupExpanded(groupName: String) {
+        _uiState.update { state ->
+            val newExpanded = if (groupName in state.expandedGroups) {
+                state.expandedGroups - groupName
+            } else {
+                state.expandedGroups + groupName
+            }
+            state.copy(expandedGroups = newExpanded)
+        }
+    }
+
+    fun groupSelected(groupName: String) {
+        val ids = _uiState.value.selectedAgentIds.toList()
+        if (ids.isEmpty()) return
+        _uiState.update { it.copy(isGrouping = true) }
+        viewModelScope.launch {
+            repository.assignWindowGroup(ids, groupName)
+            _uiState.update {
+                it.copy(isMultiSelectMode = false, selectedAgentIds = emptySet(), isGrouping = false)
+            }
+            refresh()
+            loadWtWindows()
+        }
+    }
+
+    fun resumeGroup(groupName: String) {
+        val liveAgents = _uiState.value.agents.filter { it.wtWindow == groupName && it.isLive }
+        viewModelScope.launch {
+            liveAgents.forEach { agent ->
+                val cwdPath = (agent.cwd ?: "").replace("\\", "/")
+                repository.createLaunchRequest(
+                    type = "resume",
+                    folderPath = cwdPath.ifEmpty { agent.workspace ?: "" },
+                    resumeAgentId = agent.id,
+                    wtWindow = groupName
+                )
+            }
+            refresh()
         }
     }
 
@@ -243,7 +296,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Create a launch request to start a new agent in the given folder.
      */
-    fun launchNewAgent(folderPath: String, role: String? = null, task: String? = null, effort: String? = null, model: String? = null) {
+    fun launchNewAgent(folderPath: String, role: String? = null, task: String? = null, effort: String? = null, model: String? = null, wtWindow: String? = null) {
         viewModelScope.launch {
             repository.createLaunchRequest(
                 type = "new",
@@ -251,7 +304,8 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
                 role = role,
                 task = task,
                 effort = effort,
-                model = model
+                model = model,
+                wtWindow = wtWindow
             ).onSuccess {
                 refresh()
             }.onFailure { e ->

@@ -57,6 +57,15 @@ class AgentRepository {
     /** Fetch predefined roles from the server. */
     suspend fun getRoles() = apiCall { api.getRoles() }
 
+    /** Fetch distinct non-null wt_window group names. */
+    suspend fun getWtWindows(): Result<List<String>> = apiCall { api.getWtWindows() }
+
+    /** Assign a window group (wt_window) to multiple agents. Pass null to remove grouping. */
+    suspend fun assignWindowGroup(agentIds: List<String>, wtWindow: String?): Result<Unit> {
+        agentIds.forEach { id -> updateAgent(id, wtWindow = wtWindow) }
+        return Result.success(Unit)
+    }
+
     // ── Agents ──────────────────────────────────────────────────────────
 
     /**
@@ -84,9 +93,10 @@ class AgentRepository {
         pollDelayUntil: String? = null,
         role: String? = null,
         effort: String? = null,
-        model: String? = null
+        model: String? = null,
+        wtWindow: String? = null
     ): Result<Agent> = apiCall {
-        api.updateAgent(id, UpdateAgentBody(title, status, pollDelayUntil, role, effort, model))
+        api.updateAgent(id, UpdateAgentBody(title, status, pollDelayUntil, role, effort, model, wtWindow))
     }
 
     /**
@@ -257,7 +267,8 @@ class AgentRepository {
         role: String? = null,
         task: String? = null,
         effort: String? = null,
-        model: String? = null
+        model: String? = null,
+        wtWindow: String? = null
     ): Result<LaunchRequest> {
         return apiCall {
             api.createLaunchRequest(
@@ -269,7 +280,8 @@ class AgentRepository {
                     role = role,
                     task = task,
                     effort = effort,
-                    model = model
+                    model = model,
+                    wtWindow = wtWindow
                 )
             )
         }.map { it.request }

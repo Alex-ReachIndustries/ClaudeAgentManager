@@ -483,6 +483,8 @@ fun AgentDetailScreen(
                                 },
                                 onLoadOtherAgents = viewModel::loadOtherAgents,
                                 onUpdateFields = viewModel::updateAgentFields,
+                                onUpdateWtWindow = viewModel::updateWtWindow,
+                                wtWindows = state.wtWindows,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -560,6 +562,8 @@ private fun InfoTab(
     onShareFile: (Long, String) -> Unit,
     onLoadOtherAgents: () -> Unit,
     onUpdateFields: (role: String?, effort: String?, model: String?) -> Unit = { _, _, _ -> },
+    onUpdateWtWindow: (String?) -> Unit = {},
+    wtWindows: List<String> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
@@ -568,6 +572,8 @@ private fun InfoTab(
             messages = messages,
             predefinedRoles = predefinedRoles,
             onUpdateFields = onUpdateFields,
+            onUpdateWtWindow = onUpdateWtWindow,
+            wtWindows = wtWindows,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -596,6 +602,8 @@ private fun AgentMetricsPanel(
     messages: List<com.claudemanager.app.data.models.AgentMessage>,
     predefinedRoles: List<PredefinedRole>,
     onUpdateFields: (role: String?, effort: String?, model: String?) -> Unit = { _, _, _ -> },
+    onUpdateWtWindow: (String?) -> Unit = {},
+    wtWindows: List<String> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     if (agent == null) {
@@ -846,6 +854,80 @@ private fun AgentMetricsPanel(
             colors = ButtonDefaults.buttonColors(containerColor = LumiPurple500)
         ) {
             Text("Save Settings")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Window Group
+        Text(
+            text = "Window Group",
+            style = MaterialTheme.typography.labelMedium,
+            color = LumiOnSurfaceSecondary,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        var wtWindowExpanded by remember { mutableStateOf(false) }
+        var wtWindowCustom by remember(agent?.wtWindow) { mutableStateOf(agent?.wtWindow ?: "") }
+        val allWindowOptions = (listOf("None") + wtWindows).distinct()
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = agent?.wtWindow ?: "None",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Group") },
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = { wtWindowExpanded = true }) {
+                        Icon(Icons.Default.ExpandMore, contentDescription = null)
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = LumiPurple500,
+                    focusedTextColor = LumiOnSurface,
+                    unfocusedTextColor = LumiOnSurface
+                )
+            )
+            DropdownMenu(expanded = wtWindowExpanded, onDismissRequest = { wtWindowExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("None", color = if (agent?.wtWindow == null) LumiPurple500 else LumiOnSurface) },
+                    onClick = {
+                        wtWindowExpanded = false
+                        onUpdateWtWindow(null)
+                    }
+                )
+                wtWindows.forEach { w ->
+                    DropdownMenuItem(
+                        text = { Text(w, color = if (agent?.wtWindow == w) LumiPurple500 else LumiOnSurface) },
+                        onClick = {
+                            wtWindowExpanded = false
+                            onUpdateWtWindow(w)
+                        }
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = wtWindowCustom,
+            onValueChange = { wtWindowCustom = it },
+            label = { Text("or new group name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = LumiPurple500,
+                cursorColor = LumiPurple500,
+                focusedTextColor = LumiOnSurface,
+                unfocusedTextColor = LumiOnSurface
+            )
+        )
+        Button(
+            onClick = {
+                val target = wtWindowCustom.trim().ifEmpty { null }
+                onUpdateWtWindow(target)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = LumiPurple500)
+        ) {
+            Text("Save Group")
         }
     }
 }

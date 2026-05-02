@@ -79,7 +79,8 @@ data class AgentDetailUiState(
     val costBreakdown: AgentCostBreakdownResponse? = null,
     val isLoadingCosts: Boolean = false,
     val pendingDownload: PendingDownload? = null,
-    val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES
+    val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES,
+    val wtWindows: List<String> = emptyList()
 )
 
 /**
@@ -108,9 +109,18 @@ class AgentDetailViewModel(
     init {
         loadAll()
         loadRoles()
+        loadWtWindows()
         markRead()
         startPolling()
         listenForTerminalOutput()
+    }
+
+    private fun loadWtWindows() {
+        viewModelScope.launch {
+            repository.getWtWindows().onSuccess { windows ->
+                _uiState.update { it.copy(wtWindows = windows) }
+            }
+        }
     }
 
     private fun loadRoles() {
@@ -471,6 +481,19 @@ class AgentDetailViewModel(
     /**
      * Update role, effort, and/or model for this agent.
      */
+    fun updateWtWindow(wtWindow: String?) {
+        viewModelScope.launch {
+            repository.updateAgent(agentId, wtWindow = wtWindow)
+                .onSuccess { agent ->
+                    _uiState.update { it.copy(agent = agent) }
+                    loadWtWindows()
+                }
+                .onFailure { e ->
+                    _uiState.update { it.copy(error = e.message ?: "Failed to update window group") }
+                }
+        }
+    }
+
     fun updateAgentFields(role: String? = null, effort: String? = null, model: String? = null) {
         viewModelScope.launch {
             repository.updateAgent(agentId, role = role, effort = effort, model = model)

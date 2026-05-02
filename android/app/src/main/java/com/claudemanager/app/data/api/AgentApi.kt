@@ -70,6 +70,10 @@ interface AgentApi {
     @GET("api/roles")
     suspend fun getRoles(): Response<List<PredefinedRoleResponse>>
 
+    /** Fetch distinct non-null wt_window values for the window group selector. */
+    @GET("api/agents/wt-windows")
+    suspend fun getWtWindows(): Response<List<String>>
+
     // ── Agents CRUD ─────────────────────────────────────────────────────
 
     /**

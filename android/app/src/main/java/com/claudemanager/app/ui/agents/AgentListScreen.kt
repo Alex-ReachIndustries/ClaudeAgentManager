@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -127,6 +129,7 @@ fun AgentListScreen(
     var showFolderPicker by remember { mutableStateOf(false) }
     var selectedFolder by remember { mutableStateOf<String?>(null) }
     var showRoleTaskDialog by remember { mutableStateOf(false) }
+    var showGroupDialog by remember { mutableStateOf(false) }
 
     // Use filtered agents for display; separate into active/archived
     val displayAgents = state.filteredAgents
@@ -152,7 +155,9 @@ fun AgentListScreen(
                 MultiSelectTopBar(
                     selectedCount = state.selectedAgentIds.size,
                     isArchiving = state.isArchiving,
+                    isGrouping = state.isGrouping,
                     onArchive = viewModel::archiveSelected,
+                    onGroup = { showGroupDialog = true },
                     onClear = viewModel::clearSelection
                 )
             } else {
@@ -272,6 +277,12 @@ fun AgentListScreen(
                         }
                     }
                 } else {
+                    // Compute groups from non-archived agents
+                    val groupedActive = activeAgents
+                        .filter { it.wtWindow != null }
+                        .groupBy { it.wtWindow!! }
+                    val ungroupedActive = activeAgents.filter { it.wtWindow == null }
+
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
@@ -291,29 +302,52 @@ fun AgentListScreen(
                             }
                         }
 
-                        // Active agents section
-                        if (activeAgents.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Active Agents",
-                                    count = activeAgents.size
+                        // Grouped agents
+                        groupedActive.forEach { (groupName, groupAgents) ->
+                            val isExpanded = groupName in state.expandedGroups
+                            item(key = "group_$groupName") {
+                                GroupCard(
+                                    groupName = groupName,
+                                    agents = groupAgents,
+                                    isExpanded = isExpanded,
+                                    onToggle = { viewModel.toggleGroupExpanded(groupName) },
+                                    onResume = { viewModel.resumeGroup(groupName) }
                                 )
                             }
-                            items(activeAgents, key = { it.id }) { agent ->
+                            if (isExpanded) {
+                                items(groupAgents, key = { "g_${it.id}" }) { agent ->
+                                    AgentCard(
+                                        agent = agent,
+                                        isSelected = agent.id in state.selectedAgentIds,
+                                        isMultiSelectMode = state.isMultiSelectMode,
+                                        onClick = {
+                                            if (state.isMultiSelectMode) viewModel.toggleSelection(agent.id)
+                                            else onAgentClick(agent.id)
+                                        },
+                                        onLongClick = { viewModel.toggleSelection(agent.id) },
+                                        modifier = Modifier.padding(start = 16.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Ungrouped active agents
+                        if (ungroupedActive.isNotEmpty()) {
+                            if (groupedActive.isNotEmpty()) {
+                                item { SectionHeader(title = "Other Agents", count = ungroupedActive.size) }
+                            } else {
+                                item { SectionHeader(title = "Active Agents", count = ungroupedActive.size) }
+                            }
+                            items(ungroupedActive, key = { it.id }) { agent ->
                                 AgentCard(
                                     agent = agent,
                                     isSelected = agent.id in state.selectedAgentIds,
                                     isMultiSelectMode = state.isMultiSelectMode,
                                     onClick = {
-                                        if (state.isMultiSelectMode) {
-                                            viewModel.toggleSelection(agent.id)
-                                        } else {
-                                            onAgentClick(agent.id)
-                                        }
+                                        if (state.isMultiSelectMode) viewModel.toggleSelection(agent.id)
+                                        else onAgentClick(agent.id)
                                     },
-                                    onLongClick = {
-                                        viewModel.toggleSelection(agent.id)
-                                    }
+                                    onLongClick = { viewModel.toggleSelection(agent.id) }
                                 )
                             }
                         }
@@ -364,15 +398,10 @@ fun AgentListScreen(
                                         isSelected = agent.id in state.selectedAgentIds,
                                         isMultiSelectMode = state.isMultiSelectMode,
                                         onClick = {
-                                            if (state.isMultiSelectMode) {
-                                                viewModel.toggleSelection(agent.id)
-                                            } else {
-                                                onAgentClick(agent.id)
-                                            }
+                                            if (state.isMultiSelectMode) viewModel.toggleSelection(agent.id)
+                                            else onAgentClick(agent.id)
                                         },
-                                        onLongClick = {
-                                            viewModel.toggleSelection(agent.id)
-                                        }
+                                        onLongClick = { viewModel.toggleSelection(agent.id) }
                                     )
                                 }
                             }
@@ -391,6 +420,18 @@ fun AgentListScreen(
                 contentColor = LumiPurple500
             )
         }
+    }
+
+    // Group selection dialog
+    if (showGroupDialog) {
+        GroupDialog(
+            existingGroups = state.wtWindows,
+            onDismiss = { showGroupDialog = false },
+            onConfirm = { groupName ->
+                showGroupDialog = false
+                viewModel.groupSelected(groupName)
+            }
+        )
     }
 
     // Folder picker dialog
@@ -415,6 +456,9 @@ fun AgentListScreen(
         var modelExpanded by remember { mutableStateOf(false) }
         var selectedEffort by remember { mutableStateOf("high") }
         var selectedModel by remember { mutableStateOf("claude-sonnet-4-6") }
+        var wtWindowExpanded by remember { mutableStateOf(false) }
+        var selectedWtWindow by remember { mutableStateOf<String?>(null) }
+        var customWtWindow by remember { mutableStateOf("") }
 
         val effortOptions = listOf("low" to "Low", "medium" to "Medium", "high" to "High")
         val modelOptions = listOf(
@@ -552,6 +596,52 @@ fun AgentListScreen(
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Window Group dropdown
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = selectedWtWindow ?: "None",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Window Group (optional)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                androidx.compose.material3.IconButton(onClick = { wtWindowExpanded = true }) {
+                                    Icon(Icons.Default.ExpandMore, contentDescription = null)
+                                }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LumiPurple500)
+                        )
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = wtWindowExpanded,
+                            onDismissRequest = { wtWindowExpanded = false }
+                        ) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("None", color = if (selectedWtWindow == null) LumiPurple500 else LumiOnSurface) },
+                                onClick = { selectedWtWindow = null; wtWindowExpanded = false }
+                            )
+                            state.wtWindows.forEach { w ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(w, color = if (selectedWtWindow == w) LumiPurple500 else LumiOnSurface) },
+                                    onClick = { selectedWtWindow = w; customWtWindow = ""; wtWindowExpanded = false }
+                                )
+                            }
+                        }
+                    }
+                    if (selectedWtWindow == null && state.wtWindows.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = customWtWindow,
+                            onValueChange = { customWtWindow = it },
+                            label = { Text("or new group name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = LumiPurple500,
+                                cursorColor = LumiPurple500
+                            )
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -559,12 +649,14 @@ fun AgentListScreen(
                     onClick = {
                         val finalRole = if (selectedRoleIndex >= 0) predefinedRoles[selectedRoleIndex].fullDefinition
                                         else customRoleText.takeIf { it.isNotBlank() }
+                        val finalWtWindow = selectedWtWindow ?: customWtWindow.trim().ifEmpty { null }
                         viewModel.launchNewAgent(
                             selectedFolder!!,
                             finalRole,
                             taskText.takeIf { it.isNotBlank() },
                             selectedEffort,
-                            selectedModel
+                            selectedModel,
+                            finalWtWindow
                         )
                         showRoleTaskDialog = false
                         selectedFolder = null
@@ -658,6 +750,7 @@ private fun FilterChipRow(
         FilterOption(AgentStatus.IDLE, "Idle"),
         FilterOption(AgentStatus.WORKING, "Working"),
         FilterOption(AgentStatus.WAITING_FOR_INPUT, "Waiting"),
+        FilterOption(AgentStatus.STANDBY, "Standby"),
         FilterOption(AgentStatus.COMPLETED, "Completed"),
         FilterOption(AgentStatus.ARCHIVED, "Archived")
     )
@@ -738,7 +831,8 @@ private fun AgentCard(
     isSelected: Boolean = false,
     isMultiSelectMode: Boolean = false,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = {}
+    onLongClick: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val borderModifier = if (isSelected) {
         Modifier.border(2.dp, LumiPurple500, RoundedCornerShape(12.dp))
@@ -747,7 +841,7 @@ private fun AgentCard(
     }
 
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .then(borderModifier)
             .combinedClickable(
@@ -919,7 +1013,9 @@ private fun AgentCard(
 private fun MultiSelectTopBar(
     selectedCount: Int,
     isArchiving: Boolean,
+    isGrouping: Boolean,
     onArchive: () -> Unit,
+    onGroup: () -> Unit,
     onClear: () -> Unit
 ) {
     CenterAlignedTopAppBar(
@@ -940,6 +1036,24 @@ private fun MultiSelectTopBar(
             )
         },
         actions = {
+            IconButton(
+                onClick = onGroup,
+                enabled = !isGrouping && selectedCount > 0
+            ) {
+                if (isGrouping) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = LumiOnSurface,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.FolderOpen,
+                        contentDescription = "Group",
+                        tint = LumiOnSurface
+                    )
+                }
+            }
             Button(
                 onClick = onArchive,
                 enabled = !isArchiving && selectedCount > 0,
@@ -1051,6 +1165,155 @@ private fun SortChipRow(
             }
         }
     }
+}
+
+/**
+ * Card representing a named window group with its agents shown as nested cards when expanded.
+ */
+@Composable
+private fun GroupCard(
+    groupName: String,
+    agents: List<Agent>,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    onResume: () -> Unit
+) {
+    val liveCount = agents.count { it.isLive }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(),
+        colors = CardDefaults.cardColors(containerColor = LumiCard),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggle() }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.FolderOpen,
+                contentDescription = null,
+                tint = LumiPurple500,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = groupName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = LumiOnSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${agents.size} agent${if (agents.size != 1) "s" else ""}${if (liveCount > 0) " · $liveCount live" else ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LumiOnSurfaceSecondary
+                )
+            }
+            if (liveCount > 0) {
+                IconButton(
+                    onClick = onResume,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Resume group",
+                        tint = LumiPurple500,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Icon(
+                imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (isExpanded) "Collapse" else "Expand",
+                tint = LumiOnSurfaceTertiary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Dialog for naming a window group when grouping selected agents.
+ */
+@Composable
+private fun GroupDialog(
+    existingGroups: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var groupName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Group Agents", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (existingGroups.isNotEmpty()) {
+                    Text(
+                        text = "Join existing group:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceSecondary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        existingGroups.forEach { g ->
+                            Button(
+                                onClick = { onConfirm(g) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (groupName == g) LumiPurple500 else LumiPurple500.copy(alpha = 0.15f),
+                                    contentColor = if (groupName == g) LumiOnSurface else LumiPurple500
+                                )
+                            ) {
+                                Text(g, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "or create new group:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceSecondary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("Group name") },
+                    placeholder = { Text("e.g. assistants, research") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = LumiPurple500,
+                        cursorColor = LumiPurple500
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (groupName.isNotBlank()) onConfirm(groupName.trim()) },
+                enabled = groupName.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = LumiPurple500)
+            ) {
+                Text("Group")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = LumiOnSurfaceSecondary)
+            }
+        }
+    )
 }
 
 /**
