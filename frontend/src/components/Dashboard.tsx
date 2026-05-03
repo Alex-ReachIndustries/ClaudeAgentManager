@@ -4,7 +4,7 @@ import AgentCard from './AgentCard';
 import FolderPicker from './FolderPicker';
 import AnalyticsPanel from './AnalyticsPanel';
 import { createLaunchRequest } from '../api';
-import { RefreshCw, Bot, Archive, Plus, Search } from 'lucide-react';
+import { RefreshCw, Bot, Archive, Plus, Search, Layers, Monitor } from 'lucide-react';
 
 type StatusFilter = 'all' | 'active' | 'idle' | 'working' | 'waiting-for-input' | 'completed' | 'archived';
 type SortOption = 'activity' | 'created' | 'updates' | 'name';
@@ -40,6 +40,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sortOption, setSortOption] = useState<SortOption>('activity');
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
+  const [groupByWindow, setGroupByWindow] = useState(false);
 
   // Collect unique project names for filter dropdown
   const projectNames = useMemo(() => {
@@ -51,6 +52,9 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
     });
     return Array.from(names);
   }, [agents]);
+
+  // Detect whether any active agents have wt_window set
+  const hasWindowGroups = useMemo(() => agents.some((a) => a.wt_window && a.status !== 'archived'), [agents]);
 
   const handleLaunch = async (folderPath: string, wtWindow?: string) => {
     try {
@@ -118,6 +122,25 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
       archivedAgents: sorted.filter((a) => a.status === 'archived'),
     };
   }, [agents, searchQuery, statusFilter, sortOption, projectFilter]);
+
+  // Build window groups when groupByWindow is enabled
+  const windowGroups = useMemo<{ name: string | null; agents: Agent[] }[]>(() => {
+    if (!groupByWindow) return [];
+    const map = new Map<string, Agent[]>();
+    const ungrouped: Agent[] = [];
+    for (const agent of activeAgents) {
+      if (agent.wt_window) {
+        const existing = map.get(agent.wt_window);
+        if (existing) existing.push(agent);
+        else map.set(agent.wt_window, [agent]);
+      } else {
+        ungrouped.push(agent);
+      }
+    }
+    const groups: { name: string | null; agents: Agent[] }[] = Array.from(map.entries()).map(([name, agents]) => ({ name, agents }));
+    if (ungrouped.length > 0) groups.push({ name: null, agents: ungrouped });
+    return groups;
+  }, [groupByWindow, activeAgents]);
 
   if (loading) {
     return (
@@ -244,6 +267,21 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
             ))}
           </select>
 
+          {hasWindowGroups && (
+            <button
+              onClick={() => setGroupByWindow((v) => !v)}
+              title={groupByWindow ? 'Show flat list' : 'Group by window'}
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                groupByWindow
+                  ? 'bg-lumi-600/20 text-lumi-400 border-lumi-500'
+                  : 'bg-dark-900 text-dark-400 border-dark-700 hover:text-dark-300 hover:border-dark-600'
+              }`}
+            >
+              <Layers size={14} />
+              <span className="hidden sm:inline">Groups</span>
+            </button>
+          )}
+
           <button
             onClick={() => setShowFolderPicker(true)}
             className="inline-flex items-center gap-2 px-4 py-2 bg-lumi-600 hover:bg-lumi-500 text-white text-sm font-medium rounded-lg transition-colors"
@@ -260,15 +298,34 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
         onSelect={handleLaunch}
       />
 
-      {/* Active agents */}
+      {/* Active agents — grouped by window or flat */}
       {activeAgents.length > 0 && (
-        <div>
+        groupByWindow && windowGroups.length > 0 ? (
+          <div className="space-y-6">
+            {windowGroups.map((group) => (
+              <div key={group.name ?? '__ungrouped__'}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Monitor size={14} className="text-dark-500" />
+                  <h2 className="text-sm font-semibold text-dark-400 uppercase tracking-wide">
+                    {group.name ?? 'Ungrouped'}
+                  </h2>
+                  <span className="text-xs text-dark-600">{group.agents.length}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {group.agents.map((agent) => (
+                    <AgentCard key={agent.id} agent={agent} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeAgents.map((agent) => (
               <AgentCard key={agent.id} agent={agent} />
             ))}
           </div>
-        </div>
+        )
       )}
 
       {/* No results */}

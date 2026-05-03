@@ -1,8 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, StopCircle, CornerDownLeft } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2 } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, closeAgent, fetchAgentFiles, sendSignal, sendMessage } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage } from '../api';
 import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
@@ -22,15 +22,19 @@ const statusConfig = {
   standby: { color: 'bg-purple-400', label: 'Standby' },
 } as const;
 
+const LIVE_STATUSES = new Set(['active', 'working', 'idle', 'waiting-for-input', 'standby']);
+
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { agent, updates, messages, loading, error, refetch } = useAgent(id!);
 
   const isArchived = agent?.status === 'archived';
+  const isLive = agent ? LIVE_STATUSES.has(agent.status) : false;
+
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
-  const [closing, setClosing] = useState(false);
+  const [terminating, setTerminating] = useState(false);
   const [files, setFiles] = useState<AgentFile[]>([]);
   const [roleInput, setRoleInput] = useState('');
   const [savingRole, setSavingRole] = useState(false);
@@ -39,6 +43,19 @@ function AgentDetail() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [wtWindowInput, setWtWindowInput] = useState('');
   const [savingWtWindow, setSavingWtWindow] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   // Fetch files for inline timeline display
   useEffect(() => {
@@ -49,7 +66,7 @@ function AgentDetail() {
     }
   }, [id, agent?.update_count]);
 
-  // Sync role/effort/model inputs when agent loads
+  // Sync role/effort/model/wt_window inputs when agent loads
   useEffect(() => {
     if (agent) {
       setRoleInput(agent.role ?? '');
@@ -68,11 +85,73 @@ function AgentDetail() {
 
   const handleToggleArchive = async () => {
     if (!id || !agent) return;
+    setShowMenu(false);
     try {
       await updateAgent(id, { status: isArchived ? 'active' : 'archived' });
       refetch();
-    } catch {
-      // Error will be shown through the hook
+    } catch { /* ignore */ }
+  };
+
+  const handleResume = async () => {
+    if (!id || !agent || resuming) return;
+    setShowMenu(false);
+    setResuming(true);
+    try {
+      const cwdPath = (agent.cwd || '').replace(/\\/g, '/');
+      await createLaunchRequest('resume', cwdPath || agent.workspace || '', id, agent.wt_window || undefined);
+    } catch (err) {
+      console.error('Resume failed:', err);
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const handleTerminate = async () => {
+    if (!id || !agent?.pid || terminating) return;
+    setShowMenu(false);
+    setTerminating(true);
+    try {
+      await createLaunchRequest('terminate', '', undefined, undefined, agent.pid);
+      refetch();
+    } catch (err) {
+      console.error('Terminate failed:', err);
+    } finally {
+      setTerminating(false);
+    }
+  };
+
+  const handleTerminateResume = async () => {
+    if (!id || !agent || resuming) return;
+    setShowMenu(false);
+    setResuming(true);
+    try {
+      const cwdPath = (agent.cwd || '').replace(/\\/g, '/');
+      await createLaunchRequest('terminate-resume', cwdPath || agent.workspace || '', id, agent.wt_window || undefined, agent.pid);
+    } catch (err) {
+      console.error('Terminate & Resume failed:', err);
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (!id || exporting) return;
+    setShowMenu(false);
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/agents/${id}/export/pdf`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Agent_Report_${id.slice(0, 8)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -142,6 +221,11 @@ function AgentDetail() {
               <span className={`w-2 h-2 rounded-full ${status.color} ${agent.status === 'active' ? 'animate-pulse' : ''}`} />
               <span className="text-xs font-medium text-dark-300">{status.label}</span>
             </span>
+            {agent.wt_window && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-800 rounded-full border border-dark-700 shrink-0">
+                <span className="text-xs text-dark-400">⊞ {agent.wt_window}</span>
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-4 text-sm text-dark-500 flex-wrap">
             <span className="font-mono text-xs text-dark-600 select-all">{agent.id}</span>
@@ -156,107 +240,74 @@ function AgentDetail() {
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-        <button
-          onClick={async () => { if (id) await sendSignal(id, 'ctrl-c'); }}
-          className="inline-flex items-center gap-1 px-3 py-2 text-sm text-dark-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-colors"
-          title="Send Ctrl+C to terminal"
-        >
-          <StopCircle size={16} />
-          <span className="text-xs">Ctrl+C</span>
-        </button>
-        <button
-          onClick={async () => { if (id) await sendSignal(id, 'enter'); }}
-          className="inline-flex items-center gap-1 px-3 py-2 text-sm text-dark-500 hover:text-blue-400 hover:bg-blue-950/30 rounded-lg transition-colors"
-          title="Send Enter to terminal"
-        >
-          <CornerDownLeft size={16} />
-          <span className="text-xs">Enter</span>
-        </button>
-        <button
-          onClick={async () => {
-            if (!id || !agent || resuming) return;
-            setResuming(true);
-            try {
-              // Pass absolute cwd path for resume — launcher handles it directly
-              const cwdPath = (agent.cwd || '').replace(/\\/g, '/');
-              await createLaunchRequest('resume', cwdPath || agent.workspace || '', id);
-            } catch (err) {
-              console.error('Resume failed:', err);
-            } finally {
-              setResuming(false);
-            }
-          }}
-          disabled={resuming}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-dark-500 hover:text-green-400 hover:bg-green-950/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Resume this agent session"
-        >
-          <Play size={16} />
-          <span className="text-xs">{resuming ? 'Resuming...' : 'Resume'}</span>
-        </button>
-        <button
-          onClick={async () => {
-            if (!id || exporting) return;
-            setExporting(true);
-            try {
-              const res = await fetch(`/api/agents/${id}/export/pdf`);
-              if (!res.ok) throw new Error('Export failed');
-              const blob = await res.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `Agent_Report_${id.slice(0, 8)}.pdf`;
-              a.click();
-              URL.revokeObjectURL(url);
-            } catch (err) {
-              console.error('PDF export failed:', err);
-            } finally {
-              setExporting(false);
-            }
-          }}
-          disabled={exporting}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-dark-500 hover:text-lumi-400 hover:bg-lumi-950/30 rounded-lg transition-colors disabled:opacity-50"
-          title="Export as PDF"
-        >
-          <FileDown size={16} />
-          <span className="text-xs">{exporting ? 'Exporting...' : 'PDF'}</span>
-        </button>
-        <button
-          onClick={handleToggleArchive}
-          className={`inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
-            isArchived
-              ? 'text-dark-500 hover:text-green-400 hover:bg-green-950/30'
-              : 'text-dark-500 hover:text-yellow-400 hover:bg-yellow-950/30'
-          }`}
-          title={isArchived ? 'Unarchive agent' : 'Archive agent'}
-        >
-          {isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
-          <span className="text-xs">{isArchived ? 'Unarchive' : 'Archive'}</span>
-        </button>
-        <button
-          onClick={async () => {
-            if (!id || !agent || closing) return;
-            if (!confirm('Close this agent? This will archive it and terminate its Claude process.')) return;
-            setClosing(true);
-            try {
-              const result = await closeAgent(id);
-              if (!result.terminated) {
-                alert('Agent archived, but no PID was stored — the Claude process may still be running.');
-              }
-              refetch();
-            } catch (err) {
-              console.error('Close failed:', err);
-            } finally {
-              setClosing(false);
-            }
-          }}
-          disabled={closing || isArchived}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-dark-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Close agent — archive and terminate process"
-        >
-          <XCircle size={16} />
-          <span className="text-xs">{closing ? 'Closing...' : 'Close'}</span>
-        </button>
+        {/* 3-dot action menu */}
+        <div className="relative shrink-0" ref={menuRef}>
+          <button
+            onClick={() => setShowMenu((prev) => !prev)}
+            className="p-2 text-dark-400 hover:text-dark-200 hover:bg-dark-800 rounded-lg transition-colors"
+            title="Agent actions"
+          >
+            <MoreVertical size={20} />
+          </button>
+
+          {showMenu && (
+            <div className="absolute right-0 top-full mt-1 w-52 bg-dark-900 border border-dark-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
+              {/* Resume — always visible */}
+              <button
+                onClick={handleResume}
+                disabled={resuming}
+                className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-dark-300 hover:text-green-400 hover:bg-green-950/20 transition-colors disabled:opacity-50"
+              >
+                <Play size={15} />
+                {resuming ? 'Resuming…' : 'Resume'}
+              </button>
+
+              {/* Terminate — only if agent has a live PID */}
+              {isLive && agent.pid && (
+                <button
+                  onClick={handleTerminate}
+                  disabled={terminating}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-dark-300 hover:text-red-400 hover:bg-red-950/20 transition-colors disabled:opacity-50"
+                >
+                  <XCircle size={15} />
+                  {terminating ? 'Terminating…' : 'Terminate'}
+                </button>
+              )}
+
+              {/* Terminate & Resume — only if agent has a PID */}
+              {agent.pid && (
+                <button
+                  onClick={handleTerminateResume}
+                  disabled={resuming || terminating}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-dark-300 hover:text-orange-400 hover:bg-orange-950/20 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 size={15} />
+                  Terminate &amp; Resume
+                </button>
+              )}
+
+              <div className="border-t border-dark-800 my-1" />
+
+              {/* Archive / Unarchive */}
+              <button
+                onClick={handleToggleArchive}
+                className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-dark-300 hover:text-yellow-400 hover:bg-yellow-950/20 transition-colors"
+              >
+                {isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                {isArchived ? 'Unarchive' : 'Archive'}
+              </button>
+
+              {/* Export PDF */}
+              <button
+                onClick={handleExportPdf}
+                disabled={exporting}
+                className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-dark-300 hover:text-lumi-400 hover:bg-lumi-950/20 transition-colors disabled:opacity-50"
+              >
+                <FileDown size={15} />
+                {exporting ? 'Exporting…' : 'Export PDF'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -345,12 +396,14 @@ function AgentDetail() {
           {/* Terminal Window grouping */}
           <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
             <h3 className="text-sm font-semibold text-dark-300 mb-3">Terminal Window</h3>
-            <p className="text-xs text-dark-500 mb-2">Group this agent into a named Windows Terminal window. All agents sharing the same name will open as tabs in the same window.</p>
+            <p className="text-xs text-dark-500 mb-2">
+              Group this agent into a named terminal window. Agents sharing the same name open as tabs in the same window (Windows Terminal) or tmux session (Linux).
+            </p>
             <input
               type="text"
               value={wtWindowInput}
               onChange={e => setWtWindowInput(e.target.value)}
-              placeholder="e.g. assistants, proj-abc123"
+              placeholder="e.g. assistants, DailyVacancy"
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-600 focus:outline-none focus:border-dark-600"
             />
             {agent.pool_slot != null && (

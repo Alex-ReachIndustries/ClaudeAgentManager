@@ -1,4 +1,5 @@
-import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft, Download, Bot, User, Paperclip } from 'lucide-react';
+import { useState } from 'react';
+import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft, Download, Bot, User, Paperclip, ChevronDown, ChevronUp } from 'lucide-react';
 import type { AgentUpdate, AgentFile } from '../types';
 import { timeAgo } from '../utils/time';
 import MermaidDiagram from './MermaidDiagram';
@@ -14,6 +15,17 @@ type TimelineEntry =
   | { kind: 'file'; ts: string; data: AgentFile };
 
 function UpdateTimeline({ updates, files = [] }: UpdateTimelineProps) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const toggleExpanded = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // Merge updates and files into a single chronological timeline
   const entries: TimelineEntry[] = [
     ...updates.map((u): TimelineEntry => ({ kind: 'update', ts: u.timestamp, data: u })),
@@ -44,7 +56,11 @@ function UpdateTimeline({ updates, files = [] }: UpdateTimelineProps) {
             style={{ animationDelay: `${Math.min(idx, 20) * 30}ms`, animationFillMode: 'both' }}
           >
             {entry.kind === 'update' ? (
-              <UpdateItem update={entry.data as AgentUpdate} />
+              <UpdateItem
+                update={entry.data as AgentUpdate}
+                isExpanded={expanded.has((entry.data as AgentUpdate).id)}
+                onToggleExpand={() => toggleExpanded((entry.data as AgentUpdate).id)}
+              />
             ) : (
               <FileItem file={entry.data as AgentFile} />
             )}
@@ -122,22 +138,42 @@ function contentText(content: unknown, ...keys: string[]): string {
   return JSON.stringify(content);
 }
 
-function UpdateItem({ update }: { update: AgentUpdate }) {
+const COLLAPSE_LINES = 4;
+const COLLAPSE_CHARS = 300;
+
+function isLongContent(text: string): boolean {
+  return text.length > COLLAPSE_CHARS || text.split('\n').length > COLLAPSE_LINES;
+}
+
+function UpdateItem({ update, isExpanded, onToggleExpand }: { update: AgentUpdate; isExpanded: boolean; onToggleExpand: () => void }) {
   const timestamp = (
     <span className="text-xs text-dark-600 shrink-0">{timeAgo(update.timestamp)}</span>
   );
 
   switch (update.type) {
     case 'text': {
+      const text = contentText(update.content, 'text', 'message');
+      const long = isLongContent(text);
       return (
         <div className="flex items-start gap-3 p-3 rounded-lg bg-dark-850 border border-dark-800/50">
           <FileText size={16} className="text-dark-500 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-dark-200 whitespace-pre-wrap break-words">
-              {contentText(update.content, 'text', 'message')}
-            </p>
             {update.summary && (
-              <p className="text-xs text-dark-500 mt-1 italic">{update.summary}</p>
+              <p className="text-xs font-medium text-dark-400 mb-1">{update.summary}</p>
+            )}
+            <p
+              className={`text-sm text-dark-200 whitespace-pre-wrap break-words ${!isExpanded && long ? 'line-clamp-4' : ''}`}
+            >
+              {text}
+            </p>
+            {long && (
+              <button
+                onClick={onToggleExpand}
+                className="mt-1.5 flex items-center gap-1 text-xs text-lumi-400 hover:text-lumi-300 transition-colors"
+              >
+                {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {isExpanded ? 'Show less' : 'Show more'}
+              </button>
             )}
           </div>
           {timestamp}
@@ -212,22 +248,38 @@ function UpdateItem({ update }: { update: AgentUpdate }) {
 
     case 'status': {
       const c = typeof update.content === 'object' ? update.content as Record<string, unknown> : {};
+      const mainText = contentText(update.content, 'status', 'text', 'summary');
+      const long = isLongContent(mainText);
       return (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-dark-850 border border-dark-800/50">
-          <ArrowRightLeft size={16} className="text-dark-500 shrink-0" />
-          <p className="text-sm text-dark-400 flex-1">
-            {c.from && c.to ? (
-              <>
-                Status changed from{' '}
-                <span className="font-medium text-dark-300">{String(c.from)}</span> to{' '}
-                <span className="font-medium text-dark-300">{String(c.to)}</span>
-              </>
-            ) : (
-              <span className="font-medium text-dark-300">
-                {contentText(update.content, 'status', 'text')}
-              </span>
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-dark-850 border border-dark-800/50">
+          <ArrowRightLeft size={16} className="text-dark-500 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            {update.summary && (
+              <p className="text-xs font-medium text-dark-400 mb-1">{update.summary}</p>
             )}
-          </p>
+            <p className={`text-sm text-dark-400 ${!isExpanded && long ? 'line-clamp-4' : ''}`}>
+              {c.from && c.to ? (
+                <>
+                  Status changed from{' '}
+                  <span className="font-medium text-dark-300">{String(c.from)}</span> to{' '}
+                  <span className="font-medium text-dark-300">{String(c.to)}</span>
+                </>
+              ) : (
+                <span className="font-medium text-dark-300 whitespace-pre-wrap break-words">
+                  {mainText}
+                </span>
+              )}
+            </p>
+            {long && (
+              <button
+                onClick={onToggleExpand}
+                className="mt-1.5 flex items-center gap-1 text-xs text-lumi-400 hover:text-lumi-300 transition-colors"
+              >
+                {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {isExpanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </div>
           {timestamp}
         </div>
       );
