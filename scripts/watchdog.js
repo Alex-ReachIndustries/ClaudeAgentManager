@@ -24,6 +24,8 @@ const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
 
+const IS_LINUX = process.platform === 'linux' || process.env.LAUNCHER_MODE === 'linux';
+
 const execAsync = promisify(exec);
 
 // ---------------------------------------------------------------------------
@@ -58,7 +60,7 @@ function discoverServerUrl() {
   const idx = process.argv.indexOf('--server');
   if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
   try {
-    const home = process.env.USERPROFILE || process.env.HOME;
+    const home = process.env.HOME || process.env.USERPROFILE;
     return fs.readFileSync(path.join(home, '.claude', 'agent-server-url'), 'utf8').trim();
   } catch {
     return 'http://localhost:3001';
@@ -67,7 +69,7 @@ function discoverServerUrl() {
 
 function discoverApiKey() {
   try {
-    const home = process.env.USERPROFILE || process.env.HOME;
+    const home = process.env.HOME || process.env.USERPROFILE;
     return fs.readFileSync(path.join(home, '.claude', 'agent-manager-key'), 'utf8').trim();
   } catch {
     return '';
@@ -125,8 +127,16 @@ function parsePid(pid) {
 }
 
 async function isProcessAlive(pid) {
+  if (IS_LINUX) {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
-    // Use tasklist (no PowerShell window flash) to check if PID exists
+    // Windows: use tasklist (no PowerShell window flash) to check if PID exists
     const { stdout } = await execAsync(
       `tasklist /FI "PID eq ${pid}" /NH /FO CSV`,
       { timeout: 5000, windowsHide: true }
@@ -138,8 +148,22 @@ async function isProcessAlive(pid) {
 }
 
 async function getClaudeProcesses() {
+  if (IS_LINUX) {
+    try {
+      // pgrep -x matches the exact process name "claude"
+      const { stdout } = await execAsync('pgrep -x claude 2>/dev/null || true', { timeout: 5000 });
+      const pids = new Set();
+      for (const line of stdout.trim().split('\n')) {
+        const pid = parseInt(line, 10);
+        if (!isNaN(pid)) pids.add(pid);
+      }
+      return pids;
+    } catch {
+      return new Set();
+    }
+  }
   try {
-    // Use tasklist (no PowerShell window flash) to find claude.exe PIDs
+    // Windows: use tasklist (no PowerShell window flash) to find claude.exe PIDs
     const { stdout } = await execAsync(
       `tasklist /FI "IMAGENAME eq claude.exe" /NH /FO CSV`,
       { timeout: 10000, windowsHide: true }

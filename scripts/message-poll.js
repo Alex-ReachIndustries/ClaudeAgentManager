@@ -12,7 +12,7 @@ const path = require('path');
 const SERVER_URL = process.env.CM_URL || 'http://localhost:3001';
 const SESSION_UUID = process.env.SESSION_UUID;
 const API_KEY = (() => {
-  const keyFile = path.join(process.env.USERPROFILE || process.env.HOME, '.claude', 'agent-manager-key');
+  const keyFile = path.join(process.env.HOME || process.env.USERPROFILE, '.claude', 'agent-manager-key');
   return fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8').trim() : '';
 })();
 

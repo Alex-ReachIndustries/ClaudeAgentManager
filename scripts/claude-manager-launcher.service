@@ -1,0 +1,18 @@
+[Unit]
+Description=ClaudeManager Launcher (PM2 + Docker services + Cam agent)
+After=network-online.target docker.service graphical-session.target
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=%i
+Environment=HOME=/home/%i
+Environment=DISPLAY=:0
+WorkingDirectory=/home/%i/ClaudeManager
+ExecStart=/home/%i/ClaudeManager/scripts/startup.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

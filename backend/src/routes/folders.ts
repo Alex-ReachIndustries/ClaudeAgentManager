@@ -9,8 +9,9 @@ const router = Router();
 // or falls back to /host-home
 const HOST_HOME_MOUNT = process.env.HOST_HOME_MOUNT || "/host-home";
 
-// Directories to hide from the folder picker
+// Directories to hide from the folder picker (Windows + Linux combined)
 const HIDDEN_DIRS = new Set([
+  // Windows
   "AppData",
   "Application Data",
   "Local Settings",
@@ -26,6 +27,18 @@ const HIDDEN_DIRS = new Set([
   "NTUSER.DAT",
   "ntuser.ini",
   "$Recycle.Bin",
+  "All Users",
+  "Default",
+  "Default User",
+  "Public",
+  // Linux
+  "snap",
+  "proc",
+  "sys",
+  "dev",
+  "run",
+  "tmp",
+  // Shared
   "node_modules",
   ".cache",
   ".npm",
@@ -33,10 +46,6 @@ const HIDDEN_DIRS = new Set([
   ".vscode-server",
   "__pycache__",
   ".git",
-  "All Users",
-  "Default",
-  "Default User",
-  "Public",
 ]);
 
 function isHidden(name: string): boolean {

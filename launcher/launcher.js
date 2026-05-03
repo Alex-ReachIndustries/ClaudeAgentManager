@@ -2,23 +2,37 @@
 /**
  * Host-side Agent Launcher
  *
- * Runs on the Windows host (NOT in Docker). Polls the Agent Manager backend
- * for pending launch requests and spawns Claude terminal sessions.
+ * Runs on the Windows or Linux host (NOT in Docker). Polls the Agent Manager
+ * backend for pending launch requests and spawns Claude terminal sessions.
  *
  * Usage: node launcher.js [--server https://your-host.tailnet.ts.net]
+ *        LAUNCHER_MODE=linux node launcher.js   (force Linux mode for testing)
+ *
+ * Platform detection: process.platform === 'linux' (auto) or LAUNCHER_MODE=linux env var
+ *
+ * Linux terminal strategy:
+ *   - Named window groups (wtWindow) → tmux sessions (equivalent to Windows Terminal -w <name>)
+ *   - Each agent tab → tmux window within the session
+ *   - A gnome-terminal window attaches once per session for display
+ *   - Dependencies: tmux, gnome-terminal  (sudo apt install tmux gnome-terminal)
+ *   - Optional for signal/input sending: xdotool  (sudo apt install xdotool)
  *
  * Server URL resolution order:
  *   1. --server CLI argument
  *   2. SERVER_URL environment variable
- *   3. http://localhost:8080 (default)
+ *   3. ~/.claude/agent-server-url file
+ *   4. http://localhost:3001 (default)
  */
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { randomUUID } = require('crypto');
 const https = require('https');
 const http = require('http');
 const path = require('path');
 const os = require('os');
+
+// Platform detection — auto from process.platform, or override with LAUNCHER_MODE=linux
+const IS_LINUX = process.platform === 'linux' || process.env.LAUNCHER_MODE === 'linux';
 
 function discoverServerUrl() {
   if (process.argv.includes('--server')) {
@@ -26,7 +40,7 @@ function discoverServerUrl() {
   }
   if (process.env.SERVER_URL) return process.env.SERVER_URL;
   try {
-    const home = process.env.USERPROFILE || process.env.HOME;
+    const home = process.env.HOME || process.env.USERPROFILE;
     const urlFile = require('path').join(home, '.claude', 'agent-server-url');
     return require('fs').readFileSync(urlFile, 'utf8').trim();
   } catch {
@@ -141,12 +155,14 @@ async function postJSON(urlStr, body) {
 
 function resolveFolder(folderPath) {
   if (!folderPath) return USER_HOME;
-  // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
-  // Must happen before path.isAbsolute — Windows treats /c/... as absolute but wt.exe can't use it
-  if (/^\/[a-zA-Z]\//.test(folderPath)) {
-    folderPath = folderPath
-      .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`)
-      .replace(/\//g, '\\');
+  if (!IS_LINUX) {
+    // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
+    // Must happen before path.isAbsolute — Windows treats /c/... as absolute but wt.exe can't use it
+    if (/^\/[a-zA-Z]\//.test(folderPath)) {
+      folderPath = folderPath
+        .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`)
+        .replace(/\//g, '\\');
+    }
   }
   // If it's already an absolute path (e.g. resume sends full cwd), use it directly
   if (path.isAbsolute(folderPath)) return folderPath;
@@ -159,10 +175,16 @@ function ensureWorkspaceTrusted(absolutePath) {
   // a settings.local.json with trustWorkspace: true so Claude skips
   // the "trust this folder?" prompt on first launch.
   const normalized = absolutePath.replace(/\\/g, '/');
-  const projectKey = normalized
-    .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toLowerCase()}--`)
-    .replace(/^([A-Z]):\//, (_, d) => `${d.toLowerCase()}--`)
-    .replace(/\//g, '-');
+  let projectKey;
+  if (IS_LINUX) {
+    // Linux: /home/user/Research/ClaudeManager → home-user-Research-ClaudeManager
+    projectKey = normalized.replace(/^\//, '').replace(/\//g, '-');
+  } else {
+    projectKey = normalized
+      .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toLowerCase()}--`)
+      .replace(/^([A-Z]):\//, (_, d) => `${d.toLowerCase()}--`)
+      .replace(/\//g, '-');
+  }
   const projectDir = path.join(USER_HOME, '.claude', 'projects', projectKey);
   if (!fs.existsSync(projectDir)) {
     fs.mkdirSync(projectDir, { recursive: true });
@@ -178,6 +200,34 @@ function ensureWorkspaceTrusted(absolutePath) {
 
 // Track sidecar processes for cleanup
 // MQTT sidecar removed — agents poll HTTP directly via background watcher
+
+// Linux: launch a terminal for the given script using tmux for named window groups.
+// Named window groups (wtWindow) become tmux sessions; each agent tab is a tmux window.
+// A gnome-terminal window is opened once per session (when first created).
+// When the session already exists, the new window appears inside it automatically.
+function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
+  if (wtWindow) {
+    const hasSession = spawnSync('tmux', ['has-session', '-t', wtWindow], { stdio: 'pipe' }).status === 0;
+    if (!hasSession) {
+      // Create new tmux session running the script, then open gnome-terminal attached to it
+      spawn('tmux', ['new-session', '-d', '-s', wtWindow, '-n', tabTitle, scriptFile],
+        { detached: true, stdio: 'ignore' }).unref();
+      spawn('gnome-terminal', ['--title', wtWindow, '--', 'tmux', 'attach', '-t', wtWindow],
+        { detached: true, stdio: 'ignore' }).unref();
+      log(`Created tmux session "${wtWindow}", window "${tabTitle}"`);
+    } else {
+      // Session exists — add new window (the open gnome-terminal will display it)
+      spawn('tmux', ['new-window', '-t', wtWindow, '-n', tabTitle, scriptFile],
+        { detached: true, stdio: 'ignore' }).unref();
+      log(`Added tmux window "${tabTitle}" to existing session "${wtWindow}"`);
+    }
+  } else {
+    // No window group — open directly in a standalone gnome-terminal
+    spawn('gnome-terminal', ['--title', tabTitle, '--working-directory', cwd, '--', 'bash', scriptFile],
+      { detached: true, stdio: 'ignore' }).unref();
+    log(`Opened gnome-terminal for "${tabTitle}"`);
+  }
+}
 
 function launchNewAgent(folderPath, spawnMeta, wtWindow) {
   const cwd = resolveFolder(folderPath);
@@ -202,7 +252,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
   if (spawnMeta && spawnMeta.role) {
     // Role may be a full multi-line definition — extract a short label for the tab title.
     // Split on first sentence boundary or em dash so "You are Cam — ..." → "You are Cam".
-    const shortRole = spawnMeta.role.split(/\.\s|\s\u2014\s|\r?\n/)[0].trim().substring(0, 60);
+    const shortRole = spawnMeta.role.split(/\.\s|\s—\s|\r?\n/)[0].trim().substring(0, 60);
     tabTitle = `Claude - ${shortRole}`;
   } else {
     tabTitle = `Claude - ${path.basename(cwd)}`;
@@ -212,13 +262,28 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
     log(`Agent${spawnMeta.role ? ` role: ${spawnMeta.role}` : ''}, prompt: ${(spawnMeta.prompt || '').substring(0, 80)}...`);
   }
 
-  // Write prompt to a temp batch file to avoid cmd.exe special character issues
-  // The batch file launches claude with the prompt properly quoted
+  const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${spawnMeta.model}` : '';
+  const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
+
+  if (IS_LINUX) {
+    // Linux: write a shell script and launch via tmux / gnome-terminal
+    const scriptFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.sh`);
+    // Escape single quotes in the prompt for safe embedding in a single-quoted bash string
+    const promptEscaped = initialPrompt.replace(/'/g, "'\\''");
+    fs.writeFileSync(scriptFile,
+      `#!/bin/bash\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} '${promptEscaped}'\n`,
+      { mode: 0o755 }
+    );
+    linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow);
+    setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
+    log(`Spawned terminal for new agent (Linux) via ${scriptFile}`);
+    return;
+  }
+
+  // Windows: write prompt to a temp batch file to avoid cmd.exe special character issues
   const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
   // Escape the prompt for batch: double up % signs, wrap in quotes
   const batchPrompt = initialPrompt.replace(/%/g, '%%');
-  const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${spawnMeta.model}` : '';
-  const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
   fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
 
   const wtArgs = wtWindow
@@ -245,10 +310,14 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     try {
       const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
       if (agent && agent.cwd) {
-        // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
-        cwd = agent.cwd
-          .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`)
-          .replace(/\//g, '\\');
+        if (IS_LINUX) {
+          cwd = agent.cwd; // Already a POSIX absolute path on Linux
+        } else {
+          // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
+          cwd = agent.cwd
+            .replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`)
+            .replace(/\//g, '\\');
+        }
         log(`Using agent's stored cwd: ${cwd}`);
       }
       // Also pick up the stored wt_window if not passed explicitly
@@ -265,11 +334,25 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
 
-  // Write resume command to a temp batch file (same approach as new agent — avoids wt.exe arg parsing issues)
+  const tabTitle = `Claude - ${path.basename(cwd)}`;
+
+  if (IS_LINUX) {
+    // Linux: write a shell script and launch via tmux / gnome-terminal
+    const scriptFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.sh`);
+    fs.writeFileSync(scriptFile,
+      `#!/bin/bash\ncd "${cwd}"\nexec claude --dangerously-skip-permissions --resume ${agentId} 'run /session-resume and then await instructions'\n`,
+      { mode: 0o755 }
+    );
+    linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow);
+    setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
+    log(`Spawned terminal for resume agent ${agentId} (Linux) via ${scriptFile}`);
+    return;
+  }
+
+  // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues)
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
   fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
 
-  const tabTitle = `Claude - ${path.basename(cwd)}`;
   const wtArgs = resolvedWtWindow
     ? ['-w', resolvedWtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
     : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
@@ -287,6 +370,29 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
 function sendSignalToTerminal(pid, signal, agentId) {
   // Try: PID -> parent PID -> find claude.exe by agent UUID in command line
   log(`Sending ${signal} to terminal PID ${pid}${agentId ? ` (agent ${agentId.substring(0,8)})` : ''}`);
+
+  if (IS_LINUX) {
+    if (signal === 'ctrl-c') {
+      // On Linux, Claude runs directly — send SIGINT straight to the process
+      try {
+        process.kill(pid, 'SIGINT');
+        log(`Sent SIGINT to PID ${pid}`);
+      } catch (err) {
+        log(`Failed to send SIGINT to PID ${pid}: ${err.message}`);
+      }
+    } else {
+      // Enter key via xdotool — requires: sudo apt install xdotool
+      const proc = spawn('sh', ['-c',
+        `WID=$(xdotool search --pid ${pid} 2>/dev/null | head -1); ` +
+        `[ -z "$WID" ] && WID=$(xdotool getactivewindow 2>/dev/null); ` +
+        `[ -n "$WID" ] && xdotool key --window "$WID" Return && echo "Sent Enter" || echo "ACTIVATE_FAILED"`
+      ], { stdio: 'pipe' });
+      proc.stdout.on('data', (data) => log(`[signal] ${data.toString().trim()}`));
+      proc.stderr.on('data', (data) => log(`[signal] ERR: ${data.toString().trim()}`));
+    }
+    return;
+  }
+
   try {
     // Build the activation script: try PID, parent PID, then search by agent UUID
     const agentSearch = agentId
@@ -339,6 +445,20 @@ function sendSignalToTerminal(pid, signal, agentId) {
 
 function sendTextToTerminal(pid, text, agentId) {
   log(`Typing "${text}" into terminal PID ${pid}${agentId ? ` (agent ${agentId.substring(0,8)})` : ''}`);
+
+  if (IS_LINUX) {
+    // Use xdotool to type into the terminal window — requires: sudo apt install xdotool
+    const escaped = text.replace(/'/g, "'\\''");
+    const proc = spawn('sh', ['-c',
+      `WID=$(xdotool search --pid ${pid} 2>/dev/null | head -1); ` +
+      `[ -z "$WID" ] && WID=$(xdotool getactivewindow 2>/dev/null); ` +
+      `[ -n "$WID" ] && xdotool type --window "$WID" --clearmodifiers '${escaped}' && xdotool key --window "$WID" Return && echo "Typed text" || echo "ACTIVATE_FAILED"`
+    ], { stdio: 'pipe' });
+    proc.stdout.on('data', (data) => log(`[input] ${data.toString().trim()}`));
+    proc.stderr.on('data', (data) => log(`[input] ERR: ${data.toString().trim()}`));
+    return;
+  }
+
   try {
     const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}');
     const agentSearch = agentId
@@ -385,8 +505,29 @@ function sendTextToTerminal(pid, text, agentId) {
 
 function terminateAgent(pid) {
   log(`Terminating terminal process with PID: ${pid}`);
+
+  if (IS_LINUX) {
+    try {
+      // SIGTERM first; follow up with SIGKILL after 3s if the process is still alive
+      process.kill(pid, 'SIGTERM');
+      log(`Sent SIGTERM to PID ${pid}`);
+      setTimeout(() => {
+        try {
+          process.kill(pid, 0); // signal 0 = existence check, throws if gone
+          process.kill(pid, 'SIGKILL');
+          log(`Sent SIGKILL to PID ${pid} (still alive after SIGTERM)`);
+        } catch {
+          // Process already gone — expected
+        }
+      }, 3000);
+    } catch (err) {
+      log(`Failed to terminate PID ${pid}: ${err.message}`);
+    }
+    return;
+  }
+
   try {
-    // The stored PID is the cmd.exe terminal tab (parent of claude.exe).
+    // Windows: The stored PID is the cmd.exe terminal tab (parent of claude.exe).
     // Killing it with /T /F closes the terminal window and all children (including claude).
     const proc = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
       stdio: 'pipe',
@@ -408,7 +549,7 @@ function terminateAgent(pid) {
 
 // Track the last time each wt window name was used in the current process run,
 // so that multiple same-window launches are staggered and the first window has
-// time to register before the second wt.exe fires.
+// time to register before the second wt.exe / tmux fires.
 const wtWindowLastLaunch = new Map();
 const WT_WINDOW_STAGGER_MS = 1500;
 
@@ -542,8 +683,17 @@ let poolCheckCounter = 0;
 
 function isPidRunning(pid) {
   if (!pid) return false;
+  if (IS_LINUX) {
+    // On Linux, kill -0 reliably checks process existence without sending a signal
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
-    // Use PowerShell for a reliable Windows process check.
+    // Windows: Use PowerShell for a reliable process check.
     // process.kill(pid, 0) is unreliable on Windows (cmd.exe children of wt.exe).
     const { execSync } = require('child_process');
     const result = execSync(
@@ -586,6 +736,7 @@ async function processPoolAgents() {
 // both invocations see the same 'pending' request → double spawn.
 log(`Agent Launcher started — polling ${SERVER_URL} every ${POLL_INTERVAL / 1000}s`);
 log(`User home: ${USER_HOME}`);
+log(`Platform: ${IS_LINUX ? 'Linux' : 'Windows'}`);
 
 async function schedulePoll() {
   await processPendingRequests();
