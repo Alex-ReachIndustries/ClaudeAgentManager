@@ -39,9 +39,16 @@ cd "$REPO_DIR/scripts"
 cd "$REPO_DIR"
 
 # Build and start services via docker compose
+# Use sudo if the docker group hasn't been activated in this session yet
 echo "Starting Docker services..."
-docker compose pull --ignore-pull-failures 2>/dev/null || true
-docker compose up -d
+if docker ps >/dev/null 2>&1; then
+  DOCKER_CMD="docker"
+else
+  echo "Note: using sudo docker (log out/in to use docker without sudo permanently)"
+  DOCKER_CMD="sudo docker"
+fi
+$DOCKER_CMD compose pull --ignore-pull-failures 2>/dev/null || true
+$DOCKER_CMD compose up -d
 
 echo ""
 echo "✓ ClaudeManager services started"
