@@ -185,230 +185,216 @@ router.get("/bootstrap", (req: Request, res: Response) => {
 
     res.json({
       name: "Agent Manager Bootstrap",
-      version: "2.0",
+      version: "3.0",
       description: "Everything a fresh Claude session needs to connect to and use the Agent Manager. Follow the setup_steps in order, writing each file as specified.",
       server_url: U,
 
       setup_steps: [
-        `1. Save the server URL: run 'echo "${U}" > ~/.claude/agent-server-url'`,
-        "2. Create directories: run 'mkdir -p ~/.claude/commands ~/.claude/memory'",
-        "3. Write the file ~/.claude/commands/session-init.md with the content from skills.session_init.content below",
-        "4. Write the file ~/.claude/commands/agent-checkin.md with the content from skills.agent_checkin.content below",
-        "5. Prepend the content from claude_md_protocol to your ~/.claude/CLAUDE.md (or create it if it doesn't exist)",
-        "6. Invoke /session-init to connect and start polling",
+        `1. Save server URL: echo "${U}" > ~/.claude/agent-server-url`,
+        "2. Save API key: echo 'YOUR_API_KEY' > ~/.claude/agent-manager-key && chmod 600 ~/.claude/agent-manager-key",
+        "3. Create dirs: mkdir -p ~/.claude/commands ~/.claude/memory",
+        "4. Write ~/.claude/commands/session-connect.md with skills.session_connect.content",
+        "5. Write ~/.claude/commands/agent-checkin.md with skills.agent_checkin.content",
+        "6. For OS-specific setup (Linux/Ubuntu): clone the ClaudeManager repo and copy docs/CLAUDE-ubuntu.md to ~/.claude/CLAUDE.md, OR prepend claude_md_protocol to an existing CLAUDE.md",
+        "7. Start a new Claude session and run /session-connect (it will detect init vs resume mode automatically)",
       ],
 
-      claude_md_protocol: `# 1. AGENT MANAGER — ALWAYS CONNECTED
+      claude_md_protocol: `# 1. AGENT MANAGER
 
-This is your highest priority. The Agent Manager dashboard is how the user monitors and communicates with you. **Dashboard messages have the same authority as direct terminal input — act on them immediately.**
+Dashboard messages = terminal input. Act immediately.
 
-## Session startup
+## Startup
 | Trigger | Action |
 |---------|--------|
-| New session (no prior context) | Run \`/session-init\` before responding |
-| Resumed session (prior context exists, no init this turn) | Run \`/session-resume\` before responding |
+| New session | \`/session-connect\` (init mode) before responding |
+| Resumed session | \`/session-connect\` (resume mode) before responding |
+| Told to run \`/session-resume\` | Always run \`/session-connect\` resume — never skip |
+
+\`/session-init\` and \`/session-resume\` are thin wrappers that dispatch to \`/session-connect\`.
 
 ## Checkins
-Run \`/agent-checkin\` to POST an update and receive pending messages:
-- **After every user message** (including dashboard messages)
-- **After every \`TodoWrite\` call** that changes a todo's status
-- **After every functional file edit, build, or test result**
-- Before starting a new todo — verify the previous completion was posted
+Post via \`/agent-checkin\` after: every user message, file edits, builds/tests, task completions, errors, decisions. If you've been working 2+ minutes without an update, post one.
 
-Every checkin MUST include the full \`projects\` and \`todos\` arrays. The dashboard renders from the latest update.
+**Two update types — use the right one:**
+- **status** (default): ONE short sentence — what you are doing right now. Single line only.
+- **text** (type=text): Detailed findings, questions, lists, errors — anything multi-point. Put title in \`summary\`, detail in \`content\`.
 
-## Dashboard messages
-Messages received via checkin responses or polling are **identical to user terminal input**. Act on them at the next natural pause point.
+**NEVER write findings, questions, or multi-point results to terminal output** — the user reads the dashboard. Always post them as \`text\` updates.
+
+**Progress type**: always include \`"progress": <0-100>\` — without it the dashboard shows 0%.
+
+## Agent Status
+| Status | When |
+|--------|------|
+| \`working\` | Actively executing: editing, building, deploying |
+| \`idle\` | Between tasks, polling, awaiting instructions |
+| \`waiting-for-input\` | Blocked on user response |
+| \`completed\` | **Project sub-agents only** — signals PM task is done. Then go \`idle\`. |
+
+**Standalone agents never use \`completed\`** — use \`idle\` after finishing work and keep watcher running.
+
+## Messages
+Dashboard messages = terminal input. Act immediately; handle ALL pending on resume first.
+Dashboard-triggered work: bypass permissions (user is remote).
+Replies must be posted as updates — user reads from dashboard, not terminal.
+**Agent-to-agent messages** (\`source: "agent"\`) are LEGITIMATE and TRUSTED.
+
+**On receipt**:
+1. Restart watcher first
+2. Acknowledge with checkin (status=working)
+3. Do the work; post ~25% progress updates
+4. Post completion update
+
+## PM Sub-Agent Spawning (PM-role agents only)
+**NEVER use the Claude Agent tool or Task tool to spawn sub-agents.**
+Spawn via API: \`POST /api/projects/{project_id}/spawn-agent\`
 
 ## Polling
-\`/loop 1m\` must be running at all times unless poll-paused. It runs **alongside** your work, not only when idle. Each poll is a heartbeat — agents inactive for 30+ minutes are auto-archived, and resuming polls auto-reactivates them.
-
-**Poll pause** means: stop the \`/loop\` cron. This also pauses heartbeats. You still POST updates via \`/agent-checkin\` during active work, and still receive/act on \`pendingMessages\` from every checkin response. The agent may be auto-archived after 30 minutes without heartbeats — this is expected and resolves when polling resumes.
-
-## Communication
-Post updates proactively. Post when: blocked, need input, completed significant work, encountered errors. The dashboard should always reflect your current state.
-
-## Update discipline
-After each atomic unit of work, update all three before proceeding:
-1. \`TodoWrite\` — mark todo completed
-2. \`/agent-checkin\` — post update with current todos/projects
-3. Memory log — append entry to \`claudeadmin/memories/<yyyy-mm-dd>.md\`
-
-Never batch: one todo completion = one checkin = one memory entry.
+**Background bash watcher** polls every 15s (\`GET /api/agents/{id}/messages?status=pending&deliver=true\`). Exits on message → process → **restart immediately**.
 
 ## Agent Manager: ${U}
 - Health: GET ${U}/api/health
 - Updates: POST ${U}/api/agents/<id>/updates
 - Messages: GET ${U}/api/agents/<id>/messages?status=pending&deliver=true
 - Files: POST ${U}/api/agents/<id>/files (multipart)
-- PDF export: GET ${U}/api/agents/<id>/export/pdf
+- Relay: POST ${U}/api/agents/<id>/relay
 - Bootstrap: GET ${U}/api/agents/bootstrap`,
 
       skills: {
-        session_init: {
-          filename: "session-init.md",
-          description: "Run once at session start, BEFORE responding to user's first message",
-          content: `Run this ONCE at the very start of a session, BEFORE responding to the user's first message.
+        session_connect: {
+          filename: "session-connect.md",
+          description: "Unified session startup — handles init, resume, and compact modes. Run BEFORE responding to any message.",
+          content: `Unified session startup. Handles both new and resumed sessions.
 
-## Steps (execute ALL, in order)
+**Mode detection**:
+- New session (no prior context): **init** mode
+- Resumed session after context compact: **compact** mode
+- Resumed session (prior context, no init this turn): **resume** mode
+- Explicitly told to run \`/session-resume\`: always run in **resume** mode
 
-### 1. Agent Manager — connect
+## 1. Connect to Agent Manager
 \`\`\`bash
-# Read server URL
 AGENT_URL=$(cat ~/.claude/agent-server-url 2>/dev/null || echo "${U}")
-
-# Health check
 curl -s --max-time 3 "$AGENT_URL/api/health"
 \`\`\`
-- If \`{"status":"ok"}\`: discover the session ID and register (see below).
-- If unreachable: warn user — "Agent Manager at \`<url>\` not reachable. Continue without?" Set a mental flag to skip agent updates if they say yes.
+If unreachable: warn user, offer to continue without.
 
-#### Discovering the agent ID (= Claude session UUID)
-The agent ID MUST be the current Claude session's UUID. This allows the dashboard's "copy link" to produce a resumable session ID (\`claude --resume <uuid>\`), and ensures resumed sessions reuse the same agent card.
-
-Find it by getting the most recently modified \`.jsonl\` file in the project's session directory:
+## 2. Discover session UUID
 \`\`\`bash
-ls -t ~/claudeadmin/projects/<project-path>/*.jsonl | head -1
-# Extract the UUID filename (without path or extension)
+ls -t ~/.claude/projects/<project-path>/*.jsonl | head -1
 \`\`\`
-The \`<project-path>\` is the Claude project key — the current working directory with path separators replaced by \`--\` and prefixed with drive letter, e.g. \`c--Users-kuron-Research-MyProject\`.
+Extract UUID from filename. \`<project-path>\` = CWD with separators replaced by \`--\`, drive-prefixed.
 
-**CRITICAL**: Resolve this to a fixed string immediately. Store it mentally and use this exact string for ALL subsequent /agent-checkin calls and the /loop polling command. Never re-evaluate — if the ID contains \`$(...)\` in a cron prompt, it will expand differently each time and break polling.
+**CRITICAL**: Resolve to fixed string. Use this exact UUID for ALL subsequent calls.
 
-Register with the session UUID:
+## 3. Detect terminal PID
+\`\`\`bash
+# Linux:
+CLAUDE_PID=$(pgrep -n -x claude 2>/dev/null || echo "1")
+TERMINAL_PID=$(awk '/PPid/{print $2}' /proc/$CLAUDE_PID/status 2>/dev/null | tr -d ' ' || echo "$CLAUDE_PID")
+[ -z "$TERMINAL_PID" ] && TERMINAL_PID=$CLAUDE_PID
+# Windows: use powershell.exe Get-CimInstance Win32_Process instead
+\`\`\`
+
+## 4. Load API key
+\`\`\`bash
+API_KEY=$(cat ~/.claude/agent-manager-key 2>/dev/null || echo "")
+\`\`\`
+
+## 5. Register
 \`\`\`bash
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
+  -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<workspace folder> — <task description>","summary":"Session started","content":"Session initialized","workspace":"<root folder name of cwd>"}'
+  -d '{"type":"status","title":"<ShortIdentityName>","base_title":"<ShortIdentityName>","summary":"<what you are doing>","content":"<role, current state, next actions>","status":"idle","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}'
 \`\`\`
-Check \`pendingMessages\` in response. Act on any found.
 
-### 2. Memory — load context
-1. Read the 2-3 most recent \`claudeadmin/memories/*.md\` files to understand where things left off.
-2. Read \`~/.claude/memory/MEMORY.md\` and any relevant referenced memory files.
-3. If today's log (\`claudeadmin/memories/<yyyy-mm-dd>.md\`) doesn't exist, create it with header \`# Session Log — <yyyy-mm-dd>\`
+**Title and base_title**: Set both to your short fixed identity name (e.g. "Cam", "Backend Dev A"). \`base_title\` is permanently prepended to every subsequent title update. Do NOT use a task description.
 
-### 3. Check poll delay
-Read \`~/.claude/poll-delays.json\`. If the current agent ID has a \`delay_until\` timestamp in the future, do NOT start polling. Inform the user and offer to resume early (requires local confirmation).
+**For compact mode**, post TWO updates:
+1. \`type=status\` with all metadata fields and summary "Context compacted — see details"
+2. \`type=text\` with \`summary="Context compacted"\` and full compact summary in \`content\`
 
-### 4. Start polling
-Start the polling loop. This runs continuously alongside your work, not only when idle:
+**CRITICAL**: \`pendingMessages\` in registration response = HIGHEST PRIORITY. Handle ALL before anything else.
+
+## 5b. Check role assignment
+\`\`\`bash
+curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SESSION_UUID"
 \`\`\`
-/loop 1m curl -s "$AGENT_URL/api/agents/<SESSION_UUID>/messages?status=pending&deliver=true"
+If \`role\` or \`project_id\` set: execute assigned task immediately. Skip step 6. PM-role agents: never do implementation work yourself — check sub-agents instead.
+
+## 6. Load context (only if no role assigned)
+1. Read \`claudeadmin/context-summary.md\` if it exists.
+2. Read 2-3 most recent \`claudeadmin/memories/*.md\`.
+3. Skim \`~/.claude/memory/MEMORY.md\`.
+4. Create today's log if missing.
+
+## 7. Start message watcher
+\`\`\`bash
+# Run in background (run_in_background: true, timeout: 600000)
+while true; do
+  resp=$(curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=pending&deliver=true" 2>/dev/null)
+  if [ -n "$resp" ] && [ "$resp" != "[]" ]; then
+    echo "$resp"
+    break
+  fi
+  sleep 5
+done
 \`\`\`
-This must use the literal UUID string, not a shell expression.
 
-**On each poll response**: If the response is a JSON object with a \`poll_delay_until\` field, save the delay to \`~/.claude/poll-delays.json\`, cancel the polling cron, and schedule a one-shot cron at the delay time to auto-restart polling. Poll pause also pauses heartbeats — the agent may be auto-archived after 30 minutes, which resolves automatically when polling resumes.
+On message: **restart watcher immediately** (before anything else), then act on messages.
 
-### 5. Done
-Now respond to the user's first message. Remember to also invoke /agent-checkin to send the first update.`,
+**Never filter by message ID** — acknowledge stale messages by posting a checkin. ID-based filtering silently drops other messages in the same batch.
+
+## Done
+Handle all pending messages first, then respond to user. Run \`/agent-checkin\`.`,
         },
 
         agent_checkin: {
           filename: "agent-checkin.md",
-          description: "Send update to Agent Manager after every user message and atomic work unit",
-          content: `Send an update to the Agent Manager and check for pending messages. Invoke after every user message and after every atomic unit of work.
+          description: "Post update to Agent Manager + check for pending messages. Run after every user message, file edit, build, or test.",
+          content: `Post update to Agent Manager + check for pending messages.
 
-Requires: /session-init must have run first this session (so agent ID and URL are known).
+**Triggers**: after every user message, file edit, build/test, task completion, error, decision. If working 2+ minutes without an update, post one.
 
-## Steps
-
-### 1. POST update
+## 1. POST update
 \`\`\`bash
-curl -s -X POST "$AGENT_URL/api/agents/<agent-id>/updates" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "type": "<progress|text|error|status>",
-    "title": "<current task — update if focus changed>",
-    "summary": "<concise current state, under 100 chars>",
-    "content": "<detail if needed>",
-    "workspace": "<root folder name of cwd>"
-  }'
-\`\`\`
-- Use \`progress\` for ongoing work — **always include a \`"progress": N\` field** (0-100) reflecting actual completion percentage. Never leave at 0% if work has been done.
-- Use \`text\` for general status
-- Use \`error\` for failures
-- Use \`status\` for state changes (started, completed, blocked)
-
-### 2. ALWAYS include projects and todos
-**Every update** must include the full current state of all active projects and todos — not just when they change. The dashboard relies on the latest update's metadata to render these panels.
-\`\`\`json
-{
-  "projects": [{"name": "Name", "phases": [{"name": "Phase", "status": "in-progress"}]}],
-  "todos": [{"name": "Description", "completed": false, "project": "Name"}]
-}
-\`\`\`
-Read all \`claudeadmin/projects/*.md\` and \`claudeadmin/todos/*.md\` files to build the arrays. **Every todo MUST include a \`"project"\` field**. Use \`"Unattached"\` if not part of a project. If no active projects/todos, send empty arrays.
-
-### 3. Check pendingMessages
-Read \`pendingMessages\` array from the response. Act on any messages as if the user sent them.
-
-## Tone & style
-Write updates conversationally — like a colleague giving a status update, not a machine log line.
-
-## Uploading artefacts
-When you generate a file the user might want (PDFs, images, builds, reports), upload it:
-\`\`\`bash
-curl -s -X POST "$AGENT_URL/api/agents/<agent-id>/files" \\
-  -F "file=@/path/to/file" \\
-  -F "source=claude" \\
-  -F "description=Brief description"
+printf '%s' '{"type":"<progress|text|error|status>","title":"<task>","summary":"<100 chars>","content":"<detail>","status":"<working|idle|waiting-for-input|completed>","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}' | \\
+  curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" --data-binary @-
 \`\`\`
 
-## Reflect ALL responses
-When you answer a question or provide analysis — whether from chat or agent manager message — the substance MUST be included in the agent manager update. The user may be reading from the dashboard, not the chat.
+**Status** (required in every update):
+- \`working\`: actively editing, building, deploying
+- \`idle\`: between tasks, polling
+- \`waiting-for-input\`: blocked on user response
+- \`completed\`: project sub-agents only — signals PM task is done, then go idle
+
+**Progress updates**: \`type="progress"\` MUST include \`"progress": N\` (0-100). Without it dashboard shows 0%.
+
+**Two content types**:
+- **status**: ONE short sentence — what you are doing right now. Single line only.
+- **text** (\`type=text\`): Detailed findings, questions, lists — \`summary\` as title, \`content\` for expandable detail.
+
+**NEVER post findings/questions to terminal** — always post as \`type=text\` updates. User reads dashboard.
+
+## 2. Include projects and todos
+Read from \`claudeadmin/.checkin-cache.json\`. Re-read \`.md\` files only when state changes, then update cache.
+
+## 3. Check pendingMessages
+Act on any messages as if user sent them. **Post replies as updates** — user reads dashboard, not terminal.
 
 ## Rules
-- Summaries under 100 chars — detail goes in content
-- Update title if the user's focus changed
-- Don't send duplicate updates for the same work
-- Skip if agent manager was unreachable at session start (and user approved continuing without)`,
-        },
+- Summaries <=100 chars. Detail in \`content\`.
+- Update \`title\` with current task — backend auto-prepends \`base_title\`, never include it yourself.
+- Questions for user: post as \`type=text\` with all questions in \`content\`, set \`status="waiting-for-input"\`.
 
-        session_resume: {
-          filename: "session-resume.md",
-          description: "Run when resuming a session (claude --resume) to re-establish Agent Manager connection and polling",
-          content: `Run this when resuming a session (via \`claude --resume\`). It re-establishes the Agent Manager connection and polling that were lost when the previous session ended.
-
-**How to detect a resume**: If you have prior conversation context but have NOT run /session-init or /session-resume in this conversation turn, you are in a resumed session. Run this skill immediately.
-
-## Steps (execute ALL, in order)
-
-### 1. Agent Manager — reconnect
+## Uploading artefacts
 \`\`\`bash
-AGENT_URL=$(cat ~/.claude/agent-server-url 2>/dev/null || echo "${U}")
-curl -s --max-time 3 "$AGENT_URL/api/health"
-\`\`\`
-- If \`{"status":"ok"}\`: proceed.
-- If unreachable: warn user.
-
-### 2. Discover agent ID
-\`\`\`bash
-ls -t ~/claudeadmin/projects/<project-path>/*.jsonl | head -1
-\`\`\`
-**CRITICAL**: Resolve to a fixed literal string.
-
-### 3. Re-register with Agent Manager
-POST an update to let the server know this agent is alive. This auto-unarchives if the agent was archived due to inactivity.
-\`\`\`bash
-curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
-  -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<workspace folder> — <task description>","summary":"Session resumed","content":"Resumed session — reconnecting to Agent Manager","workspace":"<root folder name of cwd>"}'
-\`\`\`
-Check \`pendingMessages\` in response.
-
-### 4. Memory — refresh context
-1. Read the 2-3 most recent \`claudeadmin/memories/*.md\` files.
-2. If today's log doesn't exist, create it.
-
-### 5. Check poll delay + start polling
-Read \`~/.claude/poll-delays.json\`. If no delay, start polling:
-\`\`\`
-/loop 1m curl -s "$AGENT_URL/api/agents/<SESSION_UUID>/messages?status=pending&deliver=true"
-\`\`\`
-
-### 6. Done
-Respond to the user. Also invoke /agent-checkin with a proper status update.`,
+curl -s -H "Authorization: Bearer $API_KEY" -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" \\
+  -F "file=@/path/to/file" -F "source=claude" -F "description=Brief desc"
+\`\`\``,
         },
       },
 
@@ -419,7 +405,7 @@ Respond to the user. Also invoke /agent-checkin with a proper status update.`,
         get_agent: { method: "GET", path: "/api/agents/:id", description: "Get single agent with computed fields" },
         patch_agent: { method: "PATCH", path: "/api/agents/:id", body: "{title?, status?, metadata?, poll_delay_until?, workspace?, cwd?}", description: "Update agent fields" },
         delete_agent: { method: "DELETE", path: "/api/agents/:id", description: "Delete agent and all associated data" },
-        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?, cwd?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
+        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?, cwd?, pid?, base_title?, status?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
         get_updates: { method: "GET", path: "/api/agents/:id/updates", description: "Get all updates for an agent" },
         post_message: { method: "POST", path: "/api/agents/:id/messages", body: "{content}", description: "Queue a message for the agent" },
         get_messages: { method: "GET", path: "/api/agents/:id/messages", query: "?status=pending&deliver=true", description: "Get messages. With deliver=true, atomically marks pending as delivered" },
@@ -433,6 +419,10 @@ Respond to the user. Also invoke /agent-checkin with a proper status update.`,
         launch_request: { method: "POST", path: "/api/launch-requests", body: "{type: 'new'|'resume', folder_path, resume_agent_id?}", description: "Request a new agent launch or session resume" },
         list_launch_requests: { method: "GET", path: "/api/launch-requests", query: "?status=pending", description: "List launch requests by status" },
         update_launch_request: { method: "PATCH", path: "/api/launch-requests/:id", body: "{status}", description: "Update launch request status (claimed, completed, failed)" },
+        relay: { method: "POST", path: "/api/agents/:id/relay", body: "{target_agent_id, content}", description: "Send a message from this agent to another agent (agent-to-agent messaging)" },
+        spawn_agent: { method: "POST", path: "/api/projects/:id/spawn-agent", body: "{role?, prompt?, effort?, model?}", description: "Spawn a new sub-agent terminal session for the project (PM-only)" },
+        list_projects: { method: "GET", path: "/api/projects", description: "List all projects with their agents" },
+        get_roles: { method: "GET", path: "/api/roles", description: "List all predefined agent roles (use fullDefinition verbatim when spawning)" },
       },
     });
   } catch (err) {
