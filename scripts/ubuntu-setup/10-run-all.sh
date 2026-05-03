@@ -20,6 +20,7 @@ run_step() {
   echo "✓ Step $num complete"
 }
 
+run_step "00" "github"           # INTERACTIVE: GitHub browser login
 run_step "01" "system-update"
 run_step "02" "nvidia-drivers"
 run_step "03" "docker"
@@ -36,8 +37,9 @@ echo "ALL STEPS COMPLETE"
 echo "=========================================="
 echo ""
 echo "Manual steps remaining:"
-echo "  1. Run: claude            (authenticate with Anthropic)"
-echo "  2. Run: sudo tailscale up (join your tailnet)"
+echo "  1. Step 00 prompted GitHub login in browser — confirm it worked: gh auth status"
+echo "  2. Run: claude            (authenticate with Anthropic)"
+echo "  3. Run: sudo tailscale up (join your tailnet)"
 echo "  3. Edit ~/Research/ClaudeManager/.env with your config"
 echo "  4. Set agent-manager-key: echo 'KEY' > ~/.claude/agent-manager-key"
 echo "  5. REBOOT the machine (for Nvidia drivers to take effect)"
