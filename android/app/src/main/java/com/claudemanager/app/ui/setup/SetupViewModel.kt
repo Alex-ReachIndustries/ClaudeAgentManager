@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.api.AgentApi
 import com.claudemanager.app.data.api.ApiClient
+import com.claudemanager.app.data.models.ServerManager
 import com.claudemanager.app.service.AgentNotificationService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -194,9 +195,18 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
             preferences.setServerUrl(url)
             preferences.setApiKey(key)
             ApiClient.setBaseUrl(url)
-            if (key.isNotBlank()) {
-                ApiClient.setApiKey(key)
+            if (key.isNotBlank()) ApiClient.setApiKey(key)
+
+            // Add as a manager (or update the default one) so multi-manager feature is seeded
+            val managers = preferences.getManagers()
+            val existingDefault = managers.firstOrNull { it.id == "default" }
+            val manager = (existingDefault ?: ServerManager(id = "default", name = "My Machine", url = url, apiKey = key))
+                .copy(url = url, apiKey = key)
+            preferences.addOrUpdateManager(manager)
+            if (preferences.getActiveManagerId() == null) {
+                preferences.setActiveManagerId(manager.id)
             }
+
             AgentNotificationService.start(getApplication())
             onComplete()
         }

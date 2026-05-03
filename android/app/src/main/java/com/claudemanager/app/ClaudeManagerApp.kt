@@ -62,26 +62,28 @@ class ClaudeManagerApp : Application(), DefaultLifecycleObserver {
         // Register lifecycle observer for foreground detection
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
-        // Restore server URL and start background service if configured
+        // Migrate legacy single-server config to managers list, then start the notification service
         appScope.launch {
-            val serverUrl = preferences.getServerUrl()
-            val apiKey = preferences.getApiKey()
-            if (!serverUrl.isNullOrBlank()) {
-                Log.d(TAG, "Restoring server URL: $serverUrl")
+            preferences.migrateToManagersIfNeeded()
+
+            val managers = preferences.getManagers()
+            val activeId = preferences.getActiveManagerId()
+            val active = if (activeId != null) managers.firstOrNull { it.id == activeId } else managers.firstOrNull()
+            val serverUrl = active?.url ?: preferences.getServerUrl()
+            val apiKey = active?.apiKey ?: preferences.getApiKey()
+
+            if (serverUrl.isNotBlank()) {
+                Log.d(TAG, "Restoring active server: $serverUrl")
                 ApiClient.setBaseUrl(serverUrl)
                 if (apiKey.isNotBlank()) {
                     ApiClient.setApiKey(apiKey)
                 }
 
-                // Start the notification service for SSE events
                 if (preferences.getNotificationsEnabled()) {
                     AgentNotificationService.start(this@ClaudeManagerApp)
                 }
-
-                // Schedule periodic widget updates
-                // AgentWidgetWorker.schedulePeriodicUpdate(this@ClaudeManagerApp)  // TODO: fix Glance API
             } else {
-                Log.d(TAG, "No server URL configured, skipping service start")
+                Log.d(TAG, "No server configured, skipping service start")
             }
         }
     }

@@ -4,9 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudemanager.app.ClaudeManagerApp
+import com.claudemanager.app.data.api.ApiClient
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentStatus
+import com.claudemanager.app.data.models.ServerManager
 import com.claudemanager.app.data.sse.SSEClient
+import com.claudemanager.app.service.AgentNotificationService
 import com.claudemanager.app.ui.PredefinedRole
 import com.claudemanager.app.ui.PREDEFINED_ROLES
 import kotlinx.coroutines.delay
@@ -43,7 +46,9 @@ data class AgentListUiState(
     val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES,
     val wtWindows: List<String> = emptyList(),
     val expandedGroups: Set<String> = emptySet(),
-    val isGrouping: Boolean = false
+    val isGrouping: Boolean = false,
+    val managers: List<ServerManager> = emptyList(),
+    val activeManager: ServerManager? = null,
 )
 
 /**
@@ -59,15 +64,40 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val app = application as ClaudeManagerApp
     private val repository = app.repository
+    private val preferences = app.preferences
 
     private val _uiState = MutableStateFlow(AgentListUiState())
     val uiState: StateFlow<AgentListUiState> = _uiState.asStateFlow()
 
     init {
+        loadManagers()
         loadAgents()
         loadRoles()
         loadWtWindows()
         startPolling()
+    }
+
+    private fun loadManagers() {
+        viewModelScope.launch {
+            preferences.managersFlow.collect { managers ->
+                val activeId = preferences.getActiveManagerId()
+                val active = if (activeId != null) managers.firstOrNull { it.id == activeId } else managers.firstOrNull()
+                _uiState.update { it.copy(managers = managers, activeManager = active) }
+            }
+        }
+    }
+
+    fun switchManager(manager: ServerManager) {
+        ApiClient.setBaseUrl(manager.url)
+        if (manager.apiKey.isNotBlank()) ApiClient.setApiKey(manager.apiKey) else ApiClient.setApiKey("")
+        _uiState.update { it.copy(activeManager = manager, connectionState = SSEClient.ConnectionState.DISCONNECTED) }
+        viewModelScope.launch {
+            preferences.setActiveManagerId(manager.id)
+            preferences.setServerUrl(manager.url)
+            preferences.setApiKey(manager.apiKey)
+            AgentNotificationService.reconfigure(getApplication())
+        }
+        loadAgents()
     }
 
     private fun loadRoles() {

@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentStatus
+import com.claudemanager.app.data.models.ServerManager
 import com.claudemanager.app.data.sse.SSEClient
 import com.claudemanager.app.ui.detail.components.FolderPickerDialog
 import com.claudemanager.app.ui.theme.LumiBackground
@@ -165,14 +166,12 @@ fun AgentListScreen(
             } else {
                 CenterAlignedTopAppBar(
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Claude Manager",
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            ConnectionDot(state.connectionState)
-                        }
+                        ManagerDropdown(
+                            activeManager = state.activeManager,
+                            managers = state.managers,
+                            connectionState = state.connectionState,
+                            onManagerSelected = viewModel::switchManager
+                        )
                     },
                     actions = {
                         IconButton(onClick = viewModel::refresh) {
@@ -1379,6 +1378,82 @@ private fun GroupDialog(
             }
         }
     )
+}
+
+/**
+ * Top-bar title that doubles as a manager selector.
+ * Shows the active manager name + connection dot. Tapping opens a dropdown
+ * to switch between saved managers. Single-manager setups show no expand arrow.
+ */
+@Composable
+private fun ManagerDropdown(
+    activeManager: ServerManager?,
+    managers: List<ServerManager>,
+    connectionState: SSEClient.ConnectionState,
+    onManagerSelected: (ServerManager) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val hasMultiple = managers.size > 1
+
+    Box {
+        Row(
+            modifier = Modifier.clickable(enabled = hasMultiple) { expanded = true },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = activeManager?.name ?: "Claude Manager",
+                style = MaterialTheme.typography.titleLarge,
+                color = LumiOnSurface
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            ConnectionDot(connectionState)
+            if (hasMultiple) {
+                Spacer(modifier = Modifier.width(2.dp))
+                Icon(
+                    imageVector = Icons.Default.ExpandMore,
+                    contentDescription = "Switch manager",
+                    tint = LumiOnSurfaceSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        if (hasMultiple) {
+            androidx.compose.material3.DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                managers.forEach { manager ->
+                    val isActive = manager.id == activeManager?.id
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(
+                                    text = manager.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (isActive) LumiPurple500 else LumiOnSurface
+                                )
+                                Text(
+                                    text = manager.url
+                                        .removePrefix("https://")
+                                        .removePrefix("http://"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = LumiOnSurfaceTertiary
+                                )
+                            }
+                        },
+                        leadingIcon = if (isActive) {
+                            { Icon(Icons.Default.CheckCircle, contentDescription = null, tint = LumiPurple500, modifier = Modifier.size(18.dp)) }
+                        } else null,
+                        onClick = {
+                            expanded = false
+                            if (!isActive) onManagerSelected(manager)
+                        }
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**

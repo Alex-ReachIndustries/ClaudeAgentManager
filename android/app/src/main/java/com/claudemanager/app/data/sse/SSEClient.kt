@@ -30,7 +30,10 @@ import java.util.concurrent.TimeUnit
  * - Typed event emission via sealed class [SSEEvent]
  * - Thread-safe cancel/reconnect
  */
-class SSEClient {
+class SSEClient(
+    private val overrideUrl: String? = null,
+    private val overrideApiKey: String? = null
+) {
 
     companion object {
         private const val TAG = "SSEClient"
@@ -85,7 +88,7 @@ class SSEClient {
      * an HTTP→HTTPS transition (or vice versa) always gets the correct SSL configuration.
      */
     private fun getSseHttpClient(): OkHttpClient {
-        val baseUrl = ApiClient.getBaseUrl()
+        val baseUrl = overrideUrl ?: ApiClient.getBaseUrl()
         val scheme = if (baseUrl.startsWith("https://")) "https" else "http"
         if (sseHttpClientCache == null || sseHttpClientScheme != scheme) {
             val builder = if (scheme == "https") {
@@ -138,8 +141,8 @@ class SSEClient {
     }
 
     private fun doConnect() {
-        val baseUrl = ApiClient.getBaseUrl()
-        val apiKey = ApiClient.getApiKey()
+        val baseUrl = overrideUrl ?: ApiClient.getBaseUrl()
+        val apiKey = overrideApiKey ?: ApiClient.getApiKey()
         val tokenParam = if (apiKey.isNotEmpty()) "?token=${java.net.URLEncoder.encode(apiKey, "UTF-8")}" else ""
         val url = "$baseUrl/api/events$tokenParam"
 

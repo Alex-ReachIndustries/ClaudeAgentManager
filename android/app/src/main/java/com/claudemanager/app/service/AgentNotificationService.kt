@@ -10,6 +10,7 @@ import android.util.Log
 import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.api.ApiClient
 import com.claudemanager.app.data.models.AgentStatus
+import com.claudemanager.app.data.models.ServerManager
 import com.claudemanager.app.data.preferences.AppPreferences
 import com.claudemanager.app.data.sse.SSEClient
 import com.claudemanager.app.data.sse.SSEEvent
@@ -24,15 +25,11 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 
 /**
- * Foreground service that maintains a persistent SSE connection to the backend
- * and shows Android notifications when agents have updates.
+ * Foreground service that maintains SSE connections to ALL configured backends
+ * and shows Android notifications when agents have updates on any of them.
  *
- * The service uses FOREGROUND_SERVICE_DATA_SYNC type and returns START_STICKY
- * so Android restarts it if killed. It suppresses notifications when the app
- * is in the foreground (the user can see updates in the Compose UI directly).
- *
- * Notifications use MessagingStyle with RemoteInput, which provides inline
- * reply on both the phone and Wear OS (Pixel Watch 2).
+ * The primary (active) manager's SSE client is exposed via [sseEvents] for ViewModels.
+ * Background managers maintain their own SSE clients for notifications only.
  */
 class AgentNotificationService : Service() {
 
@@ -40,13 +37,14 @@ class AgentNotificationService : Service() {
         private const val TAG = "AgentNotifService"
 
         const val ACTION_STOP = "com.claudemanager.app.ACTION_STOP_SERVICE"
+        const val ACTION_RECONFIGURE = "com.claudemanager.app.ACTION_RECONFIGURE"
 
         @Volatile
         var isRunning: Boolean = false
             private set
 
         /**
-         * Shared flow of SSE events from the active service instance.
+         * Shared flow of SSE events from the active manager's SSE client.
          * ViewModels can collect this to receive real-time events (e.g. terminal output).
          * Null when the service is not running.
          */
@@ -54,9 +52,6 @@ class AgentNotificationService : Service() {
         var sseEvents: SharedFlow<SSEEvent>? = null
             private set
 
-        /**
-         * Starts the foreground service. On Android O+ this uses startForegroundService().
-         */
         fun start(context: Context) {
             val intent = Intent(context, AgentNotificationService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -66,18 +61,30 @@ class AgentNotificationService : Service() {
             }
         }
 
-        /**
-         * Stops the foreground service gracefully.
-         */
         fun stop(context: Context) {
             val intent = Intent(context, AgentNotificationService::class.java)
             context.stopService(intent)
         }
+
+        fun reconfigure(context: Context) {
+            val intent = Intent(context, AgentNotificationService::class.java).apply {
+                action = ACTION_RECONFIGURE
+            }
+            if (isRunning) {
+                context.startService(intent)
+            } else {
+                start(context)
+            }
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var sseClient: SSEClient? = null
-    private var mqttClient: com.claudemanager.app.data.mqtt.MqttEventClient? = null
+
+    // Primary client for the active manager — feeds sseEvents
+    private var primaryClient: SSEClient? = null
+
+    // Clients for background managers — notifications only
+    private val backgroundClients = mutableMapOf<String, SSEClient>()
 
     override fun onCreate() {
         super.onCreate()
@@ -87,27 +94,23 @@ class AgentNotificationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Handle "Disconnect" action from the service notification
         if (intent?.action == ACTION_STOP) {
-            Log.d(TAG, "Stop action received")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        // Start as foreground with the service status notification
         val notification = NotificationHelper.showServiceNotification(this, "Connecting")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NotificationHelper.SERVICE_NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
+            startForeground(NotificationHelper.SERVICE_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NotificationHelper.SERVICE_NOTIFICATION_ID, notification)
         }
 
-        // Connect SSE and start collecting events
-        connectSSE()
+        if (intent?.action == ACTION_RECONFIGURE) {
+            serviceScope.launch { reconfigureConnections() }
+        } else {
+            serviceScope.launch { reconfigureConnections() }
+        }
 
         return START_STICKY
     }
@@ -116,167 +119,125 @@ class AgentNotificationService : Service() {
         super.onDestroy()
         isRunning = false
         sseEvents = null
-        mqttClient?.cancel()
-        mqttClient = null
-        sseClient?.cancel()
-        sseClient = null
+        cancelAllClients()
         serviceScope.cancel()
         Log.d(TAG, "Service destroyed")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    /**
-     * Establishes the SSE connection and begins collecting events.
-     *
-     * On each SSE event, the service evaluates whether a notification should be
-     * shown (suppressed when app is in foreground or agent is archived).
-     */
-    private fun connectSSE() {
-        serviceScope.launch {
-            val preferences = AppPreferences(this@AgentNotificationService)
+    private fun cancelAllClients() {
+        primaryClient?.cancel()
+        primaryClient = null
+        backgroundClients.values.forEach { it.cancel() }
+        backgroundClients.clear()
+    }
+
+    private suspend fun reconfigureConnections() {
+        cancelAllClients()
+
+        val preferences = AppPreferences(this)
+        val managers = preferences.getManagers()
+
+        if (managers.isEmpty()) {
+            // Legacy single-server mode
             val serverUrl = preferences.getServerUrl()
-
             if (serverUrl.isBlank()) {
-                Log.w(TAG, "No server URL configured, stopping service")
+                Log.w(TAG, "No managers or server URL configured, stopping")
                 stopSelf()
-                return@launch
+                return
             }
-
-            // Fix race condition: service may start (via START_STICKY or direct start) before
-            // ClaudeManagerApp's coroutine calls ApiClient.setBaseUrl(). Ensure the ApiClient
-            // is configured with the correct URL/key before the SSEClient reads it.
             val apiKey = preferences.getApiKey()
             ApiClient.setBaseUrl(serverUrl)
-            if (apiKey.isNotBlank()) {
-                ApiClient.setApiKey(apiKey)
-            }
+            if (apiKey.isNotBlank()) ApiClient.setApiKey(apiKey)
+            startPrimaryClient(null, null)
+            return
+        }
 
-            Log.i(TAG, "SSE connecting to: $serverUrl (apiKey=${if (apiKey.isNotBlank()) "set (${apiKey.length} chars)" else "NOT SET"})")
+        val activeId = preferences.getActiveManagerId()
+        val active = if (activeId != null) managers.firstOrNull { it.id == activeId } else managers.firstOrNull()
 
-            // Use SSE directly — MQTT-over-WS is unreliable from mobile via Tailscale
-            startSSEFallback()
+        // Start primary client for active manager
+        if (active != null) {
+            ApiClient.setBaseUrl(active.url)
+            if (active.apiKey.isNotBlank()) ApiClient.setApiKey(active.apiKey) else ApiClient.setApiKey("")
+            startPrimaryClient(active.url, active.apiKey.ifBlank { null })
+            updateServiceNotification("Connecting")
+        }
+
+        // Start background clients for other managers
+        managers.filter { it.id != active?.id }.forEach { manager ->
+            startBackgroundClient(manager)
         }
     }
 
-    private fun startSSEFallback() {
-        if (sseClient != null) return // Already running
-
-        val client = SSEClient()
-        sseClient = client
+    private fun startPrimaryClient(url: String?, apiKey: String?) {
+        val client = SSEClient(overrideUrl = url, overrideApiKey = apiKey)
+        primaryClient = client
         sseEvents = client.events
 
-        // Observe connection state
         serviceScope.launch {
             client.connectionState.collectLatest { state ->
-                val stateLabel = when (state) {
+                val label = when (state) {
                     SSEClient.ConnectionState.CONNECTED -> "Connected"
                     SSEClient.ConnectionState.CONNECTING -> "Connecting"
                     SSEClient.ConnectionState.DISCONNECTED -> "Disconnected"
                 }
-                Log.d(TAG, "SSE connection state: $stateLabel")
-                updateServiceNotification(stateLabel)
+                updateServiceNotification(label)
             }
         }
 
-        // Observe SSE events
         serviceScope.launch {
-            client.events.collect { event ->
-                handleSSEEvent(event)
-            }
+            client.events.collect { event -> handleSSEEvent(event) }
         }
 
         client.connect()
     }
 
-    /**
-     * Processes an incoming SSE event and shows a notification if appropriate.
-     */
+    private fun startBackgroundClient(manager: ServerManager) {
+        val client = SSEClient(
+            overrideUrl = manager.url,
+            overrideApiKey = manager.apiKey.ifBlank { null }
+        )
+        backgroundClients[manager.id] = client
+
+        serviceScope.launch {
+            client.events.collect { event -> handleSSEEvent(event) }
+        }
+
+        client.connect()
+        Log.d(TAG, "Background SSE started for manager: ${manager.name} (${manager.url})")
+    }
+
     private fun handleSSEEvent(event: SSEEvent) {
         when (event) {
             is SSEEvent.AgentUpdated -> {
                 val agent = event.agent
-                Log.d(TAG, "AgentUpdated: id=${agent.id}, title=${agent.title}, status=${agent.status}, summary=${agent.latestSummary?.take(60)}")
-
-                // Skip archived agents
-                if (agent.status == AgentStatus.ARCHIVED) {
-                    Log.d(TAG, "Skipping notification: agent archived")
-                    return
-                }
-
-                // Skip if no meaningful summary to show
-                val summary = agent.latestSummary
-                if (summary.isNullOrBlank()) {
-                    Log.d(TAG, "Skipping notification: latestSummary is blank")
-                    return
-                }
-
-                // Suppress notifications when the app is in the foreground
+                if (agent.status == AgentStatus.ARCHIVED) return
+                val summary = agent.latestSummary ?: return
                 val app = application as? ClaudeManagerApp
-                if (app?.isAppInForeground == true) {
-                    Log.d(TAG, "Skipping notification: app in foreground")
-                    return
-                }
+                if (app?.isAppInForeground == true) return
 
-                // Check quiet hours -- suppress notification if within quiet window
                 serviceScope.launch {
                     val preferences = AppPreferences(this@AgentNotificationService)
-                    val quietEnabled = preferences.getQuietHoursEnabled()
-                    if (quietEnabled) {
+                    if (preferences.getQuietHoursEnabled()) {
                         val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                         val start = preferences.getQuietHoursStart()
                         val end = preferences.getQuietHoursEnd()
-                        val inQuietHours = if (start < end) {
-                            now in start until end
-                        } else {
-                            now >= start || now < end
-                        }
-                        if (inQuietHours) {
-                            Log.d(TAG, "Quiet hours active ($start:00-$end:00), suppressing notification for ${agent.title}")
-                            return@launch
-                        }
+                        val inQuiet = if (start < end) now in start until end else now >= start || now < end
+                        if (inQuiet) return@launch
                     }
-
-                    Log.d(TAG, "Showing notification for ${agent.title}: $summary")
-                    NotificationHelper.showAgentNotification(
-                        this@AgentNotificationService,
-                        agent,
-                        summary
-                    )
+                    NotificationHelper.showAgentNotification(this@AgentNotificationService, agent, summary)
                 }
             }
-
-            is SSEEvent.AgentDeleted -> {
-                NotificationHelper.cancelAgentNotification(this, event.agentId)
-            }
-
-            is SSEEvent.MessageQueued -> {
-                // Message queued confirmation -- no notification needed since
-                // the user just sent it. The agent will update when it processes
-                // the message.
-                Log.d(TAG, "Message queued for agent ${event.agentId}")
-            }
-
-            is SSEEvent.LaunchRequestCreated,
-            is SSEEvent.LaunchRequestUpdated -> {
-                // No notification needed for launch request events
-            }
-
-            is SSEEvent.TerminalOutput -> {
-                // Terminal output is consumed by ViewModels via the shared events flow.
-                // No notification needed.
-            }
+            is SSEEvent.AgentDeleted -> NotificationHelper.cancelAgentNotification(this, event.agentId)
+            else -> Unit
         }
     }
 
-    /**
-     * Updates the persistent foreground service notification with the current
-     * connection state.
-     */
     private fun updateServiceNotification(connectionState: String) {
         val notification = NotificationHelper.showServiceNotification(this, connectionState)
-        val notificationManager =
-            getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        notificationManager.notify(NotificationHelper.SERVICE_NOTIFICATION_ID, notification)
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        nm.notify(NotificationHelper.SERVICE_NOTIFICATION_ID, notification)
     }
 }

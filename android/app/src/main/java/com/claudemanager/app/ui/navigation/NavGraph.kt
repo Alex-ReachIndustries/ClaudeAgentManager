@@ -35,6 +35,7 @@ import com.claudemanager.app.ui.agents.AgentListScreen
 import com.claudemanager.app.ui.detail.AgentDetailScreen
 import com.claudemanager.app.ui.projects.ProjectDetailScreen
 import com.claudemanager.app.ui.projects.ProjectListScreen
+import com.claudemanager.app.ui.settings.ManagersScreen
 import com.claudemanager.app.ui.setup.SetupScreen
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
@@ -53,6 +54,7 @@ object Routes {
     const val PROJECT_DETAIL = "project/{projectId}"
     const val ADMIN = "admin"
     const val WORKFLOW_DETAIL = "workflow/{workflowId}"
+    const val MANAGERS = "managers"
 
     fun agentDetail(agentId: String): String = "agent/$agentId"
     fun projectDetail(projectId: String): String = "project/$projectId"
@@ -211,9 +213,21 @@ fun AppNavGraph(
                         navController.navigate(Routes.agentDetail(agentId))
                     },
                     onSettingsClick = {
-                        navController.navigate(Routes.SETUP)
+                        navController.navigate(Routes.MANAGERS)
                     },
                     startAgentId = null
+                )
+            }
+
+            // ── Managers settings (full screen, no bottom nav) ──────────
+            composable(Routes.MANAGERS) {
+                ManagersScreen(
+                    onBack = { navController.popBackStack() },
+                    onFirstManagerSaved = {
+                        navController.navigate(Routes.AGENTS) {
+                            popUpTo(Routes.MANAGERS) { inclusive = true }
+                        }
+                    }
                 )
             }
 

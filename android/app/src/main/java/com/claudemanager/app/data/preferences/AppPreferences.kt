@@ -8,6 +8,9 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.claudemanager.app.data.models.ServerManager
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -39,6 +42,11 @@ class AppPreferences(private val context: Context) {
         private val KEY_QUIET_HOURS_ENABLED = booleanPreferencesKey("quiet_hours_enabled")
         private val KEY_QUIET_HOURS_START = intPreferencesKey("quiet_hours_start")
         private val KEY_QUIET_HOURS_END = intPreferencesKey("quiet_hours_end")
+        private val KEY_MANAGERS_JSON = stringPreferencesKey("managers_json")
+        private val KEY_ACTIVE_MANAGER_ID = stringPreferencesKey("active_manager_id")
+
+        private val gson = Gson()
+        private val managersListType = object : TypeToken<List<ServerManager>>() {}.type
     }
 
     // ── Server URL ───────────────────────────────────────────────────────
@@ -183,6 +191,66 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_QUIET_HOURS_END] = hour.coerceIn(0, 23)
         }
+    }
+
+    // ── Server Managers ──────────────────────────────────────────────────
+
+    val managersFlow: Flow<List<ServerManager>> = context.dataStore.data.map { prefs ->
+        val json = prefs[KEY_MANAGERS_JSON]
+        if (!json.isNullOrBlank()) {
+            try { gson.fromJson(json, managersListType) ?: emptyList() } catch (_: Exception) { emptyList() }
+        } else emptyList()
+    }
+
+    val activeManagerIdFlow: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[KEY_ACTIVE_MANAGER_ID]
+    }
+
+    suspend fun getManagers(): List<ServerManager> = managersFlow.first()
+
+    suspend fun getActiveManagerId(): String? = activeManagerIdFlow.first()
+
+    suspend fun setActiveManagerId(id: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_ACTIVE_MANAGER_ID] = id }
+    }
+
+    suspend fun saveManagers(managers: List<ServerManager>) {
+        context.dataStore.edit { prefs -> prefs[KEY_MANAGERS_JSON] = gson.toJson(managers) }
+    }
+
+    suspend fun addOrUpdateManager(manager: ServerManager) {
+        val current = getManagers().toMutableList()
+        val idx = current.indexOfFirst { it.id == manager.id }
+        if (idx >= 0) current[idx] = manager else current.add(manager)
+        saveManagers(current)
+    }
+
+    suspend fun removeManager(id: String) {
+        val current = getManagers().filter { it.id != id }
+        saveManagers(current)
+        if (getActiveManagerId() == id) {
+            val first = current.firstOrNull()
+            if (first != null) {
+                setActiveManagerId(first.id)
+                setServerUrl(first.url)
+                setApiKey(first.apiKey)
+            }
+        }
+    }
+
+    /**
+     * One-time migration: if no managers list exists but a legacy server_url is set,
+     * create the default "My Machine" manager from it.
+     */
+    suspend fun migrateToManagersIfNeeded() {
+        val existing = getManagers()
+        if (existing.isNotEmpty()) return
+        val legacyUrl = getServerUrl()
+        if (legacyUrl.isBlank()) return
+        val legacyKey = getApiKey()
+        val defaultManager = ServerManager(id = "default", name = "My Machine", url = legacyUrl, apiKey = legacyKey)
+        addOrUpdateManager(defaultManager)
+        setActiveManagerId(defaultManager.id)
     }
 
     // ── Convenience ──────────────────────────────────────────────────────
