@@ -16,6 +16,18 @@ echo "=== 00: Claude Code CLI (FIRST — so Claude can drive the rest) ==="
 # After this script: run `claude` in a terminal, complete the OAuth login,
 # then ask Claude to run the rest of the setup.
 
+# 0. Apt timeouts FIRST — without these, any slow mirror hangs apt forever.
+# 02-system-update.sh writes the same file later; doing it here too means even
+# the very first apt call in this script can't hang.
+if [ ! -f /etc/apt/apt.conf.d/99-timeouts ]; then
+  sudo tee /etc/apt/apt.conf.d/99-timeouts >/dev/null <<'EOF'
+Acquire::Retries "3";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+Acquire::ftp::Timeout "30";
+EOF
+fi
+
 # 1. Bootstrap deps (in case 02-system-update hasn't run yet)
 if ! command -v curl &>/dev/null || ! command -v git &>/dev/null; then
   sudo apt-get update -y
