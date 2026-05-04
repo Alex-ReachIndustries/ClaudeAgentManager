@@ -34,7 +34,10 @@ echo "Slack: $(slack --version 2>/dev/null || echo 'installed')"
 # Steam needs the multiverse repo + i386 arch for legacy 32-bit libs.
 if ! command -v steam &>/dev/null; then
   sudo dpkg --add-architecture i386
-  sudo add-apt-repository -y multiverse
+  # multiverse is enabled by default on Mint; only add if missing on Ubuntu.
+  if ! grep -qhs "multiverse" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null; then
+    sudo add-apt-repository -y multiverse
+  fi
   sudo apt-get update -y
   # Pre-accept Steam licence so install is non-interactive
   echo "steam steam/question select I AGREE" | sudo debconf-set-selections

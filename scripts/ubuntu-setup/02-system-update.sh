@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-echo "=== 01: System Update ==="
+echo "=== 02: System Update ==="
 
 sudo apt-get update -y
 sudo apt-get upgrade -y

@@ -1,8 +1,11 @@
 #!/bin/bash
 set -euo pipefail
-echo "=== 08: ClaudeManager Setup ==="
+echo "=== 07: ClaudeManager Setup ==="
 
 REPO_DIR="$HOME/Research/ClaudeManager"
+# This is the master key for the agent manager on this desktop. The same value
+# was written to ~/.claude/agent-manager-key in step 00 so Claude can connect.
+AGENT_MANAGER_KEY="9970726e74c96ea61113163e13f05a7778c8f413dcbb69dfa06f9aaa44d68542"
 
 # Clone or update repo
 if [ -d "$REPO_DIR/.git" ]; then
@@ -17,10 +20,18 @@ fi
 cd "$REPO_DIR"
 
 # Copy .env if not present
-if [ ! -f .env ]; then
-  if [ -f .env.example ]; then
-    cp .env.example .env
-    echo "Created .env from .env.example — edit it before starting services"
+if [ ! -f .env ] && [ -f .env.example ]; then
+  cp .env.example .env
+fi
+
+# Pin API_KEY in .env so it survives container rebuilds and matches
+# the key Claude already has in ~/.claude/agent-manager-key.
+if [ -f .env ]; then
+  if grep -qE '^[# ]*API_KEY=' .env; then
+    # Replace existing line (commented or not)
+    sed -i "s|^[# ]*API_KEY=.*|API_KEY=$AGENT_MANAGER_KEY|" .env
+  else
+    echo "API_KEY=$AGENT_MANAGER_KEY" >> .env
   fi
 fi
 
@@ -32,14 +43,24 @@ sudo chown -R "$USER:$USER" /ClaudeManager
 cd "$REPO_DIR/launcher"
 npm install
 
-# Install watchdog/scripts dependencies (if any)
+# Set launcher mode for Linux
+if [ -f .env ]; then
+  if grep -qE '^[# ]*LAUNCHER_MODE=' .env; then
+    sed -i "s|^[# ]*LAUNCHER_MODE=.*|LAUNCHER_MODE=linux|" .env
+  else
+    echo "LAUNCHER_MODE=linux" >> .env
+  fi
+else
+  echo "LAUNCHER_MODE=linux" > .env
+fi
+
+# Install scripts/ deps if any
 cd "$REPO_DIR/scripts"
 [ -f package.json ] && npm install || true
 
 cd "$REPO_DIR"
 
-# Build and start services via docker compose
-# Use sudo if the docker group hasn't been activated in this session yet
+# Build and start services
 echo "Starting Docker services..."
 if docker ps >/dev/null 2>&1; then
   DOCKER_CMD="docker"
@@ -50,11 +71,27 @@ fi
 $DOCKER_CMD compose pull --ignore-pull-failures 2>/dev/null || true
 $DOCKER_CMD compose up -d
 
+# Wait for backend health and verify the API key works
+echo "Waiting for backend to come up..."
+for i in $(seq 1 30); do
+  if curl -fsSL --max-time 2 "http://localhost:3001/api/health" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+if curl -fsSL --max-time 5 \
+    -H "Authorization: Bearer $AGENT_MANAGER_KEY" \
+    "http://localhost:3001/api/agents" >/dev/null 2>&1; then
+  echo "✓ API key validated — Claude can now talk to the agent manager"
+else
+  echo "WARNING: API key check failed — verify backend logs and .env"
+fi
+
 echo ""
 echo "✓ ClaudeManager services started"
 echo ""
-echo "NEXT STEPS (manual):"
-echo "1. Edit $REPO_DIR/.env with your API keys and config"
-echo "2. Set LAUNCHER_MODE=linux in launcher/.env or as env var"
-echo "3. Run '08b-credentials.sh' to set up auth keys"
-echo "4. Run the startup script: $REPO_DIR/scripts/startup.sh"
+echo "NEXT STEPS:"
+echo "  1. Check dashboard: http://localhost:3001 or via Tailscale hostname"
+echo "  2. (Optional) Edit $REPO_DIR/.env for hostname-specific config"
+echo "  3. Run step 08-systemd-autostart.sh to make it boot automatically"

@@ -1,8 +1,15 @@
-# Ubuntu 24.04 LTS — ClaudeManager Setup Guide
+# Ubuntu 24.04 / Linux Mint 22 — ClaudeManager Setup Guide
 
-> Fresh-install setup. The numbered scripts in `scripts/ubuntu-setup/` do
-> the heavy lifting. The whole point of starting with Claude (step 00) is
-> that Claude can drive the rest of the setup once it's running.
+> Fresh-install setup. Works on **Ubuntu 24.04** and **Linux Mint 22** (standard
+> Cinnamon/MATE/Xfce — NOT LMDE). Pop!_OS 22.04 also works.
+>
+> The numbered scripts in `scripts/ubuntu-setup/` do the heavy lifting. The
+> whole point of starting with Claude (step 00) is that Claude can drive the
+> rest of the setup once it's running.
+>
+> Distro detection is automatic — `_distro-check.sh` (sourced by each
+> script that needs it) maps Mint codenames to their upstream Ubuntu codenames
+> for things like the Docker apt repo.
 
 ---
 

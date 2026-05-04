@@ -9,8 +9,8 @@ RemainAfterExit=yes
 User=%i
 Environment=HOME=/home/%i
 Environment=DISPLAY=:0
-WorkingDirectory=/home/%i/ClaudeManager
-ExecStart=/home/%i/ClaudeManager/scripts/startup.sh
+WorkingDirectory=/home/%i/Research/ClaudeManager
+ExecStart=/home/%i/Research/ClaudeManager/scripts/startup.sh
 StandardOutput=journal
 StandardError=journal
 

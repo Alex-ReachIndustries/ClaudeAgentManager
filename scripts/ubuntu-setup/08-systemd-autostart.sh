@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-echo "=== 09: Systemd Auto-Start ==="
+echo "=== 08: Systemd Auto-Start ==="
 
 REPO_DIR="$HOME/Research/ClaudeManager"
 SERVICE_SRC="$REPO_DIR/scripts/claude-manager-launcher.service"

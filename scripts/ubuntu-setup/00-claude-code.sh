@@ -1,5 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_distro-check.sh"
+
 echo "=== 00: Claude Code CLI (FIRST — so Claude can drive the rest) ==="
 # This step gets you a working Claude session that can run the remaining
 # setup scripts under your direction. It installs:

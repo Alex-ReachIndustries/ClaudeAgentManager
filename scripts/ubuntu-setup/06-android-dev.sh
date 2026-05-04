@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-echo "=== 07: Android Development Tools ==="
+echo "=== 06: Android Development Tools ==="
 
 # Java 17 (required for Android builds)
 sudo apt-get install -y openjdk-17-jdk openjdk-17-jre

@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-echo "=== 00: GitHub Authentication ==="
+echo "=== 01: GitHub Authentication ==="
 
 # Install git if not already present
 if ! command -v git &>/dev/null; then
