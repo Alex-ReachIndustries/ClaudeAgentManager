@@ -74,6 +74,33 @@ echo "Last apt errors:"; sudo tail -20 /var/log/apt/history.log
 
 ---
 
+## Step 2b — Nvidia driver + CUDA + container toolkit (no prompt; reboot may follow)
+
+```bash
+bash ~/ubuntu-setup/02b-nvidia.sh
+```
+
+The script auto-detects the GPU and:
+- Skips entirely if there's no Nvidia GPU
+- Skips driver install if `nvidia-smi` already works
+- Otherwise: adds the `graphics-drivers` PPA (needed for RTX 50-series Blackwell, since stock Mint/Ubuntu repos ship driver 535/550 which doesn't support it) and installs the recommended driver, plus CUDA toolkit and `nvidia-container-toolkit` for Docker GPU passthrough
+
+If the script ends with **"REBOOT REQUIRED"**, tell the human:
+
+> Nvidia driver installed but the kernel module isn't loaded yet — reboot the
+> machine, then re-run me with: `Read ~/ubuntu-setup/SETUP-FOR-CLAUDE.md and
+> resume from step 3.`
+
+After reboot (or if no reboot was needed), verify:
+
+```bash
+nvidia-smi
+nvcc --version
+```
+
+`nvidia-smi` must list the GPU and a driver version. If you see "command not
+found" or "couldn't communicate with the Nvidia driver", stop and ask.
+
 ## Step 3 — Docker (no prompt, but a sudo + group note)
 
 ```bash

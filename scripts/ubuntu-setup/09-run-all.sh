@@ -34,6 +34,7 @@ fi
 
 run_step "01" "github"            # INTERACTIVE: GitHub browser login
 run_step "02" "system-update"
+run_step "02b" "nvidia"           # No-op if non-Nvidia or driver already loaded
 run_step "03" "docker"
 run_step "04" "tailscale"         # INTERACTIVE: requires browser auth for tailnet
 run_step "05" "desktop-apps"      # Chrome + Slack + Steam

@@ -18,7 +18,7 @@
 - Ubuntu 24.04 LTS Desktop ISO: https://releases.ubuntu.com/24.04/
 - Wired ethernet connection (recommended — much smoother for Steam Link, Docker pulls, and remote sessions)
 - Disk: leave **unencrypted** (this iteration assumes no LUKS — boot reliability and remote unattended access are easier)
-- Nvidia drivers: install via Ubuntu's "Additional Drivers" GUI before running these scripts. The old `02-nvidia-drivers.sh` step is **gone** — Ubuntu handles this natively now.
+- Nvidia drivers: handled automatically by step `02b-nvidia.sh`. For RTX 50-series (Blackwell), Mint's default Driver Manager only ships driver 535/550 which doesn't support Blackwell — the script adds the `graphics-drivers` PPA so a 570+ driver is available. The script is idempotent: if a working proprietary driver is already loaded it just installs CUDA + the container toolkit and exits.
 
 ---
 
@@ -92,6 +92,7 @@ bash 09-run-all.sh
 | 00 | `00-claude-code.sh` | Node.js 22, Claude CLI, seed `~/.claude` | OAuth login |
 | 01 | `01-github.sh` | git, gh CLI, sets identity | GitHub web auth |
 | 02 | `02-system-update.sh` | apt update/upgrade + base tools | No |
+| 02b | `02b-nvidia.sh` | Nvidia driver (Blackwell-capable, latest from PPA) + CUDA + container toolkit. No-op if no Nvidia GPU or driver already loaded. **Reboot may follow.** | No |
 | 03 | `03-docker.sh` | Docker CE, compose, user→docker group | No |
 | 04 | `04-tailscale.sh` | Tailscale + x11vnc remote desktop service | Tailscale auth |
 | 05 | `05-desktop-apps.sh` | Chrome, Slack, Steam (+Steam Link firewall) | No |
