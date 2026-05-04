@@ -2,13 +2,12 @@
 # Sourced helper — applied at the start of step 00 and step 02.
 # Two things:
 #   1. Drop /etc/apt/apt.conf.d/99-timeouts so apt can never hang forever.
-#   2. Swap default Ubuntu/Mint mirrors to UK ones (gb.archive.ubuntu.com,
-#      mirror.bytemark.co.uk).
+#   2. Swap Ubuntu archive default to UK mirror (gb.archive.ubuntu.com) which
+#      has been more reliable than the round-robin archive.ubuntu.com.
+#      We DO NOT swap the Mint mirror — packages.linuxmint.com is fine and
+#      bytemark/etc don't mirror standard Mint Cinnamon (only LMDE).
+# Also: undoes a bad bytemark swap from older versions of this script if found.
 # Idempotent — safe to source multiple times.
-#
-# DOES NOT run apt-get update itself — that's the caller's job, with output
-# visible. Otherwise users see dead air for up to 2 minutes wondering if the
-# script has hung. Each calling script does its own apt-get update next.
 
 set -e
 
@@ -25,7 +24,22 @@ else
   echo "  apt timeouts: already present"
 fi
 
-# 2. Mirror swap (idempotent — sed only swaps if old URL present)
+# 2. Repair: undo a bad bytemark Mint swap if a previous version of this
+# helper applied it (bytemark only mirrors LMDE, not standard Mint).
+swap_back() {
+  local bad="$1" good="$2"
+  for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    [ -f "$f" ] || continue
+    if grep -q "$bad" "$f" 2>/dev/null; then
+      sudo sed -i.bak "s|$bad|$good|g" "$f"
+      echo "  REPAIR: $bad -> $good in $(basename "$f")"
+    fi
+  done
+}
+swap_back "http://mirror.bytemark.co.uk/linuxmint/packages" "http://packages.linuxmint.com"
+swap_back "http://mirror.bytemark.co.uk/linuxmint" "http://packages.linuxmint.com"
+
+# 3. Mirror swap (Ubuntu only, idempotent)
 swap_mirror() {
   local old="$1" new="$2"
   for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
@@ -38,11 +52,7 @@ swap_mirror() {
 }
 
 UBUNTU_MIRROR="http://gb.archive.ubuntu.com/ubuntu"
-MINT_MIRROR="http://mirror.bytemark.co.uk/linuxmint/packages"
-
 swap_mirror "http://archive.ubuntu.com/ubuntu" "$UBUNTU_MIRROR"
 swap_mirror "https://archive.ubuntu.com/ubuntu" "$UBUNTU_MIRROR"
-swap_mirror "http://packages.linuxmint.com" "$MINT_MIRROR"
-swap_mirror "https://packages.linuxmint.com" "$MINT_MIRROR"
 
 echo "  apt config OK — caller will run apt-get update next (output will be visible)."
