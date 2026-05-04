@@ -3,8 +3,12 @@
 # Two things:
 #   1. Drop /etc/apt/apt.conf.d/99-timeouts so apt can never hang forever.
 #   2. Swap default Ubuntu/Mint mirrors to UK ones (gb.archive.ubuntu.com,
-#      mirror.bytemark.co.uk) which have been reliable.
+#      mirror.bytemark.co.uk).
 # Idempotent — safe to source multiple times.
+#
+# DOES NOT run apt-get update itself — that's the caller's job, with output
+# visible. Otherwise users see dead air for up to 2 minutes wondering if the
+# script has hung. Each calling script does its own apt-get update next.
 
 set -e
 
@@ -17,17 +21,17 @@ Acquire::https::Timeout "30";
 Acquire::ftp::Timeout "30";
 EOF
   echo "  apt timeouts: 30s + 3 retries written"
+else
+  echo "  apt timeouts: already present"
 fi
 
 # 2. Mirror swap (idempotent — sed only swaps if old URL present)
-APT_MIRRORS_FIXED=""
 swap_mirror() {
   local old="$1" new="$2"
   for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
     [ -f "$f" ] || continue
     if grep -q "$old" "$f" 2>/dev/null; then
       sudo sed -i.bak "s|$old|$new|g" "$f"
-      APT_MIRRORS_FIXED="yes"
       echo "  swap: $old -> $new in $(basename "$f")"
     fi
   done
@@ -41,10 +45,4 @@ swap_mirror "https://archive.ubuntu.com/ubuntu" "$UBUNTU_MIRROR"
 swap_mirror "http://packages.linuxmint.com" "$MINT_MIRROR"
 swap_mirror "https://packages.linuxmint.com" "$MINT_MIRROR"
 
-# Force apt to refresh package lists from the new mirror.
-# We don't run a full update here — just enough to refresh metadata.
-if [ -n "$APT_MIRRORS_FIXED" ]; then
-  sudo apt-get update -y -o Acquire::Languages=none -o Acquire::CompressionTypes::Order::=gz 2>&1 | tail -3 || true
-fi
-
-echo "  apt config OK"
+echo "  apt config OK — caller will run apt-get update next (output will be visible)."
