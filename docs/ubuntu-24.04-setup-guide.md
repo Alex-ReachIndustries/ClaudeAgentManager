@@ -1,251 +1,162 @@
 # Ubuntu 24.04 LTS — ClaudeManager Setup Guide
 
-> New desktop setup guide for moving ClaudeManager from Windows to Ubuntu 24.04 LTS.
+> Fresh-install setup. The numbered scripts in `scripts/ubuntu-setup/` do
+> the heavy lifting. The whole point of starting with Claude (step 00) is
+> that Claude can drive the rest of the setup once it's running.
 
 ---
 
-## 1. Install Ubuntu 24.04 LTS
+## 0. Prerequisites
 
-**Download the ISO:**
-https://releases.ubuntu.com/24.04/ubuntu-24.04.2-desktop-amd64.iso
-
-**Create bootable USB (from Windows, using Rufus):**
-1. Download Rufus: https://rufus.ie
-2. Insert USB (≥8GB), open Rufus
-3. Select the ubuntu ISO, leave defaults (GPT + UEFI), click Start
-4. Boot from USB, choose "Install Ubuntu", follow the installer
+- Ubuntu 24.04 LTS Desktop ISO: https://releases.ubuntu.com/24.04/
+- Wired ethernet connection (recommended — much smoother for Steam Link, Docker pulls, and remote sessions)
+- Disk: leave **unencrypted** (this iteration assumes no LUKS — boot reliability and remote unattended access are easier)
+- Nvidia drivers: install via Ubuntu's "Additional Drivers" GUI before running these scripts. The old `02-nvidia-drivers.sh` step is **gone** — Ubuntu handles this natively now.
 
 ---
 
-## 2. First-boot system updates
+## 1. Get the setup scripts onto the box
 
+You have two options:
+
+**A. Direct download (recommended on a fresh OS):**
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git tmux gnome-terminal xdotool build-essential
+mkdir -p ~/ubuntu-setup && cd ~/ubuntu-setup
+curl -fsSL -o ubuntu-setup.zip \
+  https://github.com/Alex-ReachIndustries/ClaudeAgentManager/raw/main/scripts/ubuntu-setup.zip
+unzip ubuntu-setup.zip
+chmod +x *.sh
+```
+
+**B. From a USB drive containing `ubuntu-setup.zip`:**
+```bash
+mkdir -p ~/ubuntu-setup && cd ~/ubuntu-setup
+unzip /media/$USER/<USB-NAME>/ubuntu-setup.zip
+chmod +x *.sh
 ```
 
 ---
 
-## 3. Install Node.js 20 LTS
+## 2. Step 00 — install Claude
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-node --version   # should be v20.x
+cd ~/ubuntu-setup
+bash 00-claude-code.sh
+```
+
+This installs Node.js 22 + Claude Code CLI, then seeds:
+- `~/.claude/agent-manager-key` with the master key
+- `~/.claude/agent-server-url` = `http://localhost:3001`
+- `~/.claude/CLAUDE.md` (Ubuntu version)
+
+Then **manually**:
+```bash
+claude
+```
+Complete the OAuth login in the browser. You're now at a Claude prompt.
+
+---
+
+## 3. Hand the rest off to Claude
+
+Tell Claude:
+
+> Please run the rest of the Ubuntu setup scripts in `~/ubuntu-setup/` in
+> order, starting with `01-github.sh`. Hand control back to me for the
+> interactive auth steps (GitHub, Tailscale, Steam, VNC password). Stop
+> if anything fails.
+
+Claude will run scripts 01–08, pausing for you when:
+- **Step 01 (GitHub):** browser auth via `gh auth login --web`
+- **Step 04 (Tailscale):** `sudo tailscale up` and browser auth for the tailnet
+- **Step 05 (Steam):** Steam licence agreement (pre-accepted in the script, but first launch wants you to log in)
+
+Or run the master script directly:
+```bash
+bash 09-run-all.sh
 ```
 
 ---
 
-## 4. Install Docker Engine
+## 4. What each step does
 
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-newgrp docker     # or log out and back in
-docker --version
-```
-
----
-
-## 5. Install PM2
-
-```bash
-sudo npm install -g pm2
-pm2 startup systemd -u $USER --hp $HOME
-# Run the printed systemctl command as root, e.g.:
-#   sudo systemctl enable pm2-<username>
-```
+| # | Script | What it does | Interactive? |
+|---|--------|--------------|--------------|
+| 00 | `00-claude-code.sh` | Node.js 22, Claude CLI, seed `~/.claude` | OAuth login |
+| 01 | `01-github.sh` | git, gh CLI, sets identity | GitHub web auth |
+| 02 | `02-system-update.sh` | apt update/upgrade + base tools | No |
+| 03 | `03-docker.sh` | Docker CE, compose, user→docker group | No |
+| 04 | `04-tailscale.sh` | Tailscale + x11vnc remote desktop service | Tailscale auth |
+| 05 | `05-desktop-apps.sh` | Chrome, Slack, Steam (+Steam Link firewall) | No |
+| 06 | `06-android-dev.sh` | JDK 17, Android SDK, Gradle 8.2 | No |
+| 07 | `07-claude-manager.sh` | Clone repo, set API_KEY in .env, docker compose up | No |
+| 08 | `08-systemd-autostart.sh` | Systemd user service for ClaudeManager | No |
+| 09 | `09-run-all.sh` | Master runner — runs 01–08 in order | Inherits sub-step prompts |
 
 ---
 
-## 6. Install Claude Code CLI
+## 5. Post-setup manual bits
+
+### Remote desktop (AVNC on Android over Tailscale)
+
+After step 04 + a desktop login (so x11vnc has an X session to attach to):
+1. **Change the default VNC password** (it's currently `vncpass`):
+   ```bash
+   x11vnc -storepasswd <newpass> ~/.vnc/passwd
+   systemctl --user restart x11vnc
+   ```
+2. On Android, install **AVNC** (F-Droid / Play Store) and connect to:
+   - host: `<machine-name>.<your-tailnet>.ts.net`
+   - port: `5900`
+   - password: whatever you set above
+
+### Steam Link on the TV
+
+After step 05 + you've signed in to Steam at least once:
+1. Steam → Settings → Remote Play → enable **Remote Play**
+2. Steam → Settings → Remote Play → **Pair Steam Link** → note the PIN
+3. On the TV's Steam Link app, enter the PIN
+4. Both devices on the same LAN (ethernet on the desktop is ideal — ✓)
+
+### Verify everything
 
 ```bash
-npm install -g @anthropic-ai/claude-code
-claude --version
-```
+# Agent manager up?
+curl -s http://localhost:3001/api/health    # → {"status":"ok"}
 
----
-
-## 7. Install Tailscale
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-# Authenticate in the browser when prompted
-tailscale ip -4   # note the IP — add to agent-server-url if needed
-```
-
----
-
-## 8. Transfer ClaudeManager
-
-Option A — clone from GitHub (if the repo is pushed):
-```bash
-git clone https://github.com/your-org/ClaudeManager.git ~/ClaudeManager
-```
-
-Option B — copy from Windows over network:
-```bash
-# From Windows (Git Bash):
-scp -r /c/Users/kuron/Research/ClaudeManager user@new-desktop:~/ClaudeManager
-```
-
----
-
-## 9. Configure credentials
-
-```bash
-mkdir -p ~/.claude
-
-# Agent server URL (your Tailscale address or localhost)
-echo "https://msi.tail06903c.ts.net" > ~/.claude/agent-server-url
-
-# API key — copy from Windows machine:
-#   Windows: type C:\Users\kuron\.claude\agent-manager-key
-echo "your-api-key-here" > ~/.claude/agent-manager-key
-
-# Anthropic API key
-echo "export ANTHROPIC_API_KEY=sk-ant-..." >> ~/.bashrc
-source ~/.bashrc
-```
-
----
-
-## 10. Start Docker services
-
-```bash
-cd ~/ClaudeManager
-docker compose up -d
-# Wait for backend health:
-until curl -s http://localhost:3001/api/health; do sleep 3; done
-echo "Backend ready"
-```
-
----
-
-## 11. Configure PM2 for launcher + watchdog
-
-```bash
-cd ~/ClaudeManager
-
-# Start launcher
-pm2 start launcher/launcher.js --name agent-launcher
-
-# Start watchdog
-pm2 start scripts/watchdog.js --name watchdog
-
-# Save PM2 process list for auto-start on reboot
-pm2 save
-```
-
----
-
-## 12. Configure auto-start on login
-
-The systemd user service (`scripts/claude-manager-launcher.service`) handles startup.
-
-```bash
-mkdir -p ~/.config/systemd/user
-
-# Create the service (replace USERNAME with your actual username)
-sudo sed "s/%i/$USER/g" ~/ClaudeManager/scripts/claude-manager-launcher.service \
-    > ~/.config/systemd/user/claude-manager.service
-
-systemctl --user daemon-reload
-systemctl --user enable claude-manager.service
-systemctl --user start claude-manager.service
-
-# Check status
+# Systemd service alive?
 systemctl --user status claude-manager.service
-```
 
-Alternatively, use the startup script directly:
-```bash
-chmod +x ~/ClaudeManager/scripts/startup.sh
-# Add to ~/.config/autostart or call from ~/.profile:
-~/ClaudeManager/scripts/startup.sh &
+# Claude can reach the manager?
+curl -s -H "Authorization: Bearer $(cat ~/.claude/agent-manager-key)" \
+  http://localhost:3001/api/agents
 ```
 
 ---
 
-## 13. Verify the launcher
+## 6. Quick reference paths
 
-```bash
-# Check launcher log
-pm2 logs agent-launcher --lines 20
-
-# It should print:
-# [HH:MM:SS] Agent Launcher started — polling ...
-# [HH:MM:SS] Platform: Linux
-```
-
----
-
-## 14. Terminal setup (tmux)
-
-On Linux, named window groups use **tmux sessions** instead of Windows Terminal tabs.
-
-```bash
-# View all active agent sessions
-tmux ls
-
-# Attach to a project's session (e.g. DailyVacancy)
-tmux attach -t DailyVacancy
-
-# Navigate between agent tabs within a session
-# Ctrl+B then n (next window)  /  p (previous window)
-# Ctrl+B then w (window list)
-
-# Detach from session without stopping agents
-# Ctrl+B then d
-```
+| Item | Linux path |
+|------|-----------|
+| ClaudeManager repo | `~/Research/ClaudeManager` |
+| Claude config | `~/.claude/` |
+| Agent server URL | `~/.claude/agent-server-url` |
+| API key | `~/.claude/agent-manager-key` |
+| Docker data | `/ClaudeManager/agent-data` |
+| Setup scripts | `~/ubuntu-setup/` |
+| VNC password | `~/.vnc/passwd` |
+| Systemd service | `~/.config/systemd/user/claude-manager.service` |
 
 ---
 
-## 15. Android ADB (for Android app testing)
-
-```bash
-sudo apt install -y android-tools-adb
-# Enable USB debugging on your phone, then:
-adb devices
-# Build and install the APK:
-cd ~/ClaudeManager/android
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
-```
-
-Java/Android SDK are already handled by the Android Gradle plugin — install JDK 17:
-```bash
-sudo apt install -y openjdk-17-jdk
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-echo "export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> ~/.bashrc
-```
-
----
-
-## 16. Key differences from Windows
+## 7. Differences from the Windows setup
 
 | Feature | Windows | Linux |
 |---------|---------|-------|
 | Terminal multiplexer | Windows Terminal (`wt.exe`) | tmux |
-| Named window groups | `wt -w <name>` | `tmux new-session -s <name>` |
 | Process termination | `taskkill /PID /T /F` | `kill -TERM / -KILL` |
 | PID check | PowerShell `Get-Process` | `kill -0 <pid>` |
-| Startup | Task Scheduler / startup.bat | systemd user service / startup.sh |
-| Launcher mode | Auto-detected (`process.platform`) | Same — `IS_LINUX=true` auto |
-| Signal/input | WScript.Shell SendKeys | xdotool (install separately) |
-
----
-
-## Quick reference paths
-
-| Item | Linux path |
-|------|-----------|
-| ClaudeManager | `~/ClaudeManager` |
-| Claude config | `~/.claude/` |
-| Agent server URL | `~/.claude/agent-server-url` |
-| API key | `~/.claude/agent-manager-key` |
-| PM2 logs | `~/.pm2/logs/` |
-| Docker data | Docker named volume `agent-data` |
-| Startup script | `~/ClaudeManager/scripts/startup.sh` |
+| Autostart | Task Scheduler / startup.bat | systemd user service |
+| Launcher mode | `process.platform` auto-detect | `LAUNCHER_MODE=linux` in `.env` |
+| Remote desktop | Windows Remote Desktop | x11vnc + AVNC over Tailscale |
+| Send keys | WScript.Shell SendKeys | xdotool |
