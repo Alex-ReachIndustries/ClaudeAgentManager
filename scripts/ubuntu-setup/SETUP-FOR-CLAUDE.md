@@ -59,6 +59,30 @@ If it shows "Logged in to github.com as alex", continue. Otherwise, stop.
 
 ---
 
+## Step 1b — Clone work repos (no prompt)
+
+```bash
+bash ~/ubuntu-setup/01b-clone-repos.sh
+```
+
+Pulls down all the work repos (AIGroupPortal, VisualTools,
+ClaudeMeetingNoteTaker, PersonalAdmin, AdventOfCode). Idempotent —
+already-cloned repos are skipped. Failures on individual repos don't
+stop the script; they're logged and you continue.
+
+Verify:
+
+```bash
+ls ~/Research/ ~/ClaudeMeetingNoteTaker ~/PersonalAdmin 2>/dev/null
+```
+
+You should see the `Research/` directory with `AIGroupPortal` and
+`VisualTools` inside, plus the home-dir repos. If anything failed,
+the script's output will say which one — flag it to the human.
+
+ClaudeManager itself is cloned later in step 07 (it has extra setup
+beyond just `git clone`).
+
 ## Step 2 — System update (no prompt)
 
 ```bash

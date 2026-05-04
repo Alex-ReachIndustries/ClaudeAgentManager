@@ -33,6 +33,7 @@ if [ ! -f "$HOME/.claude/agent-manager-key" ]; then
 fi
 
 run_step "01" "github"            # INTERACTIVE: GitHub browser login
+run_step "01b" "clone-repos"      # Clones all work repos to ~/Research and ~/
 run_step "02" "system-update"
 run_step "02b" "nvidia"           # No-op if non-Nvidia or driver already loaded
 run_step "03" "docker"

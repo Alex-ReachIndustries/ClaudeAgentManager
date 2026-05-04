@@ -91,6 +91,7 @@ bash 09-run-all.sh
 |---|--------|--------------|--------------|
 | 00 | `00-claude-code.sh` | Node.js 22, Claude CLI, seed `~/.claude` | OAuth login |
 | 01 | `01-github.sh` | git, gh CLI, sets identity | GitHub web auth |
+| 01b | `01b-clone-repos.sh` | Clones all work repos (AIGroupPortal, VisualTools, ClaudeMeetingNoteTaker, PersonalAdmin, AdventOfCode) to `~/Research/` and `~/`. Idempotent. | No |
 | 02 | `02-system-update.sh` | apt update/upgrade + base tools | No |
 | 02b | `02b-nvidia.sh` | Nvidia driver (Blackwell-capable, latest from PPA) + CUDA + container toolkit. No-op if no Nvidia GPU or driver already loaded. **Reboot may follow.** | No |
 | 03 | `03-docker.sh` | Docker CE, compose, user→docker group | No |
