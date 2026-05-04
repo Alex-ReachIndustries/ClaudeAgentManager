@@ -120,10 +120,27 @@ After step 04 + a desktop login (so x11vnc has an X session to attach to):
 ### Steam Link on the TV
 
 After step 05 + you've signed in to Steam at least once:
+
+**Verify host readiness first:**
+```bash
+steam-link-check
+```
+This is installed by step 05 and surfaces the four things that almost always cause stutter/black-screen:
+- Display server (must be **X11**, not Wayland — pick "Cinnamon" at login, not "Cinnamon Wayland")
+- Hardware encoder (NVENC if Nvidia, VAAPI if Intel/AMD — software encoding is the most common cause of streaming lag)
+- UDP buffer sizes (set to 16 MB by the script — Linux defaults at 208 KB are too small for 1080p streams)
+- Network — both devices on the same subnet
+
+**Then pair:**
 1. Steam → Settings → Remote Play → enable **Remote Play**
-2. Steam → Settings → Remote Play → **Pair Steam Link** → note the PIN
-3. On the TV's Steam Link app, enter the PIN
-4. Both devices on the same LAN (ethernet on the desktop is ideal — ✓)
+2. Advanced Host Options → enable hardware encoding, encoder = NVENC or VAAPI (NOT software)
+3. Steam → Settings → Remote Play → **Pair Steam Link** → note the PIN
+4. On the TV's Steam Link app, enter the PIN
+
+**If you still see stutter/lag:**
+- Force the TV onto 5 GHz Wi-Fi, same AP as the desktop (or ethernet on the TV)
+- In Steam Link app on TV: Settings → Streaming → set bandwidth manually (Fast/Balanced)
+- Check `nvidia-smi` while streaming — encoder utilisation should be > 0%; if it's stuck at 0% the host is doing CPU encode
 
 ### Verify everything
 

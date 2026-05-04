@@ -144,6 +144,29 @@ which steam
 
 All three should resolve.
 
+**Steam Link readiness check.** Run:
+
+```bash
+steam-link-check
+```
+
+Look at the output for:
+- **Display server:** must be X11, NOT Wayland. If Wayland, tell the human to log
+  out and pick "Cinnamon" (not "Cinnamon Wayland") at the login screen.
+- **Hardware encoder:** must show NVENC (if Nvidia) or VAAPI H264 entrypoint
+  (Intel/AMD). If neither, streaming will use CPU encode and be laggy.
+- **UDP buffer sizes:** must be ≥ 16 MB (the script sets this — should already be fine).
+- **Network:** machine and TV must be on the same `inet` subnet for auto-discovery.
+
+If the encoder check fails on Nvidia, the proprietary driver isn't loaded. Tell
+the human: "Open Driver Manager, pick the recommended Nvidia driver, apply, reboot —
+then try Steam Link again." Don't try to install the driver yourself; Mint's
+Driver Manager handles the kernel module signing for secure boot which is fiddly
+to do from the CLI.
+
+If the encoder check fails on Intel/AMD, run `vainfo` directly and capture the
+full output — could be a missing va-driver package.
+
 ---
 
 ## Step 6 — Android dev tools (no prompt, takes a while)
@@ -233,8 +256,11 @@ Once everything above passes, post a single message saying:
 > 2. Change the VNC password: `x11vnc -storepasswd <new> ~/.vnc/passwd && systemctl --user restart x11vnc`
 > 3. Install AVNC on Android, connect to `<machine>.<tailnet>.ts.net:5900`
 > 4. Launch Steam from the application menu, sign in
-> 5. In Steam → Settings → Remote Play → enable Remote Play, pair Steam Link from your TV
-> 6. Reboot once to confirm `claude-manager.service` comes up at boot
+> 5. Run `steam-link-check` once Steam is open — confirm encoder + UDP buffers are healthy
+> 6. In Steam → Settings → Remote Play → enable Remote Play
+>    - Advanced Host Options → enable hardware encoding, encoder = NVENC or VAAPI (NOT software)
+> 7. Pair Steam Link from your TV (PIN flow)
+> 8. Reboot once to confirm `claude-manager.service` comes up at boot
 >
 > Agent manager: http://localhost:3001 (also via `<machine>.<tailnet>.ts.net:3001`)
 > API key: in `~/.claude/agent-manager-key`
