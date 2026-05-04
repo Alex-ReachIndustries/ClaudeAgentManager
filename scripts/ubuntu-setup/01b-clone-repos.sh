@@ -16,14 +16,21 @@ fi
 
 mkdir -p "$HOME/Research"
 
-# repo => target path
+# Repo list — these are the projects Cam will actively work on.
+# Format: "<owner/repo> <local target path>"
+# Lumi repos go under ~/Research because they're work projects.
 REPOS=(
   "Reach-Industries/AIGroupPortal               $HOME/Research/AIGroupPortal"
+  "Reach-Industries/Lumi-AI-Core                $HOME/Research/Lumi-AI-Core"
+  "Reach-Industries/Lumi-AI-Continuous          $HOME/Research/Lumi-AI-Continuous"
+  "Reach-Industries/Lumi-AI-Singular            $HOME/Research/Lumi-AI-Singular"
   "Alex-ReachIndustries/VisualTools             $HOME/Research/VisualTools"
   "Alex-ReachIndustries/ClaudeMeetingNoteTaker  $HOME/ClaudeMeetingNoteTaker"
   "Alex-ReachIndustries/PersonalAdmin           $HOME/PersonalAdmin"
   "Alex-ReachIndustries/AdventOfCode            $HOME/AdventOfCode"
 )
+
+FAILED=()
 
 for line in "${REPOS[@]}"; do
   repo="$(echo "$line" | awk '{print $1}')"
@@ -37,6 +44,7 @@ for line in "${REPOS[@]}"; do
 
   if [ -e "$dest" ]; then
     echo "  ! $dest exists but is not a git repo — skipping (move it aside if you want a fresh clone)"
+    FAILED+=("$repo (path occupied)")
     continue
   fi
 
@@ -45,10 +53,17 @@ for line in "${REPOS[@]}"; do
     echo "  ✓ $name cloned"
   else
     echo "  ! failed to clone $repo (private repo + auth issue, or repo doesn't exist) — continuing"
+    FAILED+=("$repo")
   fi
 done
 
 echo ""
-echo "✓ Repo clone step complete"
+if [ ${#FAILED[@]} -eq 0 ]; then
+  echo "✓ All repos cloned successfully"
+else
+  echo "✓ Repo clone step finished with ${#FAILED[@]} failure(s):"
+  printf '    - %s\n' "${FAILED[@]}"
+  echo "  Continuing — these can be cloned manually later."
+fi
 echo "  ClaudeManager itself is cloned by step 07 (not here)."
 echo "  Re-running this script is safe — already-cloned repos are skipped."

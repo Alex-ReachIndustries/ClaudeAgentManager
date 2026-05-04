@@ -24,9 +24,9 @@ echo "Applying apt fix (timeouts + mirror swap) before any apt call..."
 source "$SCRIPT_DIR/_apt-fix.sh"
 
 # 1. Bootstrap deps (in case 02-system-update hasn't run yet)
-if ! command -v curl &>/dev/null || ! command -v git &>/dev/null; then
+if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v unzip &>/dev/null; then
   sudo apt-get update -y
-  sudo apt-get install -y curl wget git ca-certificates gnupg
+  sudo apt-get install -y curl wget git unzip ca-certificates gnupg
 fi
 
 # 2. Node.js 22 LTS via NodeSource
@@ -51,6 +51,27 @@ echo "$AGENT_MANAGER_KEY" > "$HOME/.claude/agent-manager-key"
 chmod 600 "$HOME/.claude/agent-manager-key"
 
 echo "http://localhost:3001" > "$HOME/.claude/agent-server-url"
+
+# 4b. Seed memories from bundled claude-memory.zip if present
+# This is the auto-memory archive (~/.claude/memory/*.md from the source machine)
+# packaged into the setup zip so Claude on the new machine starts with the
+# same persistent context, feedback, and user/project memories.
+MEMORY_ARCHIVE="$SCRIPT_DIR/claude-memory.zip"
+if [ -f "$MEMORY_ARCHIVE" ]; then
+  if [ ! -f "$HOME/.claude/memory/MEMORY.md" ]; then
+    echo "Seeding ~/.claude/memory from bundled claude-memory.zip..."
+    TMPDIR_MEM="$(mktemp -d)"
+    unzip -q "$MEMORY_ARCHIVE" -d "$TMPDIR_MEM"
+    # Archive root is "claude-memory/" — copy its contents
+    if [ -d "$TMPDIR_MEM/claude-memory" ]; then
+      cp -r "$TMPDIR_MEM/claude-memory/." "$HOME/.claude/memory/"
+      echo "  ✓ memories seeded ($(ls "$HOME/.claude/memory/" | wc -l) files)"
+    fi
+    rm -rf "$TMPDIR_MEM"
+  else
+    echo "Memory dir already populated — leaving alone."
+  fi
+fi
 
 # 5. CLAUDE.md — pull from the repo if it's been cloned, else fetch directly
 CLAUDE_MD_SRC="$HOME/Research/ClaudeManager/docs/CLAUDE-ubuntu.md"
