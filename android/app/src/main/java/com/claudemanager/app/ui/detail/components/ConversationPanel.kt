@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SmartToy
@@ -218,10 +219,10 @@ fun ConversationPanel(
                     when (item) {
                         is ConversationItem.Update -> UpdateBubble(update = item.update)
                         is ConversationItem.Message -> {
-                            if (item.message.source == "agent") {
-                                AgentRelayBubble(message = item.message)
-                            } else {
-                                SentMessageBubble(message = item.message)
+                            when (item.message.source) {
+                                "agent" -> AgentRelayBubble(message = item.message)
+                                "peer" -> PeerMessageBubble(message = item.message)
+                                else -> SentMessageBubble(message = item.message)
                             }
                         }
                         is ConversationItem.File -> FileBubble(fileInfo = item.fileInfo, onDownload = onFileDownload)
@@ -699,6 +700,91 @@ private fun AgentRelayBubble(message: AgentMessage) {
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LumiOnSurface
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 4.dp)
+        ) {
+            val statusColor = messageStatusColor(message.status)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(statusColor.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = message.status.displayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor
+                )
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = TimeUtils.timeAgo(message.createdAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = LumiOnSurfaceTertiary
+            )
+        }
+    }
+}
+
+/**
+ * Left-aligned message bubble for messages received from a peer machine over the tailnet
+ * (source = "peer"). Emerald-tinted with a Hub icon — visually distinct from agent relays
+ * (blue) and locally-sent user messages (purple, right-aligned).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PeerMessageBubble(message: AgentMessage) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = 48.dp),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
+                .background(LumiSuccess.copy(alpha = 0.12f))
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { copyToClipboard(context, message.content) }
+                )
+                .padding(10.dp)
+        ) {
+            Column {
+                // Source label — "Agent <uuid8> @ peerName" or "Peer @ peerName"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Hub,
+                        contentDescription = "From peer machine",
+                        tint = LumiSuccess,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val agentLabel = message.sourceAgentId?.let { "Agent ${it.take(8)}" } ?: "Peer"
+                    val peerLabel = message.sourcePeerName ?: "unknown"
+                    Text(
+                        text = "$agentLabel @ $peerLabel",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiSuccess,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))

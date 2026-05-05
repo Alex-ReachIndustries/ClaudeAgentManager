@@ -31,7 +31,10 @@ data class AgentMessage(
     val source: String? = null,
 
     @SerializedName("source_agent_id")
-    val sourceAgentId: String? = null
+    val sourceAgentId: String? = null,
+
+    @SerializedName("source_peer_name")
+    val sourcePeerName: String? = null
 )
 
 /**
