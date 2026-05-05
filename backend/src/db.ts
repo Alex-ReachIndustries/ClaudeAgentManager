@@ -192,6 +192,7 @@ export function getDb(): Database.Database {
   // Feature 17: Agent-to-agent messaging source columns
   migrate("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'user'");
   migrate("ALTER TABLE messages ADD COLUMN source_agent_id TEXT");
+  migrate("ALTER TABLE messages ADD COLUMN source_peer_name TEXT");
 
   // Feature 5: Computed field caching columns
   migrate("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0");
@@ -841,16 +842,16 @@ export function getPendingMessages(agentId: string) {
   return transaction();
 }
 
-export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0) {
+export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0, sourcePeerName?: string) {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT INTO messages (agent_id, content, source, source_agent_id, priority) VALUES (?, ?, ?, ?, ?)
+    INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name) VALUES (?, ?, ?, ?, ?, ?)
   `);
   const touchActivity = db.prepare(`
     UPDATE agents SET last_activity_at = datetime('now') WHERE id = ?
   `);
   const transaction = db.transaction(() => {
-    const result = insert.run(agentId, content, source, sourceAgentId ?? null, priority);
+    const result = insert.run(agentId, content, source, sourceAgentId ?? null, priority, sourcePeerName ?? null);
     touchActivity.run(agentId);
     return result;
   });

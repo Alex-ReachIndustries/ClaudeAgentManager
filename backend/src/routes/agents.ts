@@ -912,10 +912,10 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
       return;
     }
 
-    const { content, priority, source = "user", source_agent_id } = req.body;
+    const { content, priority, source = "user", source_agent_id, source_peer_name } = req.body;
 
-    addMessage(id, content, source, source_agent_id, priority || 0);
-    broadcast("message-queued", { agentId: id, content, priority: priority || 0 });
+    addMessage(id, content, source, source_agent_id, priority || 0, source_peer_name);
+    broadcast("message-queued", { agentId: id, content, priority: priority || 0, source, source_peer_name });
 
     // Publish to MQTT for instant delivery to agent sidecar
     publishAgentMessage(id, content, source);

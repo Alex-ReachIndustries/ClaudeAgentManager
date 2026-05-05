@@ -47,6 +47,7 @@ export interface AgentMessage {
   acknowledged_at: string | null;
   source?: string;
   source_agent_id?: string;
+  source_peer_name?: string;
 }
 
 export interface AgentFile {
