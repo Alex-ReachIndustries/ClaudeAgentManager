@@ -194,6 +194,35 @@ export function getDb(): Database.Database {
   migrate("ALTER TABLE messages ADD COLUMN source_agent_id TEXT");
   migrate("ALTER TABLE messages ADD COLUMN source_peer_name TEXT");
 
+  // TOTP service tables — for agent-managed debug 2FA accounts. Per-machine
+  // (each box has its own service / DB / master key). See backend/src/totp.ts
+  // and ~/.claude/memory/feedback_peer_machines.md.
+  migrate(`CREATE TABLE IF NOT EXISTS totp_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    issuer TEXT,
+    secret_encrypted BLOB NOT NULL,
+    iv BLOB NOT NULL,
+    auth_tag BLOB NOT NULL,
+    digits INTEGER DEFAULT 6,
+    period INTEGER DEFAULT 30,
+    algorithm TEXT DEFAULT 'SHA1',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by_agent TEXT,
+    last_used_at TEXT,
+    last_used_by_agent TEXT
+  )`);
+  migrate(`CREATE TABLE IF NOT EXISTS totp_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_name TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('create','code_fetched','delete','rotate')),
+    agent_id TEXT,
+    ip TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_totp_audit_account ON totp_audit_log(account_name)`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_totp_audit_timestamp ON totp_audit_log(timestamp DESC)`);
+
   // Feature 5: Computed field caching columns
   migrate("ALTER TABLE agents ADD COLUMN pending_message_count INTEGER DEFAULT 0");
   migrate("ALTER TABLE agents ADD COLUMN unread_update_count INTEGER DEFAULT 0");
@@ -1227,4 +1256,104 @@ export function getActiveProjectAgentCount(projectId: string): number {
     "SELECT COUNT(*) as count FROM agents WHERE project_id = ? AND status IN ('active','working','idle','waiting-for-input')"
   ).get(projectId) as { count: number };
   return row.count;
+}
+
+// ============================================================================
+// TOTP service helpers
+// See backend/src/totp.ts for code generation + crypto envelope.
+// ============================================================================
+
+export interface TotpAccountRow {
+  id: number;
+  name: string;
+  issuer: string | null;
+  secret_encrypted: Buffer;
+  iv: Buffer;
+  auth_tag: Buffer;
+  digits: number;
+  period: number;
+  algorithm: string;
+  created_at: string;
+  created_by_agent: string | null;
+  last_used_at: string | null;
+  last_used_by_agent: string | null;
+}
+
+export function createTotpAccount(args: {
+  name: string;
+  secret_encrypted: Buffer;
+  iv: Buffer;
+  auth_tag: Buffer;
+  issuer?: string | null;
+  digits?: number;
+  period?: number;
+  algorithm?: string;
+  agent_id?: string | null;
+}): { ok: true } | { ok: false; reason: "duplicate" } {
+  const db = getDb();
+  try {
+    db.prepare(`INSERT INTO totp_accounts
+      (name, issuer, secret_encrypted, iv, auth_tag, digits, period, algorithm, created_by_agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      args.name,
+      args.issuer ?? null,
+      args.secret_encrypted,
+      args.iv,
+      args.auth_tag,
+      args.digits ?? 6,
+      args.period ?? 30,
+      args.algorithm ?? "SHA1",
+      args.agent_id ?? null,
+    );
+    return { ok: true };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("UNIQUE constraint failed")) return { ok: false, reason: "duplicate" };
+    throw e;
+  }
+}
+
+export function getTotpAccountByName(name: string): TotpAccountRow | undefined {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM totp_accounts WHERE name = ?`).get(name) as TotpAccountRow | undefined;
+}
+
+export function listTotpAccounts(): Omit<TotpAccountRow, "secret_encrypted" | "iv" | "auth_tag">[] {
+  const db = getDb();
+  return db.prepare(`SELECT id, name, issuer, digits, period, algorithm, created_at,
+    created_by_agent, last_used_at, last_used_by_agent FROM totp_accounts ORDER BY name ASC`)
+    .all() as Omit<TotpAccountRow, "secret_encrypted" | "iv" | "auth_tag">[];
+}
+
+export function deleteTotpAccount(name: string): boolean {
+  const db = getDb();
+  const r = db.prepare(`DELETE FROM totp_accounts WHERE name = ?`).run(name);
+  return r.changes > 0;
+}
+
+export function markTotpUsed(name: string, agentId: string | null) {
+  const db = getDb();
+  db.prepare(`UPDATE totp_accounts SET last_used_at = datetime('now'), last_used_by_agent = ? WHERE name = ?`)
+    .run(agentId, name);
+}
+
+export function addTotpAudit(args: {
+  account_name: string;
+  action: "create" | "code_fetched" | "delete" | "rotate";
+  agent_id?: string | null;
+  ip?: string | null;
+}) {
+  const db = getDb();
+  db.prepare(`INSERT INTO totp_audit_log (account_name, action, agent_id, ip) VALUES (?, ?, ?, ?)`)
+    .run(args.account_name, args.action, args.agent_id ?? null, args.ip ?? null);
+}
+
+export function getTotpAudit(opts: { account?: string; limit?: number }) {
+  const db = getDb();
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 1000);
+  if (opts.account) {
+    return db.prepare(`SELECT * FROM totp_audit_log WHERE account_name = ? ORDER BY id DESC LIMIT ?`)
+      .all(opts.account, limit);
+  }
+  return db.prepare(`SELECT * FROM totp_audit_log ORDER BY id DESC LIMIT ?`).all(limit);
 }

@@ -35,26 +35,50 @@ if command -v pm2 &>/dev/null; then
   pm2 resurrect 2>/dev/null || true
 fi
 
+# Start screen interaction service (Linux with X11 only)
+if [[ "$(uname)" == "Linux" ]] && [[ -n "${DISPLAY:-}" ]]; then
+    echo "[$(date -u +%H:%M:%S)] Starting screen-service..."
+    bash "$CM_DIR/screen-service/start.sh" || true
+fi
+
 # Wait a moment for services to initialize
 sleep 5
 
 # Launch Cam — the system manager agent (only if not already running)
 echo "[$(date -u +%H:%M:%S)] Launching Cam (system manager agent)..."
-# Check if a tmux session named "Cam" already exists
-if ! tmux has-session -t "Cam" 2>/dev/null; then
-    tmux new-session -d -s "Cam" -n "Cam - System Manager" \
-        "bash -c 'cd \"$CM_DIR\" && exec claude --dangerously-skip-permissions \"You are Cam, the ClaudeManager system manager agent. Run /session-connect then begin your duties: monitor all running agents, keep system resources tidy, ensure project managers are alive and responsive, and post a status report to the session manager every 15 minutes covering: running agents, system load (CPU/disk), any issues detected. Your title should be Cam — System Manager.\"'"
-    # Open a desktop terminal window attached to the Cam session if a GUI is available.
+# Check if a tmux session named "Dailies" already exists
+if ! tmux has-session -t "Dailies" 2>/dev/null; then
+    tmux new-session -d -s "Dailies" -n "Cam - System Manager" \
+        "bash -c 'cd \"$CM_DIR\" && exec claude --model claude-opus-4-7 --dangerously-skip-permissions \"You are Cam, the ClaudeManager system manager agent. Run /session-connect then: (1) post-reboot triage — assess every agent record per feedback_reboot_recovery.md, archive obvious orphans, surface real-work resumes; (2) once triage is done, start the launcher daemon (it processes live launch_requests automatically — see step in startup.sh and feedback_cam_is_spawn_gatekeeper.md); (3) re-establish the monitoring schedule per ~/.claude/memory/feedback_monitoring_schedule.md (four recurring crons + one daily maintenance cron — list with CronList first, only create those that are not already scheduled); (4) keep system resources tidy and ensure project managers are alive. Title: Cam — System Manager.\"'"
+    # Open a desktop terminal window attached to the Dailies session if a GUI is available.
     # Tries Cinnamon's terminal first (Mint), then GNOME's, then xterm as a fallback.
     if [ -n "${DISPLAY:-}" ]; then
       if command -v gnome-terminal &>/dev/null; then
-        gnome-terminal --title "Cam - System Manager" -- tmux attach -t "Cam" &
+        gnome-terminal --title "Dailies" -- tmux attach -t "Dailies" &
       elif command -v x-terminal-emulator &>/dev/null; then
-        x-terminal-emulator -T "Cam - System Manager" -e tmux attach -t "Cam" &
+        x-terminal-emulator -T "Dailies" -e tmux attach -t "Dailies" &
       elif command -v xterm &>/dev/null; then
-        xterm -title "Cam - System Manager" -e tmux attach -t "Cam" &
+        xterm -title "Dailies" -e tmux attach -t "Dailies" &
       fi
     fi
+fi
+
+# Start the launcher daemon AFTER Cam comes up — Cam needs a chance to triage
+# stale agent records first per feedback_reboot_recovery.md, then the launcher
+# can take over for live spawn requests. We sleep briefly to give Cam a window
+# to register and start triaging before the launcher starts processing the
+# queue (terminate-of-dead-PID requests for orphaned agents).
+echo "[$(date -u +%H:%M:%S)] Waiting briefly for Cam to start triaging before launcher activates..."
+sleep 15
+
+if ! pgrep -af "node.*launcher\.js" > /dev/null; then
+    echo "[$(date -u +%H:%M:%S)] Starting launcher daemon..."
+    cd "$CM_DIR/launcher"
+    nohup node launcher.js > /tmp/launcher.log 2>&1 &
+    disown
+    echo "[$(date -u +%H:%M:%S)] Launcher started (logs: /tmp/launcher.log)."
+else
+    echo "[$(date -u +%H:%M:%S)] Launcher already running — skipping."
 fi
 
 echo "[$(date -u +%H:%M:%S)] ClaudeManager startup complete."

@@ -4,7 +4,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - C:/ClaudeManager/agent-data:/app/data
+      - /ClaudeManager/agent-data:/app/data
       - ${HOST_HOME_PATH}:/host-home:ro
     logging:
       driver: "json-file"
