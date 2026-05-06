@@ -304,14 +304,16 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
 async function launchResumeAgent(agentId, folderPath, wtWindow) {
   let cwd = resolveFolder(folderPath);
   let resolvedWtWindow = wtWindow || null;
+  let agentModelFlag = '';
+  let agentEffortFlag = '';
 
-  // If folder_path wasn't absolute, try fetching the agent's stored cwd from the server
-  if (!path.isAbsolute(folderPath || '')) {
-    try {
-      const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
-      if (agent && agent.cwd) {
+  // Always fetch agent to get stored cwd, wt_window, model, and effort
+  try {
+    const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+    if (agent) {
+      if (!path.isAbsolute(folderPath || '') && agent.cwd) {
         if (IS_LINUX) {
-          cwd = agent.cwd; // Already a POSIX absolute path on Linux
+          cwd = agent.cwd;
         } else {
           // Convert Git Bash paths (/c/Users/...) to Windows paths (C:\Users\...)
           cwd = agent.cwd
@@ -320,16 +322,17 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
         }
         log(`Using agent's stored cwd: ${cwd}`);
       }
-      // Also pick up the stored wt_window if not passed explicitly
-      if (!resolvedWtWindow && agent && agent.wt_window) {
+      if (!resolvedWtWindow && agent.wt_window) {
         resolvedWtWindow = agent.wt_window;
       }
-    } catch (err) {
-      log(`Could not fetch agent cwd from server: ${err.message}`);
+      if (agent.model) agentModelFlag = ` --model ${agent.model}`;
+      if (agent.effort) agentEffortFlag = ` --effort ${agent.effort}`;
     }
+  } catch (err) {
+    log(`Could not fetch agent from server: ${err.message}`);
   }
 
-  log(`Resuming agent ${agentId} in: ${cwd}${resolvedWtWindow ? ` [window: ${resolvedWtWindow}]` : ''}`);
+  log(`Resuming agent ${agentId} in: ${cwd}${resolvedWtWindow ? ` [window: ${resolvedWtWindow}]` : ''}${agentModelFlag}`);
 
   // Pre-create project dir and trust settings
   ensureWorkspaceTrusted(cwd);
@@ -340,7 +343,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     // Linux: write a shell script and launch via tmux / gnome-terminal
     const scriptFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.sh`);
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\ncd "${cwd}"\nexec claude --dangerously-skip-permissions --resume ${agentId} 'run /session-resume and then await instructions'\n`,
+      `#!/bin/bash\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow);
@@ -351,7 +354,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
 
   // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues)
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
-  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
 
   const wtArgs = resolvedWtWindow
     ? ['-w', resolvedWtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]

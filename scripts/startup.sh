@@ -46,6 +46,9 @@ sleep 5
 
 # Launch Cam — the system manager agent (only if not already running)
 echo "[$(date -u +%H:%M:%S)] Launching Cam (system manager agent)..."
+# Write cam model config so session-connect can include it in registration (used by launchResumeAgent to pick the right model on resume)
+echo -n "claude-sonnet-4-6" > ~/.claude/cam-model
+echo -n "high" > ~/.claude/cam-effort
 # Check if a tmux session named "Dailies" already exists
 if ! tmux has-session -t "Dailies" 2>/dev/null; then
     tmux new-session -d -s "Dailies" -n "Cam - System Manager" \
