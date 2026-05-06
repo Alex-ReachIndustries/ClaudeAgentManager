@@ -222,10 +222,10 @@ function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
       log(`Added tmux window "${tabTitle}" to existing session "${wtWindow}"`);
     }
   } else {
-    // No window group — fall back to Dailies tmux session rather than a standalone
-    // gnome-terminal. Standalone terminals can be hidden, block on interactive prompts,
-    // and aren't manageable via tmux. Dailies is always visible and already running.
-    const fallbackSession = 'Dailies';
+    // No window group — fall back to a dedicated "ungrouped" tmux session rather than a
+    // standalone gnome-terminal. Standalone terminals can be hidden, block on interactive
+    // prompts, and aren't manageable via tmux. "ungrouped" keeps Dailies uncluttered.
+    const fallbackSession = 'ungrouped';
     const hasFallback = spawnSync('tmux', ['has-session', '-t', fallbackSession], { stdio: 'pipe' }).status === 0;
     if (!hasFallback) {
       spawn('tmux', ['new-session', '-d', '-s', fallbackSession, '-n', tabTitle, scriptFile],
