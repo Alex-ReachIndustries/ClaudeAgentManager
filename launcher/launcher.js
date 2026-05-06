@@ -241,6 +241,39 @@ function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
   }
 }
 
+// After a new agent is spawned, poll until it registers (matching cwd), then
+// deliver the task prompt as a message. Timeout after 2 minutes.
+async function deliverPromptWhenRegistered(cwd, prompt) {
+  const deadline = Date.now() + 120000;
+  const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
+  log(`Waiting for agent at "${normCwd}" to register before delivering prompt...`);
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 4000));
+    try {
+      const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
+      const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
+      const fresh = list.find(a => {
+        if (a.status === 'archived') return false;
+        const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
+        const age = Date.now() - new Date(a.created_at).getTime();
+        return agentCwd === normCwd && age < 300000;
+      });
+      if (fresh) {
+        log(`Delivering prompt to agent ${fresh.id} at "${normCwd}"`);
+        await postJSON(`${SERVER_URL}/api/agents/${fresh.id}/messages`, {
+          content: prompt,
+          source: 'user',
+        });
+        log(`Prompt delivered to ${fresh.id}`);
+        return;
+      }
+    } catch (err) {
+      log(`Prompt delivery poll error: ${err.message}`);
+    }
+  }
+  log(`Timed out (2 min) waiting for agent at "${normCwd}" to register — prompt not delivered`);
+}
+
 function launchNewAgent(folderPath, spawnMeta, wtWindow) {
   const cwd = resolveFolder(folderPath);
   log(`Launching NEW agent in: ${cwd}${wtWindow ? ` [window: ${wtWindow}]` : ''}`);
@@ -272,6 +305,12 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
 
   if (spawnMeta && (spawnMeta.role || spawnMeta.prompt)) {
     log(`Agent${spawnMeta.role ? ` role: ${spawnMeta.role}` : ''}, prompt: ${(spawnMeta.prompt || '').substring(0, 80)}...`);
+  }
+
+  // If a task prompt was provided, deliver it as a message once the agent registers.
+  // Agents start with /session-init so the task arrives after workspace context loads.
+  if (spawnMeta && spawnMeta.prompt) {
+    deliverPromptWhenRegistered(cwd, spawnMeta.prompt);
   }
 
   const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${spawnMeta.model}` : '';
