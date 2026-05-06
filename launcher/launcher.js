@@ -243,8 +243,18 @@ function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
 
 // After a new agent is spawned, poll until it registers (matching cwd), then
 // deliver the task prompt as a message. Timeout after 2 minutes.
+//
+// Two safeguards against mis-delivery:
+// 1. spawnTime: only match agents whose created_at is >= spawnTime (minus 3s
+//    clock-skew grace). This prevents matching an already-running agent that
+//    happens to share the same cwd and was created within the old 5-min window.
+// 2. promptDeliveredAgentIds: a module-level Set that marks agents that already
+//    received a prompt. Concurrent watchers for the same cwd (e.g. two pool
+//    slots spawned in rapid succession) will skip a claimed agent and wait for
+//    the next one to register.
 async function deliverPromptWhenRegistered(cwd, prompt) {
-  const deadline = Date.now() + 120000;
+  const spawnTime = Date.now();
+  const deadline = spawnTime + 120000;
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
   log(`Waiting for agent at "${normCwd}" to register before delivering prompt...`);
   while (Date.now() < deadline) {
@@ -254,11 +264,14 @@ async function deliverPromptWhenRegistered(cwd, prompt) {
       const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
       const fresh = list.find(a => {
         if (a.status === 'archived') return false;
+        if (promptDeliveredAgentIds.has(a.id)) return false;
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
-        const age = Date.now() - new Date(a.created_at).getTime();
-        return agentCwd === normCwd && age < 300000;
+        const registeredAt = new Date(a.created_at).getTime();
+        // Only match agents that registered after this spawn started (3s grace for clock skew)
+        return agentCwd === normCwd && registeredAt >= spawnTime - 3000;
       });
       if (fresh) {
+        promptDeliveredAgentIds.add(fresh.id);
         log(`Delivering prompt to agent ${fresh.id} at "${normCwd}"`);
         await postJSON(`${SERVER_URL}/api/agents/${fresh.id}/messages`, {
           content: prompt,
@@ -606,6 +619,10 @@ function terminateAgent(pid) {
 // time to register before the second wt.exe / tmux fires.
 const wtWindowLastLaunch = new Map();
 const WT_WINDOW_STAGGER_MS = 1500;
+
+// Tracks agent IDs that have already had a prompt delivered, so concurrent
+// deliverPromptWhenRegistered calls for the same CWD don't double-deliver.
+const promptDeliveredAgentIds = new Set();
 
 async function processPendingRequests() {
   try {
