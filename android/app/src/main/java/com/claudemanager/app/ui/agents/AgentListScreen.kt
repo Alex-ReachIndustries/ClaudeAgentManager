@@ -633,12 +633,12 @@ fun AgentListScreen(
                             }
                         }
                     }
-                    if (selectedWtWindow == null && state.wtWindows.isNotEmpty()) {
+                    if (selectedWtWindow == null) {
                         Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
                             value = customWtWindow,
                             onValueChange = { customWtWindow = it },
-                            label = { Text("or new group name") },
+                            label = { Text(if (state.wtWindows.isEmpty()) "Window group name (optional)" else "or new group name") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
