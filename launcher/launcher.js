@@ -241,6 +241,42 @@ function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
   }
 }
 
+// After a Linux tmux window is spawned, poll its pane content for the Claude
+// "trust this folder" prompt and send Enter to accept it automatically.
+// Polls every 2s for up to 30s after an initial 6s startup delay.
+async function autoAcceptTrustDialog(session, tabTitle) {
+  await new Promise(r => setTimeout(r, 6000));
+  const deadline = Date.now() + 30000;
+  const titlePrefix = tabTitle.substring(0, 40); // tmux may truncate long names
+  while (Date.now() < deadline) {
+    try {
+      const listResult = spawnSync('tmux',
+        ['list-windows', '-t', session, '-F', '#{window_index} #{window_name}'],
+        { encoding: 'utf8', stdio: 'pipe' });
+      const windowLine = (listResult.stdout || '').split('\n')
+        .find(l => l.slice(l.indexOf(' ') + 1).startsWith(titlePrefix.slice(0, 30)));
+      if (windowLine) {
+        const windowIndex = windowLine.split(' ')[0];
+        const target = `${session}:${windowIndex}`;
+        const captureResult = spawnSync('tmux',
+          ['capture-pane', '-p', '-t', target],
+          { encoding: 'utf8', stdio: 'pipe' });
+        const pane = captureResult.stdout || '';
+        if (/trust/i.test(pane)) {
+          log(`Trust dialog detected in ${target} — sending Enter to accept`);
+          spawnSync('tmux', ['send-keys', '-t', target, '', 'Enter'], { stdio: 'pipe' });
+          log(`Trust dialog accepted in ${target}`);
+          return;
+        }
+      }
+    } catch (err) {
+      log(`Trust dialog poll error: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  // Timeout is normal — workspace was likely already trusted
+}
+
 // After a new agent is spawned, poll until it registers (matching cwd), then
 // deliver the task prompt as a message. Timeout after 2 minutes.
 //
@@ -339,6 +375,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow);
+    autoAcceptTrustDialog(wtWindow || 'ungrouped', tabTitle);
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
     log(`Spawned terminal for new agent (Linux) via ${scriptFile}`);
     return;
@@ -411,6 +448,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow);
+    autoAcceptTrustDialog(resolvedWtWindow || 'ungrouped', tabTitle);
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
     log(`Spawned terminal for resume agent ${agentId} (Linux) via ${scriptFile}`);
     return;
