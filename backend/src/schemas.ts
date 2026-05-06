@@ -134,7 +134,7 @@ const workflowStepSchema = z.object({
   prompt: z.string().max(65_536),
   trigger: z.enum(["on_complete"]).default("on_complete"),
   condition: z.string().max(500).nullable().optional(),
-  agent_id: z.string().max(200).nullable().optional(),
+  agent_id: z.string().max(65_536).nullable().optional(),
   status: z.enum(["pending", "running", "completed", "failed", "skipped"]).default("pending"),
 });
 

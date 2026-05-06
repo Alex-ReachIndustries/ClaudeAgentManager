@@ -707,6 +707,15 @@ async function processPendingRequests() {
           if (req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')) {
             try { spawnMeta = JSON.parse(req.agent_id); } catch {}
           }
+          // Fall back to top-level role/task/effort/model fields if agent_id JSON wasn't usable
+          if (!spawnMeta && (req.role || req.task)) {
+            spawnMeta = {
+              role: req.role || undefined,
+              prompt: req.task || undefined,
+              effort: req.effort || undefined,
+              model: req.model || undefined,
+            };
+          }
           const wtWindow = req.wt_window || (spawnMeta && spawnMeta.wt_window) || null;
           if (wtWindow) {
             const last = wtWindowLastLaunch.get(wtWindow) || 0;
