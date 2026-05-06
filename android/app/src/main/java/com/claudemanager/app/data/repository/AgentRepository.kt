@@ -138,20 +138,36 @@ class AgentRepository {
     // ── Updates ──────────────────────────────────────────────────────────
 
     /**
-     * Get all updates for an agent.
+     * Get all updates for an agent (legacy full-fetch, kept for compatibility).
      */
     suspend fun getUpdates(agentId: String): Result<List<AgentUpdate>> = apiCall {
         api.getUpdates(agentId)
     }.map { it.data }
 
+    /**
+     * Fetch a page of updates newest-first. Pass [before] to load older pages.
+     * Returns the raw paginated response so callers can inspect [hasMore] and [nextCursor].
+     */
+    suspend fun getUpdatesPage(agentId: String, limit: Int, before: Long? = null): Result<com.claudemanager.app.data.api.PaginatedResponse<AgentUpdate>> = apiCall {
+        api.getUpdates(agentId, limit = limit, before = before)
+    }
+
     // ── Messages ─────────────────────────────────────────────────────────
 
     /**
-     * Get all messages for an agent.
+     * Get all messages for an agent (legacy full-fetch, kept for compatibility).
      */
     suspend fun getMessages(agentId: String): Result<List<AgentMessage>> = apiCall {
         api.getMessages(agentId)
     }.map { it.data }
+
+    /**
+     * Fetch a page of messages newest-first. Pass [before] to load older pages.
+     * Returns the raw paginated response so callers can inspect [hasMore] and [nextCursor].
+     */
+    suspend fun getMessagesPage(agentId: String, limit: Int, before: Long? = null): Result<com.claudemanager.app.data.api.PaginatedResponse<AgentMessage>> = apiCall {
+        api.getMessages(agentId, limit = limit, before = before)
+    }
 
     /**
      * Send a message to an agent. The message is queued for delivery on the

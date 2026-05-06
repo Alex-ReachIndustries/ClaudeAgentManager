@@ -111,6 +111,9 @@ private sealed class ConversationItem(val sortTime: Long, val itemKey: String) {
  * Agent updates appear left-aligned with type icons.
  * User messages appear right-aligned as chat bubbles.
  * A message input bar sits at the bottom.
+ *
+ * Supports infinite scroll: when the user scrolls near the top and [hasMore] is true,
+ * [onLoadMore] is called to fetch older history.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -129,6 +132,9 @@ fun ConversationPanel(
     onClearAttachment: () -> Unit = {},
     pendingAttachments: List<AttachedFile> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
+    hasMore: Boolean = false,
+    isLoadingMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var messageText by remember { mutableStateOf(draftMessage) }
@@ -182,16 +188,26 @@ fun ConversationPanel(
         merged.toList()
     }
 
-    // Auto-scroll to bottom when new items arrive
+    // Auto-scroll to bottom when new items arrive, but NOT when loading older history.
+    var prevItemCount by remember { mutableStateOf(items.size) }
     LaunchedEffect(items.size) {
-        if (items.isNotEmpty()) {
+        val grew = items.size > prevItemCount
+        prevItemCount = items.size
+        if (grew && !isLoadingMore && items.isNotEmpty()) {
             listState.animateScrollToItem(items.size - 1)
+        }
+    }
+
+    // Trigger load-more when user scrolls near the top
+    LaunchedEffect(listState.firstVisibleItemIndex) {
+        if (listState.firstVisibleItemIndex <= 2 && hasMore && !isLoadingMore) {
+            onLoadMore()
         }
     }
 
     Column(modifier = modifier.imePadding()) {
         // Conversation feed
-        if (items.isEmpty()) {
+        if (items.isEmpty() && !isLoadingMore) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -213,7 +229,33 @@ fun ConversationPanel(
                     .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                item { Spacer(modifier = Modifier.height(8.dp)) }
+                // Spinner / hint at top for older history
+                if (isLoadingMore || hasMore) {
+                    item(key = "load-more-header") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isLoadingMore) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = LumiPurple500,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text(
+                                    text = "Scroll up for older history",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LumiOnSurfaceTertiary
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item(key = "top-spacer") { Spacer(modifier = Modifier.height(8.dp)) }
 
                 items(items, key = { it.itemKey }) { item ->
                     when (item) {
@@ -229,7 +271,7 @@ fun ConversationPanel(
                     }
                 }
 
-                item { Spacer(modifier = Modifier.height(8.dp)) }
+                item(key = "bottom-spacer") { Spacer(modifier = Modifier.height(8.dp)) }
             }
         }
 

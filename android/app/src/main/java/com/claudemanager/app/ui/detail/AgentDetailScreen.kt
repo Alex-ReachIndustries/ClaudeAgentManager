@@ -358,6 +358,9 @@ fun AgentDetailScreen(
                                 onClearAttachment = viewModel::clearAttachment,
                                 pendingAttachments = state.pendingAttachments,
                                 onRemoveAttachment = viewModel::removeAttachment,
+                                hasMore = state.hasMoreUpdates || state.hasMoreMessages,
+                                isLoadingMore = state.isLoadingMore,
+                                onLoadMore = viewModel::loadMoreHistory,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

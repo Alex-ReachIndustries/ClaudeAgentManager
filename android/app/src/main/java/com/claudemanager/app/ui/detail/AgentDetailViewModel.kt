@@ -80,7 +80,15 @@ data class AgentDetailUiState(
     val isLoadingCosts: Boolean = false,
     val pendingDownload: PendingDownload? = null,
     val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES,
-    val wtWindows: List<String> = emptyList()
+    val wtWindows: List<String> = emptyList(),
+    // Pagination state for the conversation feed
+    val hasMoreUpdates: Boolean = false,
+    val hasMoreMessages: Boolean = false,
+    val oldestUpdateId: Long? = null,
+    val oldestMessageId: Long? = null,
+    val maxUpdateId: Long? = null,
+    val maxMessageId: Long? = null,
+    val isLoadingMore: Boolean = false
 )
 
 /**
@@ -104,6 +112,8 @@ class AgentDetailViewModel(
     companion object {
         /** Maximum number of terminal lines to keep in the buffer. */
         private const val MAX_TERMINAL_LINES = 200
+        /** Number of items to load per page for updates and messages. */
+        private const val PAGE_SIZE = 50
     }
 
     init {
@@ -134,27 +144,91 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Load all data for this agent.
+     * Load all data for this agent. Updates and messages load only the most recent page
+     * so the initial display is fast even for long sessions.
      */
     private fun loadAll() {
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            val agentD   = async { repository.getAgent(agentId) }
-            val updatesD = async { repository.getUpdates(agentId) }
-            val messagesD = async { repository.getMessages(agentId) }
-            val filesD   = async { repository.getFiles(agentId) }
+            val agentD    = async { repository.getAgent(agentId) }
+            val updatesD  = async { repository.getUpdatesPage(agentId, PAGE_SIZE) }
+            val messagesD = async { repository.getMessagesPage(agentId, PAGE_SIZE) }
+            val filesD    = async { repository.getFiles(agentId) }
 
             agentD.await()
                 .onSuccess { agent -> _uiState.update { it.copy(agent = agent) } }
                 .onFailure { e -> _uiState.update { it.copy(error = e.message ?: "Failed to load agent") } }
-            updatesD.await()
-                .onSuccess { updates -> _uiState.update { it.copy(updates = updates) } }
-            messagesD.await()
-                .onSuccess { messages -> _uiState.update { it.copy(messages = messages) } }
+
+            updatesD.await().onSuccess { page ->
+                // Backend returns DESC; reverse to ASC for display
+                val sorted = page.data.sortedBy { it.id }
+                _uiState.update { it.copy(
+                    updates = sorted,
+                    hasMoreUpdates = page.hasMore,
+                    oldestUpdateId = sorted.firstOrNull()?.id,
+                    maxUpdateId = sorted.lastOrNull()?.id
+                ) }
+            }
+
+            messagesD.await().onSuccess { page ->
+                val sorted = page.data.sortedBy { it.id }
+                _uiState.update { it.copy(
+                    messages = sorted,
+                    hasMoreMessages = page.hasMore,
+                    oldestMessageId = sorted.firstOrNull()?.id,
+                    maxMessageId = sorted.lastOrNull()?.id
+                ) }
+            }
+
             filesD.await()
                 .onSuccess { files -> _uiState.update { it.copy(files = files) } }
 
             _uiState.update { it.copy(isLoading = false) }
+        }
+    }
+
+    /**
+     * Load older updates and messages (scroll-to-top "load more" trigger).
+     * Prepends the older items to the existing lists without scrolling.
+     */
+    fun loadMoreHistory() {
+        val state = _uiState.value
+        if (state.isLoadingMore) return
+        val hasMore = state.hasMoreUpdates || state.hasMoreMessages
+        if (!hasMore) return
+
+        _uiState.update { it.copy(isLoadingMore = true) }
+        viewModelScope.launch {
+            val updatesD = async {
+                if (state.hasMoreUpdates && state.oldestUpdateId != null)
+                    repository.getUpdatesPage(agentId, PAGE_SIZE, before = state.oldestUpdateId)
+                else null
+            }
+            val messagesD = async {
+                if (state.hasMoreMessages && state.oldestMessageId != null)
+                    repository.getMessagesPage(agentId, PAGE_SIZE, before = state.oldestMessageId)
+                else null
+            }
+
+            updatesD.await()?.onSuccess { page ->
+                val older = page.data.sortedBy { it.id }
+                _uiState.update { s -> s.copy(
+                    updates = older + s.updates,
+                    hasMoreUpdates = page.hasMore,
+                    oldestUpdateId = older.firstOrNull()?.id ?: s.oldestUpdateId
+                ) }
+            }
+
+            messagesD.await()?.onSuccess { page ->
+                val older = page.data.sortedBy { it.id }
+                _uiState.update { s -> s.copy(
+                    messages = older + s.messages,
+                    hasMoreMessages = page.hasMore,
+                    oldestMessageId = older.firstOrNull()?.id ?: s.oldestMessageId
+                ) }
+            }
+
+            _uiState.update { it.copy(isLoadingMore = false) }
         }
     }
 
@@ -174,18 +248,35 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Manual refresh triggered by pull-to-refresh.
+     * Manual refresh triggered by pull-to-refresh. Reloads the latest page and
+     * resets pagination cursors so "load more" works correctly after a hard refresh.
      */
     fun refreshAll() {
         _uiState.update { it.copy(isRefreshing = true) }
         viewModelScope.launch {
-            val a = async { repository.getAgent(agentId) }
-            val u = async { repository.getUpdates(agentId) }
-            val m = async { repository.getMessages(agentId) }
-            val f = async { repository.getFiles(agentId) }
+            val a  = async { repository.getAgent(agentId) }
+            val u  = async { repository.getUpdatesPage(agentId, PAGE_SIZE) }
+            val m  = async { repository.getMessagesPage(agentId, PAGE_SIZE) }
+            val f  = async { repository.getFiles(agentId) }
             a.await().onSuccess { agent -> _uiState.update { it.copy(agent = agent) } }
-            u.await().onSuccess { updates -> _uiState.update { it.copy(updates = updates) } }
-            m.await().onSuccess { messages -> _uiState.update { it.copy(messages = messages) } }
+            u.await().onSuccess { page ->
+                val sorted = page.data.sortedBy { it.id }
+                _uiState.update { it.copy(
+                    updates = sorted,
+                    hasMoreUpdates = page.hasMore,
+                    oldestUpdateId = sorted.firstOrNull()?.id,
+                    maxUpdateId = sorted.lastOrNull()?.id
+                ) }
+            }
+            m.await().onSuccess { page ->
+                val sorted = page.data.sortedBy { it.id }
+                _uiState.update { it.copy(
+                    messages = sorted,
+                    hasMoreMessages = page.hasMore,
+                    oldestMessageId = sorted.firstOrNull()?.id,
+                    maxMessageId = sorted.lastOrNull()?.id
+                ) }
+            }
             f.await().onSuccess { files -> _uiState.update { it.copy(files = files) } }
             _uiState.update { it.copy(isRefreshing = false) }
         }
@@ -768,18 +859,48 @@ class AgentDetailViewModel(
         }
     }
 
+    /**
+     * Poll for updates newer than what we already have.
+     * Fetches the latest page and appends any items with id > maxUpdateId.
+     */
     private fun refreshUpdates() {
         viewModelScope.launch {
-            repository.getUpdates(agentId).onSuccess { updates ->
-                _uiState.update { it.copy(updates = updates) }
+            repository.getUpdatesPage(agentId, PAGE_SIZE).onSuccess { page ->
+                val currentMax = _uiState.value.maxUpdateId
+                val newItems = if (currentMax != null) {
+                    page.data.filter { it.id > currentMax }.sortedBy { it.id }
+                } else {
+                    page.data.sortedBy { it.id }
+                }
+                if (newItems.isNotEmpty()) {
+                    _uiState.update { s -> s.copy(
+                        updates = s.updates + newItems,
+                        maxUpdateId = newItems.last().id
+                    ) }
+                }
             }
         }
     }
 
+    /**
+     * Poll for messages newer than what we already have.
+     * Fetches the latest page and appends any items with id > maxMessageId.
+     */
     private fun refreshMessages() {
         viewModelScope.launch {
-            repository.getMessages(agentId).onSuccess { messages ->
-                _uiState.update { it.copy(messages = messages) }
+            repository.getMessagesPage(agentId, PAGE_SIZE).onSuccess { page ->
+                val currentMax = _uiState.value.maxMessageId
+                val newItems = if (currentMax != null) {
+                    page.data.filter { it.id > currentMax }.sortedBy { it.id }
+                } else {
+                    page.data.sortedBy { it.id }
+                }
+                if (newItems.isNotEmpty()) {
+                    _uiState.update { s -> s.copy(
+                        messages = s.messages + newItems,
+                        maxMessageId = newItems.last().id
+                    ) }
+                }
             }
         }
     }

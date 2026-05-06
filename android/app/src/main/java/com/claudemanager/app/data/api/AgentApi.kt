@@ -139,18 +139,26 @@ interface AgentApi {
     // ── Updates ──────────────────────────────────────────────────────────
 
     /**
-     * Get all updates for an agent, ordered by timestamp ascending.
+     * Get updates for an agent, newest-first. Use [before] for older pages, [limit] to cap results.
      */
     @GET("api/agents/{id}/updates")
-    suspend fun getUpdates(@Path("id") agentId: String): Response<PaginatedResponse<AgentUpdate>>
+    suspend fun getUpdates(
+        @Path("id") agentId: String,
+        @Query("limit") limit: Int? = null,
+        @Query("before") before: Long? = null
+    ): Response<PaginatedResponse<AgentUpdate>>
 
     // ── Messages ─────────────────────────────────────────────────────────
 
     /**
-     * Get all messages for an agent, ordered by created_at ascending.
+     * Get messages for an agent, newest-first. Use [before] for older pages, [limit] to cap results.
      */
     @GET("api/agents/{id}/messages")
-    suspend fun getMessages(@Path("id") agentId: String): Response<PaginatedResponse<AgentMessage>>
+    suspend fun getMessages(
+        @Path("id") agentId: String,
+        @Query("limit") limit: Int? = null,
+        @Query("before") before: Long? = null
+    ): Response<PaginatedResponse<AgentMessage>>
 
     /**
      * Send a message to an agent (queues it for delivery on next poll).
