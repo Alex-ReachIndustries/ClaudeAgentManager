@@ -222,10 +222,22 @@ function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
       log(`Added tmux window "${tabTitle}" to existing session "${wtWindow}"`);
     }
   } else {
-    // No window group — open directly in a standalone gnome-terminal
-    spawn('gnome-terminal', ['--title', tabTitle, '--working-directory', cwd, '--', 'bash', scriptFile],
-      { detached: true, stdio: 'ignore' }).unref();
-    log(`Opened gnome-terminal for "${tabTitle}"`);
+    // No window group — fall back to Dailies tmux session rather than a standalone
+    // gnome-terminal. Standalone terminals can be hidden, block on interactive prompts,
+    // and aren't manageable via tmux. Dailies is always visible and already running.
+    const fallbackSession = 'Dailies';
+    const hasFallback = spawnSync('tmux', ['has-session', '-t', fallbackSession], { stdio: 'pipe' }).status === 0;
+    if (!hasFallback) {
+      spawn('tmux', ['new-session', '-d', '-s', fallbackSession, '-n', tabTitle, scriptFile],
+        { detached: true, stdio: 'ignore' }).unref();
+      spawn('gnome-terminal', ['--title', fallbackSession, '--', 'tmux', 'attach', '-t', fallbackSession],
+        { detached: true, stdio: 'ignore' }).unref();
+      log(`Created fallback tmux session "${fallbackSession}", window "${tabTitle}"`);
+    } else {
+      spawn('tmux', ['new-window', '-t', fallbackSession, '-n', tabTitle, scriptFile],
+        { detached: true, stdio: 'ignore' }).unref();
+      log(`Added window "${tabTitle}" to fallback tmux session "${fallbackSession}"`);
+    }
   }
 }
 
