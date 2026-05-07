@@ -99,6 +99,7 @@ import com.claudemanager.app.ui.theme.LumiWarning
 import com.claudemanager.app.ui.theme.agentStatusColor
 import com.claudemanager.app.util.TimeUtils
 import com.claudemanager.app.ui.PredefinedRole
+import androidx.compose.ui.graphics.Color
 
 
 /**
@@ -826,6 +827,26 @@ private fun SectionHeader(title: String, count: Int) {
 }
 
 /**
+private fun uuidBubbleColor(uuid: String): Color {
+    val palette = listOf(
+        Color(0xFF60A5FA), // blue
+        Color(0xFF34D399), // emerald
+        Color(0xFFF472B6), // pink
+        Color(0xFFFBBF24), // amber
+        Color(0xFF818CF8), // indigo
+        Color(0xFF2DD4BF), // teal
+        Color(0xFFFB923C), // orange
+        Color(0xFFA78BFA), // violet
+        Color(0xFF4ADE80), // green
+        Color(0xFFF87171), // red
+        Color(0xFF38BDF8), // sky
+        Color(0xFFE879F9), // fuchsia
+    )
+    val idx = (uuid.hashCode() and 0x7FFFFFFF) % palette.size
+    return palette[idx]
+}
+
+/**
  * Individual agent card in the list.
  * Shows status dot, title, workspace, summary, stats, and activity time.
  * Supports multi-select via long-press and visual selection indicator.
@@ -886,6 +907,27 @@ private fun AgentCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                if (agent.id.length >= 8) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val shortId = agent.id.take(8)
+                    val idColor = uuidBubbleColor(agent.id)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(idColor.copy(alpha = 0.18f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = shortId,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = androidx.compose.ui.unit.TextUnit(9f, androidx.compose.ui.unit.TextUnitType.Sp)
+                            ),
+                            color = idColor,
+                            maxLines = 1
+                        )
+                    }
+                }
             }
 
             // Workspace
