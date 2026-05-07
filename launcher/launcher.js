@@ -1165,6 +1165,85 @@ log(`Platform: ${IS_LINUX ? 'Linux' : 'Windows'}`);
 
 let rateLimitScanCounter = 0;
 
+// ---------------------------------------------------------------------------
+// Tmux reconciliation sweep (Linux only, runs every ~60s)
+//
+// Compares the session manager's live agent list against actual tmux windows.
+// For each non-archived agent with a wt_window:
+//   • If it should be alive but has no tmux window → queue a resume launch request
+// For each tmux window whose name is an 8-char UUID:
+//   • If the agent is archived → kill that specific window (not the whole session)
+//
+// This ensures the desktop and session manager stay in sync without relying on
+// agents self-reporting death, and without brute-force PID checks.
+// ---------------------------------------------------------------------------
+
+const LIVE_FOR_RECONCILE = ['active', 'working', 'idle', 'waiting-for-input', 'standby'];
+
+async function reconcileTmuxAgents() {
+  if (!IS_LINUX) return;
+  try {
+    const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
+    const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
+
+    // Build a set of all tmux window names across all sessions, keyed by shortId
+    const tmuxWindowsBySession = new Map(); // sessionName → Set<windowName>
+    const allWindowResult = spawnSync('tmux', ['list-windows', '-a', '-F', '#{session_name}:#{window_name}'],
+      { encoding: 'utf8', stdio: 'pipe' });
+    if (allWindowResult.status === 0) {
+      for (const line of (allWindowResult.stdout || '').split('\n').filter(Boolean)) {
+        const colonIdx = line.lastIndexOf(':');
+        const sessionName = line.substring(0, colonIdx);
+        const windowName = line.substring(colonIdx + 1).trim();
+        if (!tmuxWindowsBySession.has(sessionName)) tmuxWindowsBySession.set(sessionName, new Set());
+        tmuxWindowsBySession.get(sessionName).add(windowName);
+      }
+    }
+
+    // Check each live agent — resume if missing from tmux
+    for (const agent of list) {
+      if (agent.status === 'archived') continue;
+      if (!agent.wt_window) continue;
+      if (!LIVE_FOR_RECONCILE.includes(agent.status)) continue;
+      const shortId = agent.id.substring(0, 8);
+      const sessionWindows = tmuxWindowsBySession.get(agent.wt_window) || new Set();
+      if (!sessionWindows.has(shortId)) {
+        log(`Reconcile: agent ${shortId} (${agent.status}) missing from tmux "${agent.wt_window}" — queuing resume`);
+        try {
+          await postJSON(`${SERVER_URL}/api/launch-requests`, {
+            type: 'resume',
+            folder_path: agent.cwd || agent.workspace || '',
+            resume_agent_id: agent.id,
+            wt_window: agent.wt_window,
+          });
+        } catch (err) {
+          log(`Reconcile: failed to queue resume for ${shortId}: ${err.message}`);
+        }
+      }
+    }
+
+    // Check each tmux window — kill if agent is archived
+    for (const [sessionName, windows] of tmuxWindowsBySession) {
+      for (const windowName of windows) {
+        // Only examine windows whose name looks like an 8-char hex UUID
+        if (!/^[0-9a-f]{8}$/.test(windowName)) continue;
+        // Find the agent with this short ID
+        const agent = list.find(a => a.id.startsWith(windowName));
+        if (agent && agent.status === 'archived') {
+          log(`Reconcile: killing tmux window "${sessionName}:${windowName}" for archived agent`);
+          spawnSync('tmux', ['kill-window', '-t', `${sessionName}:${windowName}`], { stdio: 'pipe' });
+        }
+      }
+    }
+  } catch (err) {
+    if (!err.message?.includes('ECONNREFUSED')) {
+      log(`Reconcile sweep error: ${err.message}`);
+    }
+  }
+}
+
+let reconcileCounter = 0;
+
 async function schedulePoll() {
   await processPendingRequests();
 
@@ -1180,6 +1259,13 @@ async function schedulePoll() {
   if (rateLimitScanCounter >= 20) {
     rateLimitScanCounter = 0;
     await scanRateLimitDialogs();
+  }
+
+  // Run tmux reconciliation sweep every ~60s (every 20th poll)
+  reconcileCounter++;
+  if (reconcileCounter >= 20) {
+    reconcileCounter = 0;
+    await reconcileTmuxAgents();
   }
 
   setTimeout(schedulePoll, POLL_INTERVAL);
