@@ -55,6 +55,28 @@ data class PendingDownload(
 )
 
 /**
+ * Records that the user has tapped a file and is currently being shown the
+ * Open/Save action dialog. Captured immediately on tap, *before* any download
+ * starts, so the UI feels responsive even for large files.
+ */
+data class PendingFileAction(val fileId: Long, val filename: String)
+
+/** What the user chose to do with a tapped file. */
+enum class DownloadMode { OPEN, SAVE }
+
+/**
+ * A download currently in progress. For [DownloadMode.OPEN] the UI shows a
+ * blocking progress dialog; for [DownloadMode.SAVE] the download streams in
+ * the background and the UI is non-blocking (snackbar on completion).
+ */
+data class ActiveDownload(
+    val fileId: Long,
+    val filename: String,
+    val progress: Float, // 0f..1f, or -1f for indeterminate
+    val mode: DownloadMode
+)
+
+/**
  * UI state for the agent detail screen.
  */
 data class AgentDetailUiState(
@@ -79,6 +101,8 @@ data class AgentDetailUiState(
     val costBreakdown: AgentCostBreakdownResponse? = null,
     val isLoadingCosts: Boolean = false,
     val pendingDownload: PendingDownload? = null,
+    val pendingFileAction: PendingFileAction? = null,
+    val activeDownload: ActiveDownload? = null,
     val predefinedRoles: List<PredefinedRole> = PREDEFINED_ROLES,
     val wtWindows: List<String> = emptyList(),
     // Pagination state for the conversation feed
@@ -644,10 +668,29 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Download a file using OkHttp (which trusts Tailscale certs), save to app cache,
-     * then surface a [PendingDownload] so the UI can offer "Open" or "Save to Device".
+     * Show the Open/Save action dialog for a tapped file. Called immediately
+     * on tap, before any network activity, so the UI feels responsive.
      */
-    fun downloadFile(fileId: Long, filename: String, context: Context) {
+    fun showFileActionDialog(fileId: Long, filename: String) {
+        _uiState.update { it.copy(pendingFileAction = PendingFileAction(fileId, filename)) }
+    }
+
+    /** Dismiss the file action dialog without taking any action. */
+    fun dismissFileActionDialog() {
+        _uiState.update { it.copy(pendingFileAction = null) }
+    }
+
+    /**
+     * Stream the file directly to a user-chosen SAF URI in the background.
+     * No progress dialog — completion is signalled by a snackbar via [error].
+     */
+    fun downloadFileToUri(fileId: Long, filename: String, uri: android.net.Uri, context: Context) {
+        _uiState.update {
+            it.copy(
+                pendingFileAction = null,
+                activeDownload = ActiveDownload(fileId, filename, -1f, DownloadMode.SAVE)
+            )
+        }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val url = repository.getFileDownloadUrl(agentId, fileId)
@@ -655,25 +698,101 @@ class AgentDetailViewModel(
                 val request = okhttp3.Request.Builder().url(url).build()
                 val response = client.newCall(request).execute()
                 if (response.isSuccessful) {
-                    val body = response.body ?: return@launch
-                    val mimeType = response.header("Content-Type") ?: "application/octet-stream"
-                    val cacheDir = java.io.File(context.cacheDir, "downloads")
-                    cacheDir.mkdirs()
-                    val file = java.io.File(cacheDir, filename)
-                    file.outputStream().use { out ->
-                        body.byteStream().use { it.copyTo(out) }
+                    val body = response.body ?: run {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            _uiState.update { it.copy(activeDownload = null, error = "Save failed: empty response") }
+                        }
+                        return@launch
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        body.byteStream().use { input -> input.copyTo(out) }
+                    } ?: run {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            _uiState.update { it.copy(activeDownload = null, error = "Save failed: could not open output stream") }
+                        }
+                        return@launch
                     }
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        _uiState.update { it.copy(pendingDownload = PendingDownload(filename, mimeType, file)) }
+                        _uiState.update { it.copy(activeDownload = null, error = "Saved $filename") }
                     }
                 } else {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        _uiState.update { it.copy(error = "Download failed: HTTP ${response.code}") }
+                        _uiState.update { it.copy(activeDownload = null, error = "Download failed: HTTP ${response.code}") }
                     }
                 }
             } catch (e: Exception) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.update { it.copy(error = "Download failed: ${e.message}") }
+                    _uiState.update { it.copy(activeDownload = null, error = "Save failed: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    /**
+     * Stream the file to app cache while showing a progress dialog, then open
+     * it with the appropriate viewer app via [openPendingDownload].
+     */
+    fun startOpenDownload(fileId: Long, filename: String, context: Context) {
+        _uiState.update {
+            it.copy(
+                pendingFileAction = null,
+                activeDownload = ActiveDownload(fileId, filename, 0f, DownloadMode.OPEN)
+            )
+        }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val url = repository.getFileDownloadUrl(agentId, fileId)
+                val client = com.claudemanager.app.data.api.ApiClient.getRetrofit().callFactory() as okhttp3.OkHttpClient
+                val request = okhttp3.Request.Builder().url(url).build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body ?: run {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            _uiState.update { it.copy(activeDownload = null, error = "Download failed: empty response") }
+                        }
+                        return@launch
+                    }
+                    val total = response.header("Content-Length")?.toLongOrNull() ?: -1L
+                    val mimeType = response.header("Content-Type") ?: "application/octet-stream"
+                    val cacheDir = java.io.File(context.cacheDir, "downloads").also { it.mkdirs() }
+                    val file = java.io.File(cacheDir, filename)
+                    var written = 0L
+                    file.outputStream().use { out ->
+                        body.byteStream().use { input ->
+                            val buf = ByteArray(8192)
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n == -1) break
+                                out.write(buf, 0, n)
+                                written += n
+                                if (total > 0) {
+                                    val progress = written.toFloat() / total.toFloat()
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        _uiState.update { s ->
+                                            s.copy(activeDownload = s.activeDownload?.copy(progress = progress))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update {
+                            it.copy(
+                                activeDownload = null,
+                                pendingDownload = PendingDownload(filename, mimeType, file)
+                            )
+                        }
+                        openPendingDownload(context)
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { it.copy(activeDownload = null, error = "Download failed: HTTP ${response.code}") }
+                    }
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { it.copy(activeDownload = null, error = "Download failed: ${e.message}") }
                 }
             }
         }
@@ -695,31 +814,6 @@ class AgentDetailViewModel(
         } catch (_: Exception) {
             _uiState.update { it.copy(error = "No app found to open ${pending.filename}") }
         }
-    }
-
-    /** Copy the pending download to a user-chosen URI (from ACTION_CREATE_DOCUMENT). */
-    fun savePendingDownloadToUri(uri: android.net.Uri, context: Context) {
-        val pending = _uiState.value.pendingDownload ?: return
-        _uiState.update { it.copy(pendingDownload = null) }
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    pending.cachedFile.inputStream().use { it.copyTo(out) }
-                }
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.update { it.copy(error = "Saved ${pending.filename}") }
-                }
-            } catch (e: Exception) {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.update { it.copy(error = "Save failed: ${e.message}") }
-                }
-            }
-        }
-    }
-
-    /** Dismiss the pending download dialog without taking any action. */
-    fun clearPendingDownload() {
-        _uiState.update { it.copy(pendingDownload = null) }
     }
 
     // ── Agent Relay ────────────────────────────────────────────────────

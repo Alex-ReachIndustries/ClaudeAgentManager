@@ -39,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -121,12 +122,23 @@ fun AgentDetailScreen(
         onRefresh = viewModel::refreshAll
     )
 
-    // Launcher for saving a downloaded file to a user-chosen location via SAF
+    // The file the user picked Save for — held while the SAF picker is open.
+    var pendingSaveFileId by remember { mutableStateOf<Long?>(null) }
+    var pendingSaveFilename by remember { mutableStateOf("") }
+
+    // Launcher for saving a tapped file to a user-chosen location via SAF.
+    // The download starts only after the user picks a destination, so for large
+    // files there is no perceived delay before the picker appears.
     val saveToDeviceLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("*/*")
     ) { uri ->
-        uri?.let { viewModel.savePendingDownloadToUri(it, context) }
-            ?: viewModel.clearPendingDownload()
+        val fid = pendingSaveFileId
+        val name = pendingSaveFilename
+        if (uri != null && fid != null) {
+            viewModel.downloadFileToUri(fid, name, uri, context)
+        }
+        pendingSaveFileId = null
+        pendingSaveFilename = ""
     }
 
     // Show error in snackbar
@@ -137,29 +149,78 @@ fun AgentDetailScreen(
         }
     }
 
-    // Download action dialog — shown after a file is fetched to cache
-    state.pendingDownload?.let { pending ->
+    // Action dialog — shown immediately when the user taps a file, before any
+    // download starts. From here they can Open (download to cache + ACTION_VIEW)
+    // or Save to Device (pick an SAF destination, then stream in background).
+    state.pendingFileAction?.let { action ->
         AlertDialog(
-            onDismissRequest = { viewModel.clearPendingDownload() },
-            title = { Text(pending.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            onDismissRequest = { viewModel.dismissFileActionDialog() },
+            title = { Text(action.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             text = { Text("Open with an app or save to device storage?") },
             confirmButton = {
-                TextButton(onClick = { viewModel.openPendingDownload(context) }) {
+                TextButton(onClick = { viewModel.startOpenDownload(action.fileId, action.filename, context) }) {
                     Text("Open", color = LumiPurple500)
                 }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { viewModel.clearPendingDownload() }) {
+                    TextButton(onClick = { viewModel.dismissFileActionDialog() }) {
                         Text("Cancel")
                     }
                     TextButton(onClick = {
-                        saveToDeviceLauncher.launch(pending.filename)
+                        pendingSaveFileId = action.fileId
+                        pendingSaveFilename = action.filename
+                        viewModel.dismissFileActionDialog()
+                        saveToDeviceLauncher.launch(action.filename)
                     }) {
                         Text("Save to Device", color = LumiPurple500)
                     }
                 }
             },
+            containerColor = LumiCard,
+            titleContentColor = LumiOnSurface,
+            textContentColor = LumiOnSurfaceSecondary
+        )
+    }
+
+    // Progress dialog — shown only while downloading for Open. Save mode runs
+    // silently in the background and surfaces a snackbar on completion.
+    state.activeDownload?.takeIf { it.mode == DownloadMode.OPEN }?.let { dl ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Downloading", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = dl.filename,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (dl.progress >= 0f) {
+                        LinearProgressIndicator(
+                            progress = { dl.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = LumiPurple500
+                        )
+                        Text(
+                            text = "${(dl.progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = LumiPurple500
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
             containerColor = LumiCard,
             titleContentColor = LumiOnSurface,
             textContentColor = LumiOnSurfaceSecondary
@@ -351,7 +412,7 @@ fun AgentDetailScreen(
                                 isUploading = state.isUploading,
                                 onSendMessage = viewModel::sendMessage,
                                 onUploadFile = { uri -> viewModel.uploadFile(uri, context) },
-                                onFileDownload = { fileId, filename -> viewModel.downloadFile(fileId, filename, context) },
+                                onFileDownload = { fileId, filename -> viewModel.showFileActionDialog(fileId, filename) },
                                 draftMessage = state.draftMessage,
                                 onDraftChanged = viewModel::updateDraftMessage,
                                 lastUploadedFileName = state.lastUploadedFileName,
@@ -383,7 +444,7 @@ fun AgentDetailScreen(
                                 onFileClick = { fileId ->
                                     val file = state.files.find { it.id == fileId }
                                     val filename = file?.filename ?: "download"
-                                    viewModel.downloadFile(fileId, filename, context)
+                                    viewModel.showFileActionDialog(fileId, filename)
                                 },
                                 onShareFile = { fileId, targetAgentId ->
                                     viewModel.shareFile(fileId, targetAgentId)
