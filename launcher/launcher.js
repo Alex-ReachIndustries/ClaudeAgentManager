@@ -399,21 +399,35 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
   const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
 
   if (IS_LINUX) {
-    // Linux: write a shell script and launch via tmux / gnome-terminal.
-    // CLAUDE_TMUX_* env vars let session-connect know its tmux location.
+    // Linux: pre-generate a UUID so we can name the tmux window BEFORE the agent
+    // starts, and pass CLAUDE_AGENT_ID so session-connect doesn't need to guess.
+    // We pre-create an empty .jsonl file and use --resume <uuid> to force Claude
+    // to adopt the UUID we chose — the agent starts fresh (empty history) but with
+    // a known identity from the very first line of its launch script.
+    const newUuid = randomUUID();
+    const shortId = newUuid.substring(0, 8);
     const session = wtWindow || 'ungrouped';
+    const projectKey = cwd.replace(/\//g, '-'); // /home/user/proj → -home-user-proj
+    const jsonlDir = path.join(USER_HOME, '.claude', 'projects', projectKey);
+    const jsonlPath = path.join(jsonlDir, `${newUuid}.jsonl`);
+    try {
+      fs.mkdirSync(jsonlDir, { recursive: true });
+      fs.writeFileSync(jsonlPath, ''); // empty → claude starts fresh with this UUID
+    } catch (err) {
+      log(`Warning: could not pre-create .jsonl for ${newUuid}: ${err.message}`);
+    }
+
     const scriptFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.sh`);
-    // Escape single quotes in the prompt for safe embedding in a single-quoted bash string
     const promptEscaped = initialPrompt.replace(/'/g, "'\\''");
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\nexport CLAUDE_TMUX_SESSION="${session}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} '${promptEscaped}'\n`,
+      `#!/bin/bash\nexport CLAUDE_AGENT_ID="${newUuid}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} --resume ${newUuid} '${promptEscaped}'\n`,
       { mode: 0o755 }
     );
-    linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow);
-    autoAcceptTrustDialog(session, tabTitle);
+    linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow, newUuid);
+    autoAcceptTrustDialog(session, shortId);
     scheduleArrangement(session);
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
-    log(`Spawned terminal for new agent (Linux) via ${scriptFile}`);
+    log(`Spawned new agent ${newUuid} (Linux) — tmux window "${session}:${shortId}"`);
     return;
   }
 
@@ -1110,14 +1124,22 @@ async function scanRateLimitDialogs() {
 
       const timerId = setTimeout(async () => {
         rateLimitScheduled.delete(pane);
-        // Verify pane still exists and still shows rate limit
+        // Re-check: only proceed if the pane still exists AND still shows a rate-limit dialog.
+        // Without this, the recovery fires even when the dialog was already dismissed.
         const check = spawnSync('tmux', ['capture-pane', '-p', '-t', pane], { encoding: 'utf8', stdio: 'pipe' });
+        if (check.status !== 0) {
+          log(`Rate limit recovery: pane ${pane} no longer exists — skipping`);
+          return;
+        }
         const currentContent = check.stdout || '';
+        if (!/rate.?limit/i.test(currentContent)) {
+          log(`Rate limit recovery: pane ${pane} no longer shows rate-limit dialog — skipping`);
+          return;
+        }
         log(`Rate limit recovery firing for pane ${pane}`);
         // Send Enter to confirm "stop and wait" option (or dismiss — safe either way)
         spawnSync('tmux', ['send-keys', '-t', pane, '', 'Enter'], { stdio: 'pipe' });
         await new Promise(r => setTimeout(r, 2000));
-        // Type resume message and send
         const msg = 'your limits have been reset, please continue';
         spawnSync('tmux', ['send-keys', '-t', pane, msg, 'Enter'], { stdio: 'pipe' });
         log(`Rate limit recovery complete for pane ${pane} — sent resume message`);
