@@ -217,22 +217,18 @@ class AgentRepository {
             val response = api.uploadFile(agentId, filePart, sourcePart, descriptionPart)
 
             if (response.isSuccessful) {
-                // The upload endpoint returns {ok, file: {id, filename, ...}} but we need
-                // to construct a full FileInfo. Parse from the raw response body.
-                val rawBody = response.body()
-                // Since the response shape is {ok, file: {...}}, and our API returns OkResponse,
-                // we need to re-fetch the files list to get the complete FileInfo.
-                // Alternatively, construct a minimal FileInfo from what we know.
+                val body = response.body()
+                val uploaded = body?.file
                 Result.success(
                     FileInfo(
-                        id = 0, // Will be populated on next fetch
+                        id = uploaded?.id ?: 0,
                         agentId = agentId,
-                        filename = filename,
-                        mimetype = mimeType,
-                        size = bytes.size.toLong(),
-                        source = "user",
-                        description = description,
-                        createdAt = "" // Will be populated on next fetch
+                        filename = uploaded?.filename ?: filename,
+                        mimetype = uploaded?.mimetype ?: mimeType,
+                        size = uploaded?.size ?: bytes.size.toLong(),
+                        source = uploaded?.source ?: "user",
+                        description = uploaded?.description ?: description,
+                        createdAt = ""
                     )
                 )
             } else {

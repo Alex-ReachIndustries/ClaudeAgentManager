@@ -31,6 +31,7 @@ import com.claudemanager.app.data.models.SpawnAgentBody
 import com.claudemanager.app.data.models.TerminalOutputBody
 import com.claudemanager.app.data.models.UpdateAgentBody
 import com.claudemanager.app.data.models.UpdateWebhookBody
+import com.claudemanager.app.data.models.UploadFileResponse
 import com.claudemanager.app.data.models.WebhookEntry
 import com.claudemanager.app.data.models.Workflow
 import okhttp3.MultipartBody
@@ -188,7 +189,7 @@ interface AgentApi {
         @Part file: MultipartBody.Part,
         @Part("source") source: RequestBody,
         @Part("description") description: RequestBody
-    ): Response<OkResponse>
+    ): Response<UploadFileResponse>
 
     // ── Folders ──────────────────────────────────────────────────────────
 

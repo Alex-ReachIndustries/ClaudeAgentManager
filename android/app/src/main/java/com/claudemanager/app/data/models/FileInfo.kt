@@ -48,3 +48,35 @@ data class FileInfo(
             else -> String.format("%.1f MB", size / (1024.0 * 1024.0))
         }
 }
+
+/**
+ * Response shape for POST /api/agents/{id}/files. Mirrors the backend's
+ * `{ ok, file: { id, filename, source, description, mimetype, size } }`.
+ */
+data class UploadFileResponse(
+    @SerializedName("ok")
+    val ok: Boolean,
+
+    @SerializedName("file")
+    val file: UploadedFile
+)
+
+data class UploadedFile(
+    @SerializedName("id")
+    val id: Long,
+
+    @SerializedName("filename")
+    val filename: String,
+
+    @SerializedName("source")
+    val source: String? = null,
+
+    @SerializedName("description")
+    val description: String? = null,
+
+    @SerializedName("mimetype")
+    val mimetype: String,
+
+    @SerializedName("size")
+    val size: Long
+)

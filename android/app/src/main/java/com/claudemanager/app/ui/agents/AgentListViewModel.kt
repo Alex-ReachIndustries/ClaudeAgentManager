@@ -411,7 +411,10 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Archive (close) all selected agents, then refresh the list.
+     * Archive (close + terminate) all selected agents, then refresh the list.
+     * Uses POST /:id/close per agent so the underlying tmux/claude process is
+     * actually killed; PATCHing status alone left zombie processes alive.
+     * Per-agent failures are collected and surfaced as state.error.
      */
     fun archiveSelected() {
         val ids = _uiState.value.selectedAgentIds.toList()
@@ -419,15 +422,16 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
 
         _uiState.update { it.copy(isArchiving = true) }
         viewModelScope.launch {
+            var failures = 0
             ids.forEach { id ->
-                repository.updateAgent(id, status = "archived")
+                repository.closeAgent(id).onFailure { failures++ }
             }
-            // Clear selection and refresh
             _uiState.update {
                 it.copy(
                     isMultiSelectMode = false,
                     selectedAgentIds = emptySet(),
-                    isArchiving = false
+                    isArchiving = false,
+                    error = if (failures > 0) "Archive failed for $failures of ${ids.size} agents" else it.error
                 )
             }
             refresh()

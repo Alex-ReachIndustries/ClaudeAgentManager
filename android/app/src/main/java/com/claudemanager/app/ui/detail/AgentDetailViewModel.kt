@@ -404,13 +404,10 @@ class AgentDetailViewModel(
         _uiState.update { it.copy(isUploading = true) }
         viewModelScope.launch {
             repository.uploadFile(agentId, uri, context)
-                .onSuccess {
+                .onSuccess { uploaded ->
                     refreshFiles()
-                    // Find the most recently uploaded file to get its ID
-                    val latestFiles = repository.getFiles(agentId).getOrNull() ?: emptyList()
-                    val uploadedFile = latestFiles.find { it.filename == displayName }
                     val attachment = AttachedFile(
-                        id = uploadedFile?.id,
+                        id = uploaded.id.takeIf { it != 0L },
                         filename = displayName,
                         isUploading = false
                     )
@@ -450,17 +447,28 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Resume the agent by creating a resume launch request.
+     * Resume the agent. For archived/completed/failed agents this calls
+     * POST /api/agents/{id}/resume so the backend status guard runs and the
+     * stored context_handoff is restored. For live agents (where /resume would
+     * 400) we fall back to a direct launch request — useful when the user
+     * wants to spawn a fresh process in the same folder/window.
      */
     fun resumeAgent() {
         val agent = _uiState.value.agent ?: return
         viewModelScope.launch {
-            repository.createLaunchRequest(
-                type = "resume",
-                folderPath = agent.cwd ?: agent.workspace ?: "",
-                resumeAgentId = agentId,
-                wtWindow = agent.wtWindow ?: agent.projectName
-            ).onSuccess {
+            val canUseResumeEndpoint = agent.status == AgentStatus.ARCHIVED ||
+                agent.status == AgentStatus.COMPLETED
+            val result = if (canUseResumeEndpoint) {
+                repository.resumeAgent(agentId)
+            } else {
+                repository.createLaunchRequest(
+                    type = "resume",
+                    folderPath = agent.cwd ?: agent.workspace ?: "",
+                    resumeAgentId = agentId,
+                    wtWindow = agent.wtWindow ?: agent.projectName
+                ).map { }
+            }
+            result.onSuccess {
                 _uiState.update { it.copy(error = null) }
                 refreshAgent()
             }.onFailure { e ->
@@ -578,14 +586,15 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Archive the agent (set status to archived).
+     * Archive the agent. Goes through POST /:id/close which both archives the
+     * record and fires a terminate launch request — so the running tmux/claude
+     * process is actually killed instead of being left polling in the
+     * background.
      */
     fun archiveAgent() {
         viewModelScope.launch {
-            repository.updateAgent(agentId, status = "archived")
-                .onSuccess { agent ->
-                    _uiState.update { it.copy(agent = agent) }
-                }
+            repository.closeAgent(agentId)
+                .onSuccess { refreshAgent() }
                 .onFailure { e ->
                     _uiState.update { it.copy(error = e.message ?: "Failed to archive agent") }
                 }
@@ -593,14 +602,14 @@ class AgentDetailViewModel(
     }
 
     /**
-     * Un-archive the agent (set status to idle).
+     * Un-archive an agent by spawning a fresh process via POST /:id/resume.
+     * Just flipping the DB status was misleading: it made the agent appear
+     * live in the list while no process was actually polling.
      */
     fun unarchiveAgent() {
         viewModelScope.launch {
-            repository.updateAgent(agentId, status = "idle")
-                .onSuccess { agent ->
-                    _uiState.update { it.copy(agent = agent) }
-                }
+            repository.resumeAgent(agentId)
+                .onSuccess { refreshAgent() }
                 .onFailure { e ->
                     _uiState.update { it.copy(error = e.message ?: "Failed to unarchive agent") }
                 }
@@ -628,13 +637,19 @@ class AgentDetailViewModel(
             repository.updateAgent(agentId, role = role, effort = effort, model = model)
                 .onSuccess { agent ->
                     _uiState.update { it.copy(agent = agent) }
-                    // Notify the agent about the changes
                     val parts = mutableListOf<String>()
                     if (role != null) parts.add("role: \"$role\"")
                     if (effort != null) parts.add("effort: $effort")
                     if (model != null) parts.add("model: $model")
                     if (parts.isNotEmpty()) {
-                        repository.sendMessage(agentId, "Your settings have been updated — ${parts.joinToString(", ")}. Please follow your new role/settings.")
+                        repository.sendMessage(
+                            agentId,
+                            "Your settings have been updated — ${parts.joinToString(", ")}. Please follow your new role/settings."
+                        ).onFailure { e ->
+                            _uiState.update {
+                                it.copy(error = "Settings saved, but agent notification failed: ${e.message}")
+                            }
+                        }
                     }
                 }
                 .onFailure { e ->
