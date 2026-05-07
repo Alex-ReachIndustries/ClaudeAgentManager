@@ -826,7 +826,6 @@ private fun SectionHeader(title: String, count: Int) {
     }
 }
 
-/**
 private fun uuidBubbleColor(uuid: String): Color {
     val palette = listOf(
         Color(0xFF60A5FA), // blue

@@ -412,10 +412,18 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
     const jsonlPath = path.join(jsonlDir, `${newUuid}.jsonl`);
     try {
       fs.mkdirSync(jsonlDir, { recursive: true });
-      // Write the minimal permission-mode header that claude --resume requires.
-      // An empty file returns "No conversation found" — the header is the minimum valid entry.
-      const jsonlHeader = JSON.stringify({ type: 'permission-mode', permissionMode: 'bypassPermissions', sessionId: newUuid }) + '\n';
-      fs.writeFileSync(jsonlPath, jsonlHeader);
+      // Write a minimal valid conversation so claude --resume can find the session.
+      // Permission-mode alone returns "No conversation found" — a user message is required.
+      const permLine = JSON.stringify({ type: 'permission-mode', permissionMode: 'bypassPermissions', sessionId: newUuid });
+      const msgLine = JSON.stringify({
+        parentUuid: null, isSidechain: false, promptId: randomUUID(),
+        type: 'user',
+        message: { role: 'user', content: 'run /session-connect' },
+        uuid: randomUUID(), timestamp: new Date().toISOString(),
+        permissionMode: 'bypassPermissions', userType: 'external', entrypoint: 'cli',
+        cwd, sessionId: newUuid, version: '2.1.126', gitBranch: 'main',
+      });
+      fs.writeFileSync(jsonlPath, permLine + '\n' + msgLine + '\n');
     } catch (err) {
       log(`Warning: could not pre-create .jsonl for ${newUuid}: ${err.message}`);
     }
