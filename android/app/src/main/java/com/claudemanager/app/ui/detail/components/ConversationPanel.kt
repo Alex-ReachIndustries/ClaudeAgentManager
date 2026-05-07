@@ -188,13 +188,22 @@ fun ConversationPanel(
         merged.toList()
     }
 
-    // Auto-scroll to bottom when new items arrive, but NOT when loading older history.
-    var prevItemCount by remember { mutableStateOf(items.size) }
+    // Scroll to bottom: immediately on first load, then animated on each new message.
+    var initialScrollDone by remember { mutableStateOf(false) }
+    var prevItemCount by remember { mutableStateOf(0) }
     LaunchedEffect(items.size) {
-        val grew = items.size > prevItemCount
-        prevItemCount = items.size
-        if (grew && !isLoadingMore && items.isNotEmpty()) {
-            listState.animateScrollToItem(items.size - 1)
+        if (!initialScrollDone) {
+            if (items.isNotEmpty() && !isLoadingMore) {
+                listState.scrollToItem(items.size - 1)
+                initialScrollDone = true
+                prevItemCount = items.size
+            }
+        } else {
+            val grew = items.size > prevItemCount
+            prevItemCount = items.size
+            if (grew && !isLoadingMore) {
+                listState.animateScrollToItem(items.size - 1)
+            }
         }
     }
 

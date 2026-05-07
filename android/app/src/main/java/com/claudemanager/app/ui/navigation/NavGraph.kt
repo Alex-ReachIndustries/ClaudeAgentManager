@@ -9,8 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -126,11 +125,11 @@ fun AppNavGraph(
         }
     }
 
-    // Handle deep link navigation: navigate to agent detail with agents list in back stack
-    val deepLinkConsumed = remember { mutableStateOf(false) }
+    // Handle deep link navigation: navigate to the agent whenever startAgentId changes.
+    // No consumed-flag guard: LaunchedEffect(startAgentId) only re-fires on a value change,
+    // so each distinct notification tap triggers exactly one navigation.
     LaunchedEffect(startAgentId) {
-        if (startAgentId != null && !deepLinkConsumed.value) {
-            deepLinkConsumed.value = true
+        if (startAgentId != null) {
             navController.navigate(Routes.agentDetail(startAgentId)) {
                 popUpTo(Routes.AGENTS) { inclusive = false }
                 launchSingleTop = true
