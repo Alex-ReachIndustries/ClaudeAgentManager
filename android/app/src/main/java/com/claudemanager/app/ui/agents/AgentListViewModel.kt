@@ -165,12 +165,13 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun terminateGroup(groupName: String) {
-        val liveAgents = agentsInGroup(groupName).filter { it.isLive && it.pid != null }
+        val liveAgents = agentsInGroup(groupName).filter { it.isLive }
         viewModelScope.launch {
             liveAgents.forEach { agent ->
                 repository.createLaunchRequest(
                     type = "terminate",
                     folderPath = "",
+                    resumeAgentId = agent.id,
                     targetPid = agent.pid
                 )
             }

@@ -887,12 +887,17 @@ export function addMessage(agentId: string, content: string, source: string = "u
   return transaction();
 }
 
+// Safety-net: auto-acknowledge delivered messages that have been waiting > 5 minutes.
+// Called on every update POST as a garbage-collector for agents that crashed or were
+// interrupted before they could send an explicit ack. Does NOT touch recently-delivered
+// messages — those require an explicit POST /messages/ack from the agent.
 export function acknowledgeMessages(agentId: string) {
   const db = getDb();
   const ackStmt = db.prepare(`
     UPDATE messages
     SET status = 'acknowledged', acknowledged_at = datetime('now')
     WHERE agent_id = ? AND status = 'delivered'
+      AND delivered_at < datetime('now', '-300 seconds')
   `);
   const resetCount = db.prepare(`
     UPDATE agents SET pending_message_count = 0 WHERE id = ?
@@ -901,6 +906,22 @@ export function acknowledgeMessages(agentId: string) {
     const result = ackStmt.run(agentId);
     resetCount.run(agentId);
     return result;
+  });
+  return transaction();
+}
+
+// Explicit acknowledgement: agent confirms it has processed specific messages by ID.
+// Called from POST /agents/:id/messages/ack after the agent completes work.
+export function acknowledgeMessagesById(agentId: string, ids: number[]) {
+  const db = getDb();
+  const placeholders = ids.map(() => "?").join(", ");
+  const ackStmt = db.prepare(`
+    UPDATE messages
+    SET status = 'acknowledged', acknowledged_at = datetime('now')
+    WHERE agent_id = ? AND id IN (${placeholders}) AND status IN ('pending', 'delivered')
+  `);
+  const transaction = db.transaction(() => {
+    return ackStmt.run(agentId, ...ids);
   });
   return transaction();
 }

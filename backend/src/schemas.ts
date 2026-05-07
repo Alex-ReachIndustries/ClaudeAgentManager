@@ -126,6 +126,12 @@ export const relaySchema = z.object({
   content: z.string().min(1).max(65_536).trim(),
 });
 
+// --- Message acknowledgement (POST /agents/:id/messages/ack) ---
+
+export const ackMessageSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(100),
+});
+
 // --- Workflow create (POST /workflows) ---
 
 const workflowStepSchema = z.object({

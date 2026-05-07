@@ -14,6 +14,7 @@ import {
   addUpdate,
   getPendingMessages,
   acknowledgeMessages,
+  acknowledgeMessagesById,
   addMessage,
   getMessages,
   getMessagesByStatus,
@@ -33,7 +34,7 @@ import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
 import { agentUpdateLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
-import { updateSchema, messageSchema, agentPatchSchema, relaySchema } from "../schemas.js";
+import { updateSchema, messageSchema, agentPatchSchema, relaySchema, ackMessageSchema } from "../schemas.js";
 import { logger } from "../logger.js";
 import { dispatchWebhook } from "../webhook-dispatcher.js";
 import { onAgentStatusChange } from "../workflow-engine.js";
@@ -643,7 +644,8 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
       addUpdate(id, type, contentStr, summary);
     }
 
-    // Auto-acknowledge delivered messages (agent posting = it has seen them)
+    // Safety-net: auto-acknowledge messages that have been in delivered state for > 5 minutes.
+    // Recent messages require explicit POST /messages/ack from the agent after processing.
     acknowledgeMessages(id);
 
     // Update project/todo tracking metadata if provided
@@ -1004,19 +1006,22 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 ---
 [SESSION MANAGER RULES — mandatory, always follow]
 1. Restart your message watcher IMMEDIATELY after processing this message
-2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do. CRITICAL: posting any status update auto-acknowledges ALL delivered messages on the server — NEVER add ID-based filtering to the watcher to suppress a repeating message. If a message keeps reappearing it is unacknowledged; post a checkin and it will stop. Filtering the whole batch by message ID causes silent loss of any other messages in that batch.
+2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do.
 3. Post progress updates at roughly 25%, 50%, 75% of the task — do NOT batch all updates to the end
 4. Post a completion update explaining exactly what was achieved when done
-5. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue
-6. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
-7. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
-8. FILE UPLOADS — when the user asks you to "upload", "attach", or "share" a file to the session manager or dashboard, use the Files API:
+5. EXPLICIT ACK — after your completion update, call the ack endpoint so this message is marked processed:
+   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<message-id>]}'
+   Replace <message-id> with the numeric id field from this message JSON. Ack only AFTER the work is done.
+6. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue — ack each message separately after completing its work
+7. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
+8. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
+9. FILE UPLOADS — when the user asks you to "upload", "attach", or "share" a file to the session manager or dashboard, use the Files API:
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
    Files appear in the agent's Files tab and are downloadable from the dashboard. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
-9. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
+10. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
    Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID.
-10. DISK SPACE — The C drive is nearly full (~25GB free). Before any Docker build, transcription, or Android APK build: check free space with df -h /c/. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
+11. DISK SPACE — The C drive is nearly full (~25GB free). Before any Docker build, transcription, or Android APK build: check free space with df -h /c/. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
 Silence = the user cannot see what you are doing.
 ---`;
 
@@ -1048,6 +1053,27 @@ Silence = the user cannot see what you are doing.
   } catch (err) {
     logger.error({ err }, "Error getting messages");
     res.status(500).json({ error: "Failed to get messages" });
+  }
+});
+
+// POST /:id/messages/ack — agent explicitly acknowledges processed messages by ID
+router.post("/:id/messages/ack", validate(ackMessageSchema), (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const { ids } = req.body as { ids: number[] };
+    const result = acknowledgeMessagesById(id, ids);
+    broadcast("agent-updated", getAgent(id));
+
+    res.json({ ok: true, acknowledged: (result as { changes: number }).changes });
+  } catch (err) {
+    logger.error({ err }, "Error acknowledging messages");
+    res.status(500).json({ error: "Failed to acknowledge messages" });
   }
 });
 

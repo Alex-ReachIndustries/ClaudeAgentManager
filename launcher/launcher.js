@@ -201,25 +201,56 @@ function ensureWorkspaceTrusted(absolutePath) {
 // Track sidecar processes for cleanup
 // MQTT sidecar removed — agents poll HTTP directly via background watcher
 
+// Linux: check whether a tmux window named by the agent's short UUID exists in a session.
+// This is the primary liveness check on Linux — more reliable than PIDs because:
+//   - PIDs can be recycled and the tmux server PID was previously misused as the agent PID
+//   - tmux state is ground truth for whether a process window is actually alive
+function isTmuxWindowAlive(agentId, sessionName) {
+  if (!agentId) return false;
+  const session = sessionName || 'ungrouped';
+  const shortId = agentId.substring(0, 8);
+  const result = spawnSync('tmux', ['list-windows', '-t', session, '-F', '#{window_name}'],
+    { encoding: 'utf8', stdio: 'pipe' });
+  if (result.status !== 0) return false;
+  return result.stdout.split('\n').some(name => name.trim() === shortId);
+}
+
+// Linux: kill a specific agent's tmux window by its short UUID.
+// Returns true if the window was killed successfully.
+function killTmuxWindow(agentId, sessionName) {
+  if (!agentId) return false;
+  const session = sessionName || 'ungrouped';
+  const shortId = agentId.substring(0, 8);
+  const result = spawnSync('tmux', ['kill-window', '-t', `${session}:${shortId}`],
+    { encoding: 'utf8', stdio: 'pipe' });
+  if (result.status === 0) {
+    log(`Killed tmux window ${session}:${shortId} for agent ${agentId}`);
+    return true;
+  }
+  log(`Could not kill tmux window ${session}:${shortId}: ${(result.stderr || '').trim()}`);
+  return false;
+}
+
 // Linux: launch a terminal for the given script using tmux for named window groups.
 // Named window groups (wtWindow) become tmux sessions; each agent tab is a tmux window.
-// A gnome-terminal window is opened once per session (when first created).
-// When the session already exists, the new window appears inside it automatically.
-function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
+// When agentId is provided, the window is named by the first 8 chars of the UUID so that
+// isTmuxWindowAlive() and killTmuxWindow() can target it precisely without relying on PIDs.
+function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow, agentId) {
+  const windowName = agentId ? agentId.substring(0, 8) : tabTitle.substring(0, 40);
   if (wtWindow) {
     const hasSession = spawnSync('tmux', ['has-session', '-t', wtWindow], { stdio: 'pipe' }).status === 0;
     if (!hasSession) {
       // Create new tmux session running the script, then open gnome-terminal attached to it
-      spawn('tmux', ['new-session', '-d', '-s', wtWindow, '-n', tabTitle, scriptFile],
+      spawn('tmux', ['new-session', '-d', '-s', wtWindow, '-n', windowName, scriptFile],
         { detached: true, stdio: 'ignore' }).unref();
       spawn('gnome-terminal', ['--title', wtWindow, '--', 'tmux', 'attach', '-t', wtWindow],
         { detached: true, stdio: 'ignore' }).unref();
-      log(`Created tmux session "${wtWindow}", window "${tabTitle}"`);
+      log(`Created tmux session "${wtWindow}", window "${windowName}"`);
     } else {
       // Session exists — add new window (the open gnome-terminal will display it)
-      spawn('tmux', ['new-window', '-t', wtWindow, '-n', tabTitle, scriptFile],
+      spawn('tmux', ['new-window', '-t', wtWindow, '-n', windowName, scriptFile],
         { detached: true, stdio: 'ignore' }).unref();
-      log(`Added tmux window "${tabTitle}" to existing session "${wtWindow}"`);
+      log(`Added tmux window "${windowName}" to existing session "${wtWindow}"`);
     }
   } else {
     // No window group — fall back to a dedicated "ungrouped" tmux session rather than a
@@ -228,33 +259,35 @@ function linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow) {
     const fallbackSession = 'ungrouped';
     const hasFallback = spawnSync('tmux', ['has-session', '-t', fallbackSession], { stdio: 'pipe' }).status === 0;
     if (!hasFallback) {
-      spawn('tmux', ['new-session', '-d', '-s', fallbackSession, '-n', tabTitle, scriptFile],
+      spawn('tmux', ['new-session', '-d', '-s', fallbackSession, '-n', windowName, scriptFile],
         { detached: true, stdio: 'ignore' }).unref();
       spawn('gnome-terminal', ['--title', fallbackSession, '--', 'tmux', 'attach', '-t', fallbackSession],
         { detached: true, stdio: 'ignore' }).unref();
-      log(`Created fallback tmux session "${fallbackSession}", window "${tabTitle}"`);
+      log(`Created fallback tmux session "${fallbackSession}", window "${windowName}"`);
     } else {
-      spawn('tmux', ['new-window', '-t', fallbackSession, '-n', tabTitle, scriptFile],
+      spawn('tmux', ['new-window', '-t', fallbackSession, '-n', windowName, scriptFile],
         { detached: true, stdio: 'ignore' }).unref();
-      log(`Added window "${tabTitle}" to fallback tmux session "${fallbackSession}"`);
+      log(`Added window "${windowName}" to fallback tmux session "${fallbackSession}"`);
     }
   }
 }
 
 // After a Linux tmux window is spawned, poll its pane content for the Claude
 // "trust this folder" prompt and send Enter to accept it automatically.
+// windowName is the tmux window name (agent short UUID or tabTitle for new agents).
 // Polls every 2s for up to 30s after an initial 6s startup delay.
-async function autoAcceptTrustDialog(session, tabTitle) {
+async function autoAcceptTrustDialog(session, windowName) {
   await new Promise(r => setTimeout(r, 6000));
   const deadline = Date.now() + 30000;
-  const titlePrefix = tabTitle.substring(0, 40); // tmux may truncate long names
+  const nameSearch = windowName.substring(0, 40);
   while (Date.now() < deadline) {
     try {
       const listResult = spawnSync('tmux',
         ['list-windows', '-t', session, '-F', '#{window_index} #{window_name}'],
         { encoding: 'utf8', stdio: 'pipe' });
       const windowLine = (listResult.stdout || '').split('\n')
-        .find(l => l.slice(l.indexOf(' ') + 1).startsWith(titlePrefix.slice(0, 30)));
+        .find(l => l.slice(l.indexOf(' ') + 1).trim() === nameSearch ||
+                   l.slice(l.indexOf(' ') + 1).startsWith(nameSearch.slice(0, 30)));
       if (windowLine) {
         const windowIndex = windowLine.split(' ')[0];
         const target = `${session}:${windowIndex}`;
@@ -366,17 +399,19 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
   const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
 
   if (IS_LINUX) {
-    // Linux: write a shell script and launch via tmux / gnome-terminal
+    // Linux: write a shell script and launch via tmux / gnome-terminal.
+    // CLAUDE_TMUX_* env vars let session-connect know its tmux location.
+    const session = wtWindow || 'ungrouped';
     const scriptFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.sh`);
     // Escape single quotes in the prompt for safe embedding in a single-quoted bash string
     const promptEscaped = initialPrompt.replace(/'/g, "'\\''");
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} '${promptEscaped}'\n`,
+      `#!/bin/bash\nexport CLAUDE_TMUX_SESSION="${session}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} '${promptEscaped}'\n`,
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow);
-    autoAcceptTrustDialog(wtWindow || 'ungrouped', tabTitle);
-    scheduleArrangement(wtWindow || 'ungrouped');
+    autoAcceptTrustDialog(session, tabTitle);
+    scheduleArrangement(session);
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
     log(`Spawned terminal for new agent (Linux) via ${scriptFile}`);
     return;
@@ -442,17 +477,31 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   const tabTitle = `Claude - ${path.basename(cwd)}`;
 
   if (IS_LINUX) {
-    // Linux: write a shell script and launch via tmux / gnome-terminal
+    const session = resolvedWtWindow || 'ungrouped';
+
+    // Dedup guard: if a tmux window for this agent already exists, don't spawn another.
+    // This catches races where the PM or pool recovery creates multiple resume requests
+    // before the first agent registers — tmux state is ground truth on Linux.
+    if (isTmuxWindowAlive(agentId, session)) {
+      log(`Agent ${agentId} already has live tmux window in "${session}" — skipping duplicate launch`);
+      return;
+    }
+
+    // Linux: write a shell script and launch via tmux / gnome-terminal.
+    // Window is named by the agent's short UUID so killTmuxWindow() can target it precisely.
+    // CLAUDE_AGENT_ID and CLAUDE_TMUX_* env vars are set so session-connect can read the
+    // correct session UUID and tmux location without relying on pgrep or file timestamps.
     const scriptFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.sh`);
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
+      `#!/bin/bash\nexport CLAUDE_AGENT_ID="${agentId}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
       { mode: 0o755 }
     );
-    linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow);
-    autoAcceptTrustDialog(resolvedWtWindow || 'ungrouped', tabTitle);
-    scheduleArrangement(resolvedWtWindow || 'ungrouped');
+    const shortId = agentId.substring(0, 8);
+    linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow, agentId);
+    autoAcceptTrustDialog(session, shortId);
+    scheduleArrangement(session);
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
-    log(`Spawned terminal for resume agent ${agentId} (Linux) via ${scriptFile}`);
+    log(`Spawned tmux window "${session}:${shortId}" for resume agent ${agentId}`);
     return;
   }
 
@@ -614,6 +663,23 @@ function terminateAgent(pid) {
   log(`Terminating terminal process with PID: ${pid}`);
 
   if (IS_LINUX) {
+    // Safety: never kill PID 1 (init) or any process whose comm is "tmux".
+    // Killing the tmux server wipes all tmux sessions — the stored PID used to be
+    // the parent of claude (tmux server) due to a bug in session-connect. Guard here
+    // as a backstop even after that bug is fixed.
+    if (pid <= 1) {
+      log(`Refusing to terminate PID ${pid} — too low, likely not a claude process`);
+      return;
+    }
+    try {
+      const comm = require('fs').readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+      if (comm === 'tmux' || comm === 'tmux: server' || comm.startsWith('tmux')) {
+        log(`Refusing to terminate PID ${pid} (comm="${comm}") — would kill tmux server`);
+        return;
+      }
+    } catch {
+      // /proc/<pid>/comm not readable — process may already be gone, proceed
+    }
     try {
       // SIGTERM first; follow up with SIGKILL after 3s if the process is still alive
       process.kill(pid, 'SIGTERM');
@@ -677,60 +743,120 @@ async function processPendingRequests() {
 
       try {
         if (req.type === 'terminate') {
-          if (req.target_pid) {
+          const agentId = req.resume_agent_id || null;
+          if (IS_LINUX && agentId) {
+            // On Linux: prefer tmux-based kill (precise, won't affect other sessions).
+            // Look up the agent's wt_window to know which tmux session to target.
+            let agentWtWindow = null;
+            try {
+              const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+              agentWtWindow = agent && agent.wt_window;
+            } catch {}
+            const killed = killTmuxWindow(agentId, agentWtWindow);
+            if (!killed && req.target_pid) {
+              // Fallback: tmux window not found by name (old agent pre-tmux-naming), try PID
+              terminateAgent(req.target_pid);
+            }
+          } else if (req.target_pid) {
             terminateAgent(req.target_pid);
           } else {
-            log(`Terminate request #${req.id} has no target_pid — skipping`);
+            log(`Terminate request #${req.id} has no target_pid or agent_id — skipping`);
           }
         } else if (req.type === 'resume' && req.resume_agent_id) {
           const wtWin = req.wt_window || null;
-          // Guard: skip only if the agent has a confirmed-alive PID. Recency is not
-          // used — it incorrectly blocks agents that were just manually closed.
-          const LIVE_STATUSES = ['active', 'working', 'idle', 'waiting-for-input', 'standby'];
-          let agentPid = null;
-          let agentStatus = null;
-          try {
-            const agent = await fetchJSON(`${SERVER_URL}/api/agents/${req.resume_agent_id}`);
-            agentPid = agent && agent.pid;
-            agentStatus = agent && agent.status;
-          } catch {}
-          const agentIsLive = LIVE_STATUSES.includes(agentStatus);
-          // No stored PID means we can't confirm liveness → allow resume
-          const pidIsAlive = agentPid ? isPidRunning(agentPid) : false;
-          if (agentIsLive && pidIsAlive) {
-            log(`Agent ${req.resume_agent_id} is live with running PID ${agentPid} — skipping resume`);
-          } else {
-            if (agentIsLive) {
-              log(`Agent ${req.resume_agent_id} status=${agentStatus} but PID ${agentPid || 'none'} is not running — allowing resume`);
-            }
-            if (wtWin) {
-              const last = wtWindowLastLaunch.get(wtWin) || 0;
-              const elapsed = Date.now() - last;
-              if (elapsed < WT_WINDOW_STAGGER_MS) {
-                const wait = WT_WINDOW_STAGGER_MS - elapsed;
-                log(`Staggering ${wait}ms for window "${wtWin}" so first tab registers`);
-                await new Promise(r => setTimeout(r, wait));
+          const agentId = req.resume_agent_id;
+
+          if (IS_LINUX) {
+            // On Linux: use tmux as ground truth for whether the agent is already running.
+            // This is more reliable than PID checks (PIDs can be stale or wrong session).
+            let agentWtWindow = wtWin;
+            try {
+              const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+              if (!agentWtWindow && agent && agent.wt_window) agentWtWindow = agent.wt_window;
+            } catch {}
+            const session = agentWtWindow || 'ungrouped';
+            if (isTmuxWindowAlive(agentId, session)) {
+              log(`Agent ${agentId} already has live tmux window in "${session}" — skipping resume`);
+            } else {
+              if (wtWin) {
+                const last = wtWindowLastLaunch.get(wtWin) || 0;
+                const elapsed = Date.now() - last;
+                if (elapsed < WT_WINDOW_STAGGER_MS) {
+                  const wait = WT_WINDOW_STAGGER_MS - elapsed;
+                  log(`Staggering ${wait}ms for window "${wtWin}" so first tab registers`);
+                  await new Promise(r => setTimeout(r, wait));
+                }
+                wtWindowLastLaunch.set(wtWin, Date.now());
               }
-              wtWindowLastLaunch.set(wtWin, Date.now());
+              await launchResumeAgent(agentId, req.folder_path, wtWin);
             }
-            await launchResumeAgent(req.resume_agent_id, req.folder_path, wtWin);
+          } else {
+            // Windows: keep existing PID-based liveness check
+            const LIVE_STATUSES = ['active', 'working', 'idle', 'waiting-for-input', 'standby'];
+            let agentPid = null;
+            let agentStatus = null;
+            try {
+              const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+              agentPid = agent && agent.pid;
+              agentStatus = agent && agent.status;
+            } catch {}
+            const agentIsLive = LIVE_STATUSES.includes(agentStatus);
+            const pidIsAlive = agentPid ? isPidRunning(agentPid) : false;
+            if (agentIsLive && pidIsAlive) {
+              log(`Agent ${agentId} is live with running PID ${agentPid} — skipping resume`);
+            } else {
+              if (agentIsLive) {
+                log(`Agent ${agentId} status=${agentStatus} but PID ${agentPid || 'none'} is not running — allowing resume`);
+              }
+              if (wtWin) {
+                const last = wtWindowLastLaunch.get(wtWin) || 0;
+                const elapsed = Date.now() - last;
+                if (elapsed < WT_WINDOW_STAGGER_MS) {
+                  const wait = WT_WINDOW_STAGGER_MS - elapsed;
+                  log(`Staggering ${wait}ms for window "${wtWin}" so first tab registers`);
+                  await new Promise(r => setTimeout(r, wait));
+                }
+                wtWindowLastLaunch.set(wtWin, Date.now());
+              }
+              await launchResumeAgent(agentId, req.folder_path, wtWin);
+            }
           }
         } else if (req.type === 'terminate-resume' && req.resume_agent_id) {
-          // Kill existing terminal tab if alive, then resume in a fresh tab.
-          // Look up live PID from DB if not in the request (agent may have updated it since request was made).
-          let terminatePid = req.target_pid || null;
-          try {
-            const agent = await fetchJSON(`${SERVER_URL}/api/agents/${req.resume_agent_id}`);
-            if (agent && agent.pid) terminatePid = agent.pid;
-          } catch {}
-          if (terminatePid && isPidRunning(terminatePid)) {
-            log(`Terminating PID ${terminatePid} before resume of agent ${req.resume_agent_id}`);
-            terminateAgent(terminatePid);
-            await new Promise(r => setTimeout(r, 1500));
-          } else {
-            log(`No live PID to terminate for agent ${req.resume_agent_id} — resuming directly`);
-          }
+          const agentId = req.resume_agent_id;
           const wtWin = req.wt_window || null;
+
+          if (IS_LINUX) {
+            // On Linux: kill the agent's tmux window by UUID (safe — won't touch other sessions),
+            // then let launchResumeAgent handle the resume (it also deduplicates via isTmuxWindowAlive).
+            let agentWtWindow = wtWin;
+            try {
+              const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+              if (!agentWtWindow && agent && agent.wt_window) agentWtWindow = agent.wt_window;
+            } catch {}
+            const session = agentWtWindow || 'ungrouped';
+            if (isTmuxWindowAlive(agentId, session)) {
+              log(`Killing tmux window for agent ${agentId} in "${session}" before resume`);
+              killTmuxWindow(agentId, session);
+              await new Promise(r => setTimeout(r, 500));
+            } else {
+              log(`No live tmux window for agent ${agentId} in "${session}" — resuming directly`);
+            }
+          } else {
+            // Windows: PID-based kill
+            let terminatePid = req.target_pid || null;
+            try {
+              const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
+              if (agent && agent.pid) terminatePid = agent.pid;
+            } catch {}
+            if (terminatePid && isPidRunning(terminatePid)) {
+              log(`Terminating PID ${terminatePid} before resume of agent ${agentId}`);
+              terminateAgent(terminatePid);
+              await new Promise(r => setTimeout(r, 1500));
+            } else {
+              log(`No live PID to terminate for agent ${agentId} — resuming directly`);
+            }
+          }
+
           if (wtWin) {
             const last = wtWindowLastLaunch.get(wtWin) || 0;
             const elapsed = Date.now() - last;
@@ -741,7 +867,7 @@ async function processPendingRequests() {
             }
             wtWindowLastLaunch.set(wtWin, Date.now());
           }
-          await launchResumeAgent(req.resume_agent_id, req.folder_path, wtWin);
+          await launchResumeAgent(agentId, req.folder_path, wtWin);
         } else if (req.type === 'new') {
           let spawnMeta = null;
           if (req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')) {

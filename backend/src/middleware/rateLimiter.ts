@@ -17,11 +17,11 @@ export const agentUpdateLimiter = rateLimit({
   validate: { xForwardedForHeader: false },
 });
 
-/** Launch requests: 10 per 5 minutes per IP */
+/** Launch requests: 60 per minute per IP */
 export const launchLimiter = rateLimit({
-  windowMs: 300_000,
-  max: 10,
+  windowMs: 60_000,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Rate limit exceeded", retryAfter: 300 },
+  message: { error: "Rate limit exceeded", retryAfter: 60 },
 });

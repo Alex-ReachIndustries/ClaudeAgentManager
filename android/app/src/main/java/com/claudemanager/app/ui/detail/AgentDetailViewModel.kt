@@ -471,12 +471,12 @@ class AgentDetailViewModel(
 
     fun terminateAgent() {
         val agent = _uiState.value.agent ?: return
-        val pid = agent.pid ?: return
         viewModelScope.launch {
             repository.createLaunchRequest(
                 type = "terminate",
                 folderPath = "",
-                targetPid = pid
+                resumeAgentId = agentId,
+                targetPid = agent.pid
             ).onSuccess {
                 refreshAgent()
             }.onFailure { e ->
