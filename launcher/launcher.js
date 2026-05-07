@@ -412,7 +412,10 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
     const jsonlPath = path.join(jsonlDir, `${newUuid}.jsonl`);
     try {
       fs.mkdirSync(jsonlDir, { recursive: true });
-      fs.writeFileSync(jsonlPath, ''); // empty → claude starts fresh with this UUID
+      // Write the minimal permission-mode header that claude --resume requires.
+      // An empty file returns "No conversation found" — the header is the minimum valid entry.
+      const jsonlHeader = JSON.stringify({ type: 'permission-mode', permissionMode: 'bypassPermissions', sessionId: newUuid }) + '\n';
+      fs.writeFileSync(jsonlPath, jsonlHeader);
     } catch (err) {
       log(`Warning: could not pre-create .jsonl for ${newUuid}: ${err.message}`);
     }
@@ -505,12 +508,12 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     // Window is named by the agent's short UUID so killTmuxWindow() can target it precisely.
     // CLAUDE_AGENT_ID and CLAUDE_TMUX_* env vars are set so session-connect can read the
     // correct session UUID and tmux location without relying on pgrep or file timestamps.
+    const shortId = agentId.substring(0, 8);
     const scriptFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.sh`);
     fs.writeFileSync(scriptFile,
       `#!/bin/bash\nexport CLAUDE_AGENT_ID="${agentId}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
       { mode: 0o755 }
     );
-    const shortId = agentId.substring(0, 8);
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow, agentId);
     autoAcceptTrustDialog(session, shortId);
     scheduleArrangement(session);
