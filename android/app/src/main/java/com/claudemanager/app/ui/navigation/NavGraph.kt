@@ -87,11 +87,14 @@ private val bottomNavRoutes = setOf(Routes.AGENTS, Routes.PROJECTS, Routes.ADMIN
  *
  * @param preferences App preferences for reading server URL configuration.
  * @param startAgentId Optional agent ID to navigate directly to on launch (e.g. from notification deep link).
+ * @param onStartAgentConsumed Called after consuming startAgentId so the caller can reset it to null,
+ *   ensuring the next notification tap for the same agent still triggers navigation.
  */
 @Composable
 fun AppNavGraph(
     preferences: AppPreferences,
-    startAgentId: String? = null
+    startAgentId: String? = null,
+    onStartAgentConsumed: () -> Unit = {}
 ) {
     val navController: NavHostController = rememberNavController()
     val serverUrl by preferences.serverUrlFlow.collectAsState(initial = "")
@@ -125,11 +128,12 @@ fun AppNavGraph(
         }
     }
 
-    // Handle deep link navigation: navigate to the agent whenever startAgentId changes.
-    // No consumed-flag guard: LaunchedEffect(startAgentId) only re-fires on a value change,
-    // so each distinct notification tap triggers exactly one navigation.
+    // Handle deep link navigation. Reset to null immediately after consuming so that a
+    // subsequent tap for the SAME agent (startAgentId unchanged) still triggers navigation —
+    // otherwise LaunchedEffect won't re-fire because the key value hasn't changed.
     LaunchedEffect(startAgentId) {
         if (startAgentId != null) {
+            onStartAgentConsumed()
             navController.navigate(Routes.agentDetail(startAgentId)) {
                 popUpTo(Routes.AGENTS) { inclusive = false }
                 launchSingleTop = true

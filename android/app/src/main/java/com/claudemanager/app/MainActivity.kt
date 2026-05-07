@@ -60,7 +60,8 @@ class MainActivity : ComponentActivity() {
             ClaudeManagerTheme {
                 AppNavGraph(
                     preferences = app.preferences,
-                    startAgentId = startAgentId
+                    startAgentId = startAgentId,
+                    onStartAgentConsumed = { startAgentId = null }
                 )
             }
         }
