@@ -376,6 +376,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow);
     autoAcceptTrustDialog(wtWindow || 'ungrouped', tabTitle);
+    scheduleArrangement(wtWindow || 'ungrouped');
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
     log(`Spawned terminal for new agent (Linux) via ${scriptFile}`);
     return;
@@ -449,6 +450,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow);
     autoAcceptTrustDialog(resolvedWtWindow || 'ungrouped', tabTitle);
+    scheduleArrangement(resolvedWtWindow || 'ungrouped');
     setTimeout(() => { try { fs.unlinkSync(scriptFile); } catch {} }, 30000);
     log(`Spawned terminal for resume agent ${agentId} (Linux) via ${scriptFile}`);
     return;
@@ -846,6 +848,75 @@ async function processPoolAgents() {
       log(`Pool check error: ${err.message}`);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tmux pane arrangement (Linux only)
+//
+// After agents launch, re-arranges the target tmux session so all panes are
+// visible in a sensible layout:
+//   - Project sessions (session has a window whose title contains " PM"):
+//       PM on left half (main-vertical), sub-agents stacked vertically on right
+//   - ungrouped / other named sessions: tiled layout across all panes
+//
+// Only Claude-running windows are merged; bare bash windows stay separate.
+// Arrangement is debounced: the last launch in a burst wins, fired 15s later
+// so all agents have time to register their windows before we rearrange.
+// ---------------------------------------------------------------------------
+
+const arrangementTimers = new Map(); // sessionName → timerId
+
+function arrangeTmuxSession(sessionName) {
+  if (!IS_LINUX) return;
+  if (sessionName === 'Dailies') return;
+
+  const listResult = spawnSync('tmux',
+    ['list-windows', '-t', sessionName, '-F', '#{window_index} #{window_name}'],
+    { encoding: 'utf8', stdio: 'pipe' });
+  if (listResult.status !== 0) return;
+
+  const allWindows = listResult.stdout.trim().split('\n').filter(Boolean).map(line => {
+    const sp = line.indexOf(' ');
+    return { index: parseInt(line.slice(0, sp)), name: line.slice(sp + 1) };
+  });
+
+  // Only merge windows running Claude; leave bare bash windows untouched
+  const agentWindows = allWindows.filter(w => /claude/i.test(w.name));
+  if (agentWindows.length <= 1) return;
+
+  // Project detection: any window title contains a standalone "PM"
+  const pmWindow = agentWindows.find(w => /\bPM\b/.test(w.name));
+  const isProject = !!pmWindow;
+  const target = pmWindow || agentWindows[0];
+
+  // Join all other Claude windows into the target (indices shift down as we go,
+  // so we always join the next window that isn't already the target)
+  for (const w of agentWindows) {
+    if (w.index === target.index) continue;
+    spawnSync('tmux', ['join-pane', '-s', `${sessionName}:${w.index}`, '-t', `${sessionName}:${target.index}`],
+      { encoding: 'utf8', stdio: 'pipe' });
+  }
+
+  if (isProject) {
+    spawnSync('tmux', ['set-option', '-t', sessionName, 'main-pane-width', '50%'],
+      { encoding: 'utf8', stdio: 'pipe' });
+  }
+
+  const layout = isProject ? 'main-vertical' : 'tiled';
+  spawnSync('tmux', ['select-layout', '-t', `${sessionName}:${target.index}`, layout],
+    { encoding: 'utf8', stdio: 'pipe' });
+
+  log(`Arranged tmux session "${sessionName}": ${agentWindows.length} panes, layout=${layout}`);
+}
+
+function scheduleArrangement(sessionName, delayMs = 15000) {
+  if (!IS_LINUX || !sessionName || sessionName === 'Dailies') return;
+  if (arrangementTimers.has(sessionName)) clearTimeout(arrangementTimers.get(sessionName));
+  const timerId = setTimeout(() => {
+    arrangementTimers.delete(sessionName);
+    arrangeTmuxSession(sessionName);
+  }, delayMs);
+  arrangementTimers.set(sessionName, timerId);
 }
 
 // ---------------------------------------------------------------------------
