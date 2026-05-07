@@ -183,9 +183,9 @@ fun AgentDetailScreen(
         )
     }
 
-    // Progress dialog — shown only while downloading for Open. Save mode runs
-    // silently in the background and surfaces a snackbar on completion.
-    state.activeDownload?.takeIf { it.mode == DownloadMode.OPEN }?.let { dl ->
+    // Progress dialog — shown while downloading for Open. Save runs in
+    // FileDownloadService and surfaces its own progress notification.
+    state.activeDownload?.let { dl ->
         AlertDialog(
             onDismissRequest = {},
             title = { Text("Downloading", style = MaterialTheme.typography.titleMedium) },

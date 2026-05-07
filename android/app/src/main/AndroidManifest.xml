@@ -53,6 +53,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- File Download Foreground Service: streams Save-to-Device downloads
+             so they survive the agent screen / app being backgrounded. -->
+        <service
+            android:name=".service.FileDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- FileProvider for sharing downloaded files -->
         <provider
             android:name="androidx.core.content.FileProvider"
