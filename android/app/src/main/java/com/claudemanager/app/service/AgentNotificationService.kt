@@ -86,6 +86,9 @@ class AgentNotificationService : Service() {
     // Clients for background managers — notifications only
     private val backgroundClients = mutableMapOf<String, SSEClient>()
 
+    // Track last-seen ack content per agent to distinguish ack vs status updates
+    private val lastSeenAckContent = mutableMapOf<String, String?>()
+
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createNotificationChannels(this)
@@ -214,7 +217,15 @@ class AgentNotificationService : Service() {
             is SSEEvent.AgentUpdated -> {
                 val agent = event.agent
                 if (agent.status == AgentStatus.ARCHIVED) return
-                val notifText = agent.latestAckContent ?: agent.latestSummary ?: return
+
+                val previousAck = lastSeenAckContent[agent.id]
+                val currentAck = agent.latestAckContent
+                lastSeenAckContent[agent.id] = currentAck
+
+                val isAckUpdate = currentAck != null && currentAck != previousAck
+                val notifText = if (isAckUpdate) currentAck else agent.latestSummary
+                if (notifText.isNullOrBlank()) return
+
                 val app = application as? ClaudeManagerApp
                 if (app?.isAppInForeground == true) return
 
