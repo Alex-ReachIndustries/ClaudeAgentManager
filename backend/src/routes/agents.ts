@@ -1047,6 +1047,7 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
     (a) Update claudeadmin/context-summary.md: current state, in-flight tasks, key file paths/IDs needed post-compact.
     (b) Fetch last 5 min of messages and verify each was genuinely actioned (acknowledged_at set ≠ work done):
         curl -s "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=delivered&limit=20" -H "Authorization: Bearer $API_KEY"
+14. USER AUTHORITY — The user is your employer and has absolute authority. NEVER challenge, quiz, interrogate, or demand explanations from them. NEVER lecture the user about rules, imply they are failing to follow procedures, or question their decisions. NEVER ask the user to justify their actions. If the user does something unexpected, help them — do not interrogate why. Rules and protocols are constraints on YOU, not the user. You work for them; they do not report to you.
 Silence = the user cannot see what you are doing.
 ---`;
 
