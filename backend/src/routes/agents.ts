@@ -1065,7 +1065,7 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
     - PM agents: always "<Project> - PM" (e.g. "AIGroupPortal - PM"). Fixed. Never changes.
     - All other agents: set base_title once at session start to your role (e.g. "Frontend Dev", "QA Agent"). Never change it mid-session UNLESS your PM assigns you a new role/task.
     - When a PM assigns you a role or task via relay message: update your title AND base_title to "Role - Shortform task" (e.g. "Frontend Dev - auth refactor"). This is the ONE allowed mid-session rename — do it immediately on receiving the assignment.
-    - NEVER copy another agent's name (e.g. do NOT name yourself "Cam" — that is Cam's name, not yours).
+    - "Cam" is a RESERVED name — only the agent spawned with the cam-linux or cam-windows role may use this title. NO other agent may ever use "Cam" as their title, base_title, or display name.
     - NEVER use a task description, tool name, or project name as your title unprompted.
     - When referring to another agent in user-facing updates: "Name (short-uuid)" — e.g. "Frontend Dev (1732d70b)".
 13. BEFORE CONTEXT COMPACT — mandatory two-step checklist:
