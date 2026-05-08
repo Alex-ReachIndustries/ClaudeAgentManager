@@ -1042,7 +1042,13 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
    Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID. Always address agents by UUID in inter-agent comms.
 11. DISK SPACE — The C drive is nearly full (~25GB free). Before any Docker build, transcription, or Android APK build: check free space with df -h /c/. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
-12. AGENT NAMING — Your title is your stable identity. Set it once at session start (e.g. "Backend Dev", "QA Agent") and do NOT change it mid-session. Never use task descriptions as your title. When referring to another agent in user-facing updates, use "Name (short-uuid)" format — e.g. "Backend Dev (1732d70b)".
+12. AGENT NAMING — Your title and base_title are your stable identity. Rules:
+    - PM agents: always "<Project> - PM" (e.g. "AIGroupPortal - PM"). Fixed. Never changes.
+    - All other agents: set base_title once at session start to your role (e.g. "Frontend Dev", "QA Agent"). Never change it mid-session.
+    - The ONLY time a title update is allowed is when a role is explicitly assigned via the API — then update to "Role - Shortform task" (e.g. "Frontend Dev - auth module").
+    - NEVER copy another agent's name (e.g. do NOT name yourself "Cam" — that is Cam's name, not yours).
+    - NEVER use a task description, tool name, or project name as your title.
+    - When referring to another agent in user-facing updates: "Name (short-uuid)" — e.g. "Frontend Dev (1732d70b)".
 13. BEFORE CONTEXT COMPACT — mandatory two-step checklist:
     (a) Update claudeadmin/context-summary.md: current state, in-flight tasks, key file paths/IDs needed post-compact.
     (b) Fetch last 5 min of messages and verify each was genuinely actioned (acknowledged_at set ≠ work done):
