@@ -1,13 +1,14 @@
 export interface Agent {
   id: string;
   title: string;
-  status: 'active' | 'working' | 'idle' | 'waiting-for-input' | 'completed' | 'archived' | 'standby';
+  status: 'active' | 'working' | 'idle' | 'waiting-for-input' | 'archived' | 'standby';
   created_at: string;
   last_update_at: string;
   update_count: number;
   metadata: Record<string, unknown>;
   pending_message_count: number;
   latest_summary: string | null;
+  latest_ack_content: string | null;
   poll_delay_until: string | null;
   workspace: string | null;
   cwd: string | null;

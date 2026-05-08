@@ -757,7 +757,6 @@ private fun FilterChipRow(
         FilterOption(AgentStatus.WORKING, "Working"),
         FilterOption(AgentStatus.WAITING_FOR_INPUT, "Waiting"),
         FilterOption(AgentStatus.STANDBY, "Standby"),
-        FilterOption(AgentStatus.COMPLETED, "Completed"),
         FilterOption(AgentStatus.ARCHIVED, "Archived")
     )
 
@@ -967,8 +966,10 @@ private fun AgentCard(
                 }
             }
 
-            // Latest activity: show most recent of agent update or user message
+            // Latest activity: prefer ack content, then most recent of update or message
             val subtitle = run {
+                val ack = agent.latestAckContent
+                if (!ack.isNullOrBlank()) return@run ack
                 val summary = agent.latestSummary
                 val message = agent.latestMessage
                 if (summary != null && message != null) {

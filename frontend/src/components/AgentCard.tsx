@@ -9,7 +9,6 @@ const statusConfig = {
   working: { color: 'bg-blue-400', label: 'Working' },
   idle: { color: 'bg-yellow-400', label: 'Idle' },
   'waiting-for-input': { color: 'bg-orange-400', label: 'Waiting for Input' },
-  completed: { color: 'bg-dark-500', label: 'Completed' },
   archived: { color: 'bg-dark-600', label: 'Archived' },
   standby: { color: 'bg-purple-400', label: 'Standby' },
 } as const;
@@ -78,10 +77,10 @@ function AgentCard({ agent }: AgentCardProps) {
         </p>
       )}
 
-      {/* Latest summary */}
-      {agent.latest_summary ? (
-        <p className="text-sm text-dark-400 italic line-clamp-2 mb-4 leading-relaxed">
-          {agent.latest_summary}
+      {/* Detail text — prefer latest ack content, fall back to summary */}
+      {(agent.latest_ack_content || agent.latest_summary) ? (
+        <p className={`text-sm italic line-clamp-2 mb-4 leading-relaxed ${agent.latest_ack_content ? 'text-lumi-400' : 'text-dark-400'}`}>
+          {agent.latest_ack_content || agent.latest_summary}
         </p>
       ) : (
         <p className="text-sm text-dark-600 italic mb-4">No updates yet</p>

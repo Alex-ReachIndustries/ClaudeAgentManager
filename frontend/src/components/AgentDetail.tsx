@@ -17,7 +17,6 @@ const statusConfig = {
   working: { color: 'bg-blue-400', label: 'Working' },
   idle: { color: 'bg-yellow-400', label: 'Idle' },
   'waiting-for-input': { color: 'bg-orange-400', label: 'Waiting for Input' },
-  completed: { color: 'bg-dark-500', label: 'Completed' },
   archived: { color: 'bg-dark-600', label: 'Archived' },
   standby: { color: 'bg-purple-400', label: 'Standby' },
 } as const;

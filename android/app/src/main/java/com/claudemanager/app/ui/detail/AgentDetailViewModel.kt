@@ -456,8 +456,7 @@ class AgentDetailViewModel(
     fun resumeAgent() {
         val agent = _uiState.value.agent ?: return
         viewModelScope.launch {
-            val canUseResumeEndpoint = agent.status == AgentStatus.ARCHIVED ||
-                agent.status == AgentStatus.COMPLETED
+            val canUseResumeEndpoint = agent.status == AgentStatus.ARCHIVED
             val result = if (canUseResumeEndpoint) {
                 repository.resumeAgent(agentId)
             } else {

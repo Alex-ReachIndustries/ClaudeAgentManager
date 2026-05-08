@@ -39,6 +39,9 @@ data class Agent(
     @SerializedName("latest_summary")
     val latestSummary: String? = null,
 
+    @SerializedName("latest_ack_content")
+    val latestAckContent: String? = null,
+
     @SerializedName("latest_message")
     val latestMessage: String? = null,
 
@@ -91,7 +94,7 @@ data class Agent(
         get() = unreadUpdateCount > 0
 
     /**
-     * Whether this agent is in a live/running state (not completed or archived).
+     * Whether this agent is in a live/running state (not archived).
      */
     val isLive: Boolean
         get() = status in listOf(
@@ -118,9 +121,6 @@ enum class AgentStatus {
     @SerializedName("waiting-for-input")
     WAITING_FOR_INPUT,
 
-    @SerializedName("completed")
-    COMPLETED,
-
     @SerializedName("archived")
     ARCHIVED,
 
@@ -136,7 +136,6 @@ enum class AgentStatus {
             WORKING -> "Working"
             IDLE -> "Idle"
             WAITING_FOR_INPUT -> "Waiting for Input"
-            COMPLETED -> "Completed"
             ARCHIVED -> "Archived"
             STANDBY -> "Standby"
         }

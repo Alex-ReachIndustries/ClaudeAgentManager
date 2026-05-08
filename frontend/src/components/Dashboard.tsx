@@ -6,7 +6,7 @@ import AnalyticsPanel from './AnalyticsPanel';
 import { createLaunchRequest } from '../api';
 import { RefreshCw, Bot, Archive, Plus, Search, Layers, Monitor } from 'lucide-react';
 
-type StatusFilter = 'all' | 'active' | 'idle' | 'working' | 'waiting-for-input' | 'completed' | 'archived';
+type StatusFilter = 'all' | 'active' | 'idle' | 'working' | 'waiting-for-input' | 'archived';
 type SortOption = 'activity' | 'created' | 'updates' | 'name';
 type ProjectFilter = 'all' | 'standalone' | string;
 
@@ -16,7 +16,6 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'idle', label: 'Idle' },
   { value: 'working', label: 'Working' },
   { value: 'waiting-for-input', label: 'Waiting' },
-  { value: 'completed', label: 'Completed' },
   { value: 'archived', label: 'Archived' },
 ];
 

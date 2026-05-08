@@ -21,7 +21,6 @@ interface WebhookEntry {
 }
 
 const WEBHOOK_EVENTS = [
-  'agent.completed',
   'agent.error',
   'agent.waiting',
   'agent.status_changed',

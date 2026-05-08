@@ -46,7 +46,6 @@ fun agentStatusColor(status: AgentStatus): Color = when (status) {
     AgentStatus.WORKING -> StatusWorking
     AgentStatus.IDLE -> StatusIdle
     AgentStatus.WAITING_FOR_INPUT -> StatusWaiting
-    AgentStatus.COMPLETED -> StatusCompleted
     AgentStatus.ARCHIVED -> StatusArchived
     AgentStatus.STANDBY -> Color(0xFF9333EA)
 }

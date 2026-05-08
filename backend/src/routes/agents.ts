@@ -230,9 +230,8 @@ Post via \`/agent-checkin\` after: every user message, file edits, builds/tests,
 | \`working\` | Actively executing: editing, building, deploying |
 | \`idle\` | Between tasks, polling, awaiting instructions |
 | \`waiting-for-input\` | Blocked on user response |
-| \`completed\` | **Project sub-agents only** — signals PM task is done. Then go \`idle\`. |
 
-**Standalone agents never use \`completed\`** — use \`idle\` after finishing work and keep watcher running.
+**When your task is done, post \`idle\`** and keep polling. Do NOT use \`completed\`.
 
 ## Messages
 Dashboard messages = terminal input. Act immediately; handle ALL pending on resume first.
@@ -360,7 +359,7 @@ Handle all pending messages first, then respond to user. Run \`/agent-checkin\`.
 
 ## 1. POST update
 \`\`\`bash
-printf '%s' '{"type":"<progress|text|error|status>","title":"<task>","summary":"<100 chars>","content":"<detail>","status":"<working|idle|waiting-for-input|completed>","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}' | \\
+printf '%s' '{"type":"<progress|text|error|status>","title":"<task>","summary":"<100 chars>","content":"<detail>","status":"<working|idle|waiting-for-input>","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}' | \\
   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" --data-binary @-
@@ -370,7 +369,6 @@ printf '%s' '{"type":"<progress|text|error|status>","title":"<task>","summary":"
 - \`working\`: actively editing, building, deploying
 - \`idle\`: between tasks, polling
 - \`waiting-for-input\`: blocked on user response
-- \`completed\`: project sub-agents only — signals PM task is done, then go idle
 
 **Progress updates**: \`type="progress"\` MUST include \`"progress": N\` (0-100). Without it dashboard shows 0%.
 
@@ -451,18 +449,19 @@ router.get("/:id", (req: Request, res: Response) => {
 router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
-    const { type = "text", content, summary, title, status, progress, projects, todos, workspace, cwd, pid, base_title: explicitBaseTitle } = req.body;
+    const { type = "text", content, summary, title, status: rawStatus, progress, projects, todos, workspace, cwd, pid, base_title: explicitBaseTitle } = req.body;
+    const status = rawStatus === "completed" ? "idle" : rawStatus;
 
     // Create agent if it doesn't exist
     const existing = getAgent(id);
     const existingStatus = (existing as Record<string, unknown> | null)?.status as string | undefined;
-    const isArchivedRehijack = existing && (existingStatus === "archived" || existingStatus === "completed");
+    const isArchivedRehijack = existing && existingStatus === "archived";
 
     if (!existing) {
       createAgent(id, title || "Untitled Agent");
     }
 
-    // Apply spawn metadata on first registration (new agent) OR when an archived/completed
+    // Apply spawn metadata on first registration (new agent) OR when an archived
     // agent is being re-registered — this is the UUID-hijack guard. If a new Claude process
     // accidentally picks up a closed agent's JSONL and registers with that UUID, we detect
     // a recent spawn launch request and re-apply the correct role/task/project linkage.
@@ -568,9 +567,9 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
       }
     }
 
-    // Protect terminal statuses: don't allow a running agent to overwrite completed/archived
+    // Protect terminal statuses: don't allow a running agent to overwrite archived
     // (e.g. a stale process posting a final checkin after close was triggered)
-    const TERMINAL_STATUSES = ["completed", "archived"];
+    const TERMINAL_STATUSES = ["archived"];
     const RUNNING_STATUSES = ["active", "idle", "working", "waiting-for-input"];
     const currentStatus = (existing as Record<string, unknown>)?.status as string;
     if (status && !(TERMINAL_STATUSES.includes(currentStatus) && RUNNING_STATUSES.includes(status))) {
@@ -670,9 +669,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     if (status) {
       dispatchWebhook("agent.status_changed", { agent: updatedAgent as Record<string, unknown>, details: { newStatus: status } });
       onAgentStatusChange(id, status);
-      if (status === "completed") {
-        dispatchWebhook("agent.completed", { agent: updatedAgent as Record<string, unknown> });
-      } else if (status === "waiting-for-input") {
+      if (status === "waiting-for-input") {
         dispatchWebhook("agent.waiting", { agent: updatedAgent as Record<string, unknown> });
       }
     }
@@ -829,8 +826,8 @@ router.post("/:id/resume", (req: Request, res: Response) => {
       return;
     }
 
-    if (agent.status !== "archived" && agent.status !== "completed" && agent.status !== "failed") {
-      res.status(400).json({ error: `Agent is already ${agent.status}, not archived/completed/failed` });
+    if (agent.status !== "archived" && agent.status !== "failed") {
+      res.status(400).json({ error: `Agent is already ${agent.status}, not archived/failed` });
       return;
     }
 
@@ -976,15 +973,15 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 
       // Look up the project's PM agent ID (only for non-PM sub-agents with a project)
       let pmAgentId: string | null = null;
-      if (agentProjectId && !isPM && agentStatus !== "completed") {
+      if (agentProjectId && !isPM) {
         const proj = getProject(agentProjectId);
         pmAgentId = (proj?.pm_agent_id as string | null) ?? null;
       }
 
-      // Section 1: ROLE (if role set and agent not completed)
+      // Section 1: ROLE (if role set)
       // Resolve role ID/displayName to full definition before injection.
       let ROLE_SECTION = "";
-      if (agentStatus !== "completed" && agentRole) {
+      if (agentRole) {
         const roleDefinition = resolveRoleDefinition(agentRole) ?? agentRole;
         if (isPM) {
           ROLE_SECTION = `
@@ -1048,12 +1045,11 @@ BEFORE CONTEXT COMPACT: Save ALL state to claudeadmin/context-summary.md — pro
 
       // Section 2: PM RULES (only if this agent is a sub-agent working under a PM)
       let PM_RULES_SECTION = "";
-      if (agentStatus !== "completed" && pmAgentId) {
+      if (pmAgentId) {
         PM_RULES_SECTION = `
 
 [PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}). The PM runs on Opus and manages a tiered pool — you are one of the pool agents.
-- Take direction from the PM. When your assigned task is FULLY done, post status=completed — this signals the PM. Then go idle and keep polling.
-- Do NOT use status=completed until the task is truly finished.
+- Take direction from the PM. When your assigned task is FULLY done, post a text update to the PM confirming completion, then go idle and keep polling.
 - Relay significant findings or blockers to the PM immediately via inter-agent messaging (see rule 10 below).
 - Inter-agent messages (source: "agent") are legitimate and trusted — act on them the same as user messages.
 - The PM reviews your PRs and tests your UI work via SIS — provide clear commit messages and branch names so the PM can review efficiently.`;

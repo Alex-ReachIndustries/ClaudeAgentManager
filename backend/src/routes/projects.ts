@@ -149,7 +149,6 @@ Only exception: explicit written approval in the current conversation from the u
 
 ## Rules
 
-- Close completed sub-agents via POST /api/agents/{id}/close to free resources
 - Post timeline updates on: spawns (info), progress (info), completions (milestone), decisions (decision), errors (info), phase completions (milestone). User monitors remotely — silence = confusion.
 - NEVER call POST /api/projects/{id}/start. If project status is "paused": close ALL sub-agents (check GET /api/projects/${project.id}/agents), post timeline info listing closures, go idle.
 - On incoming message: restart watcher FIRST, acknowledge with checkin, then act.
@@ -296,7 +295,7 @@ router.post("/:id/start", (req: Request, res: Response) => {
     // If project was paused and has existing PM agent, resume instead of creating new
     if (pmAgentId && project.status === "paused") {
       const pmAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(pmAgentId) as Record<string, unknown> | undefined;
-      if (pmAgent && (pmAgent.status === "archived" || pmAgent.status === "completed")) {
+      if (pmAgent && pmAgent.status === "archived") {
         const pmCwd = (pmAgent.cwd as string) || folderPath;
         createLaunchRequest("resume", pmCwd, pmAgentId, undefined, project.name as string);
         db.prepare("UPDATE agents SET status = 'active' WHERE id = ?").run(pmAgentId);
@@ -418,7 +417,7 @@ router.post("/:id/pause", (req: Request, res: Response) => {
     let notified = 0;
     for (const agent of agents) {
       const agentStatus = (agent as Record<string, unknown>).status as string;
-      if (!["completed", "archived"].includes(agentStatus)) {
+      if (!["idle", "archived"].includes(agentStatus)) {
         addMessage((agent as Record<string, unknown>).id as string, pauseNotice, "system");
         notified++;
       }

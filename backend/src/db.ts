@@ -255,6 +255,7 @@ export function getDb(): Database.Database {
 
   // Message ack content: agents must explain what they understood when acknowledging
   migrate("ALTER TABLE messages ADD COLUMN ack_content TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN latest_ack_content TEXT");
 
   // Feature 5: Triggers for computed field caching
   try {
@@ -924,8 +925,11 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
     SET status = 'acknowledged', acknowledged_at = datetime('now'), ack_content = ?
     WHERE agent_id = ? AND id IN (${placeholders}) AND status IN ('pending', 'delivered')
   `);
+  const updateAgent = db.prepare("UPDATE agents SET latest_ack_content = ? WHERE id = ?");
   const transaction = db.transaction(() => {
-    return ackStmt.run(ackContent, agentId, ...ids);
+    const result = ackStmt.run(ackContent, agentId, ...ids);
+    if (ackContent) updateAgent.run(ackContent, agentId);
+    return result;
   });
   return transaction();
 }
