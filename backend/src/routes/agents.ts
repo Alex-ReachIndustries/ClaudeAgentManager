@@ -485,12 +485,17 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
             try {
               const meta = JSON.parse(launchReq.agent_id as string);
               if (meta && (meta.project_id || meta.role || meta.prompt)) {
-                // Verify this request's folder matches the agent's cwd (if provided)
-                if (cwd && launchReq.folder_path && typeof launchReq.folder_path === "string") {
-                  const normCwd = (cwd as string).replace(/\\/g, "/").toLowerCase();
-                  const normFolder = (launchReq.folder_path as string).replace(/\\/g, "/").toLowerCase();
-                  if (!normCwd.includes(normFolder) && !normFolder.includes(normCwd)) {
-                    continue; // Skip — different workspace
+                // UUID-based matching: if this request was claimed for a specific agent, enforce it
+                if (meta.claimed_uuid) {
+                  if (meta.claimed_uuid !== id) continue;
+                } else {
+                  // Legacy fallback: CWD-based matching (no claimed_uuid)
+                  if (cwd && launchReq.folder_path && typeof launchReq.folder_path === "string") {
+                    const normCwd = (cwd as string).replace(/\\/g, "/").toLowerCase();
+                    const normFolder = (launchReq.folder_path as string).replace(/\\/g, "/").toLowerCase();
+                    if (!normCwd.includes(normFolder) && !normFolder.includes(normCwd)) {
+                      continue;
+                    }
                   }
                 }
 

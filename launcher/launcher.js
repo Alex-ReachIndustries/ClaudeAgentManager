@@ -356,7 +356,7 @@ async function deliverPromptWhenRegistered(cwd, prompt) {
   log(`Timed out (2 min) waiting for agent at "${normCwd}" to register — prompt not delivered`);
 }
 
-function launchNewAgent(folderPath, spawnMeta, wtWindow) {
+function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   const cwd = resolveFolder(folderPath);
   log(`Launching NEW agent in: ${cwd}${wtWindow ? ` [window: ${wtWindow}]` : ''}`);
 
@@ -404,7 +404,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow) {
     // We pre-create an empty .jsonl file and use --resume <uuid> to force Claude
     // to adopt the UUID we chose — the agent starts fresh (empty history) but with
     // a known identity from the very first line of its launch script.
-    const newUuid = randomUUID();
+    const newUuid = pregenUuid || randomUUID();
     const shortId = newUuid.substring(0, 8);
     const session = wtWindow || 'ungrouped';
     const projectKey = cwd.replace(/\//g, '-'); // /home/user/proj → -home-user-proj
@@ -918,7 +918,24 @@ async function processPendingRequests() {
             }
             wtWindowLastLaunch.set(wtWindow, Date.now());
           }
-          launchNewAgent(req.folder_path, spawnMeta, wtWindow);
+          // Pre-generate UUID and write to launch request for deterministic matching.
+          // Fixes race condition where multiple agents with the same CWD grab the wrong
+          // launch request metadata (wrong model/role/prompt).
+          let pregenUuid = null;
+          if (IS_LINUX) {
+            pregenUuid = randomUUID();
+            try {
+              const curMeta = req.agent_id && typeof req.agent_id === 'string' && req.agent_id.startsWith('{')
+                ? JSON.parse(req.agent_id) : {};
+              curMeta.claimed_uuid = pregenUuid;
+              await patchJSON(`${SERVER_URL}/api/launch-requests/${req.id}`, {
+                agent_id: JSON.stringify(curMeta)
+              });
+            } catch (err) {
+              log(`Warning: could not write claimed_uuid for request #${req.id}: ${err.message}`);
+            }
+          }
+          launchNewAgent(req.folder_path, spawnMeta, wtWindow, pregenUuid);
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
         } else if (req.type === 'input') {
