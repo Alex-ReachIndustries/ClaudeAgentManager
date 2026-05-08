@@ -497,9 +497,9 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                 const wtWindow = meta.wt_window || (launchReq.wt_window as string | null) || null;
 
                 if (meta.project_id) {
-                  // Link the agent to the project and store its task
-                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ?, wt_window = ? WHERE id = ?")
-                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, id);
+                  // Link the agent to the project and store its task + model/effort from launch metadata
+                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort) WHERE id = ?")
+                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, id);
 
                   if (meta.role === "PM") {
                     updateProject(meta.project_id, { pm_agent_id: id });
@@ -516,8 +516,8 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                   }
                 } else {
                   // Standalone agent (not part of a project) — store role/task in DB
-                  db.prepare("UPDATE agents SET role = ?, task = ?, wt_window = ? WHERE id = ?")
-                    .run(meta.role || null, meta.prompt || null, wtWindow, id);
+                  db.prepare("UPDATE agents SET role = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort) WHERE id = ?")
+                    .run(meta.role || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, id);
 
                   if (meta.prompt) {
                     addMessage(id, meta.prompt as string);
