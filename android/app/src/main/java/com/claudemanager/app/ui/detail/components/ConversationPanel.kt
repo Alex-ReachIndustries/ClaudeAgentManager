@@ -79,6 +79,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
+import com.claudemanager.app.data.models.MessageStatus
 import com.claudemanager.app.data.models.UpdateContent
 import com.claudemanager.app.data.models.UpdateType
 import com.claudemanager.app.ui.detail.AttachedFile
@@ -89,6 +90,7 @@ import com.claudemanager.app.ui.theme.LumiInfo
 import com.claudemanager.app.ui.theme.LumiOnSurface
 import com.claudemanager.app.ui.theme.LumiOnSurfaceSecondary
 import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
+import com.claudemanager.app.ui.theme.LumiPurple400
 import com.claudemanager.app.ui.theme.LumiPurple500
 import com.claudemanager.app.ui.theme.LumiSuccess
 import com.claudemanager.app.ui.theme.LumiWarning
@@ -671,6 +673,24 @@ private fun SentMessageBubble(message: AgentMessage) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = LumiOnSurface
             )
+        }
+
+        if (message.status == MessageStatus.ACKNOWLEDGED && !message.ackContent.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(LumiPurple500.copy(alpha = 0.10f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "Ack: ${message.ackContent}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    ),
+                    color = LumiPurple400
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(2.dp))

@@ -52,6 +52,7 @@ import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiOnSurface
 import com.claudemanager.app.ui.theme.LumiOnSurfaceSecondary
 import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
+import com.claudemanager.app.ui.theme.LumiPurple400
 import com.claudemanager.app.ui.theme.LumiPurple500
 import com.claudemanager.app.ui.theme.messageStatusColor
 import com.claudemanager.app.util.TimeUtils
@@ -253,6 +254,24 @@ private fun MessageBubble(message: AgentMessage) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = LumiOnSurface
             )
+        }
+
+        if (message.status == MessageStatus.ACKNOWLEDGED && !message.ackContent.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(LumiPurple500.copy(alpha = 0.10f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "Ack: ${message.ackContent}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    ),
+                    color = LumiPurple400
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(4.dp))
