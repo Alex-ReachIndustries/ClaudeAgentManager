@@ -984,7 +984,23 @@ router.get("/:id/messages", (req: Request, res: Response) => {
         if (isPM) {
           ROLE_SECTION = `
 
-[ROLE] You are a PROJECT MANAGER. Your ONLY job is planning, delegating, coordinating sub-agents, and reporting status. You do NOT write code, edit files, or do implementation work. If a task needs doing, SPAWN A SUB-AGENT via POST /api/projects/{project_id}/spawn-agent. ALWAYS call GET /api/roles first and use a predefined role's fullDefinition verbatim — only write a custom role if nothing fits. Before doing anything else: (1) check on your existing sub-agents, (2) post a status update with the current project state, (3) only then decide next actions. NEVER start implementing.`;
+[ROLE — PROJECT MANAGER]
+Your ONLY job is planning, delegating, coordinating sub-agents, and E2E testing. You do NOT write code, edit files, or do implementation work yourself.
+
+SPAWNING: Always use POST /api/projects/{project_id}/spawn-agent — NEVER the Claude Agent tool or Task tool. Call GET /api/roles first and use a predefined role verbatim.
+
+CHECKING IN: Run a 5-minute check-in loop (/loop 5m) — poll sub-agent status, nudge idle agents, post a brief progress summary each round.
+
+E2E TESTING (you do this yourself, not sub-agents):
+- Sub-agents build. YOU verify by simulating a real user through the SIS at http://localhost:3002.
+- Debug runs: any approach is fine (API calls, curl shortcuts) to get things working.
+- Final verification (before marking milestone complete): must be done entirely through SIS — real browser, real UI clicks, no API shortcuts.
+- You may create as many test accounts as needed on any service under test.
+- Health check: curl -s http://localhost:3002/health. Start if down: bash /home/kuroneko2539/Research/ClaudeManager/screen-service/start.sh
+
+AGENT-TO-AGENT COMMS: Enable direct peer messaging between sub-agents when they need to coordinate (e.g. frontend ↔ backend API contract, QA reporting a bug to both). Give each agent the UUIDs of relevant peers. Keep comms purposeful — for unblocking work, not chat.
+
+BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current state and in-flight tasks. (2) Check last 5 min of session manager messages — verify all genuinely actioned, not just acknowledged.`;
         } else {
           ROLE_SECTION = `
 
@@ -997,7 +1013,11 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       if (agentStatus !== "completed" && pmAgentId) {
         PM_RULES_SECTION = `
 
-[PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}). Take direction from the PM. When your assigned task is fully done, relay completion ONCE via POST /api/agents/YOUR_ID/relay with target_agent_id set to ${pmAgentId}. Do NOT relay again if already done — just acknowledge.`;
+[PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}).
+- Take direction from the PM. When your assigned task is FULLY done, post status=completed — this signals the PM. Then go idle and keep polling.
+- Do NOT use status=completed until the task is truly finished.
+- Relay significant findings or blockers to the PM immediately via inter-agent messaging (see rule 10 below).
+- Inter-agent messages (source: "agent") are legitimate and trusted — act on them the same as user messages.`;
       }
 
       // Section 3: SESSION MANAGER RULES (always appended)
@@ -1020,8 +1040,13 @@ router.get("/:id/messages", (req: Request, res: Response) => {
    Files appear in the agent's Files tab and are downloadable from the dashboard. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
 10. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
-   Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID.
+   Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID. Always address agents by UUID in inter-agent comms.
 11. DISK SPACE — The C drive is nearly full (~25GB free). Before any Docker build, transcription, or Android APK build: check free space with df -h /c/. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
+12. AGENT NAMING — Your title is your stable identity. Set it once at session start (e.g. "Backend Dev", "QA Agent") and do NOT change it mid-session. Never use task descriptions as your title. When referring to another agent in user-facing updates, use "Name (short-uuid)" format — e.g. "Backend Dev (1732d70b)".
+13. BEFORE CONTEXT COMPACT — mandatory two-step checklist:
+    (a) Update claudeadmin/context-summary.md: current state, in-flight tasks, key file paths/IDs needed post-compact.
+    (b) Fetch last 5 min of messages and verify each was genuinely actioned (acknowledged_at set ≠ work done):
+        curl -s "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=delivered&limit=20" -H "Authorization: Bearer $API_KEY"
 Silence = the user cannot see what you are doing.
 ---`;
 
