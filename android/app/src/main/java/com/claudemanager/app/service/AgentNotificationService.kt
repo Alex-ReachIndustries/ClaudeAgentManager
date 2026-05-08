@@ -214,7 +214,7 @@ class AgentNotificationService : Service() {
             is SSEEvent.AgentUpdated -> {
                 val agent = event.agent
                 if (agent.status == AgentStatus.ARCHIVED) return
-                val summary = agent.latestSummary ?: return
+                val notifText = agent.latestAckContent ?: agent.latestSummary ?: return
                 val app = application as? ClaudeManagerApp
                 if (app?.isAppInForeground == true) return
 
@@ -227,7 +227,7 @@ class AgentNotificationService : Service() {
                         val inQuiet = if (start < end) now in start until end else now >= start || now < end
                         if (inQuiet) return@launch
                     }
-                    NotificationHelper.showAgentNotification(this@AgentNotificationService, agent, summary)
+                    NotificationHelper.showAgentNotification(this@AgentNotificationService, agent, notifText)
                 }
             }
             is SSEEvent.AgentDeleted -> NotificationHelper.cancelAgentNotification(this, event.agentId)
