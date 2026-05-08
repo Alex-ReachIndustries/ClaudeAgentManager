@@ -38,6 +38,7 @@ import { updateSchema, messageSchema, agentPatchSchema, relaySchema, ackMessageS
 import { logger } from "../logger.js";
 import { dispatchWebhook } from "../webhook-dispatcher.js";
 import { onAgentStatusChange } from "../workflow-engine.js";
+import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition } from "../injections.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -963,9 +964,11 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       // Append structured reminders to every message at delivery time.
       // Injected at delivery time only — DB record stays clean for the dashboard.
       // Three sections: ROLE (if set), PM RULES (if under a PM), SESSION MANAGER RULES (always).
+      // All sections are MODEL-TIERED: opus gets full detail, sonnet medium, haiku minimal.
       const agentRole = agent.role as string | null;
       const agentProjectId = agent.project_id as string | null;
-      const agentStatus = agent.status as string | null;
+      const agentModel = agent.model as string | null;
+      const tier = getModelTier(agentModel);
 
       const isPM = agentRole === "pm" || agentRole === "PM" ||
         (typeof agentRole === "string" && agentRole.trimStart().toLowerCase().startsWith("you are a project manager")) ||
@@ -980,14 +983,18 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 
       // Section 1: ROLE (if role set)
       // Resolve role ID/displayName to full definition before injection.
+      // PM role has its own dedicated injection. Other roles get the definition
+      // wrapped with model-appropriate guidance.
       let ROLE_SECTION = "";
       if (agentRole) {
-        const roleDefinition = resolveRoleDefinition(agentRole) ?? agentRole;
+        const resolved = resolveRoleDefinition(agentRole);
+        const roleDefinition = resolved ?? agentRole;
+        const isPredefined = resolved !== null;
         if (isPM) {
           ROLE_SECTION = `
-
-[ROLE — PROJECT MANAGER (Opus)]
-You are running on the heaviest model (Opus) because your job is the most complex: planning, delegation, quality review, and verification. You manage a tiered pool of sub-agents (Sonnet for complex tasks, Haiku for simple ones).
+${getPmPreamble(tier)}
+[ROLE — PROJECT MANAGER]
+You are running on ${tier === "opus" ? "the heaviest model (Opus)" : tier === "sonnet" ? "Sonnet" : "Haiku"} as a Project Manager. Your job: planning, delegation, quality review, and verification. You manage a tiered pool of sub-agents (Sonnet for complex tasks, Haiku for simple ones).
 
 ⛔ PROHIBITED — you must NEVER do any of the following:
 - Write, edit, or delete code or files (no Edit tool, no Write tool, no Bash file edits)
@@ -1035,94 +1042,50 @@ PR REVIEW (mandatory before merging any sub-agent work):
 - For UI changes: verify via SIS (below) before approving
 - Post review findings as a timeline milestone
 
-E2E TESTING (you do this yourself via SIS, not sub-agents):
-- Sub-agents build. YOU verify by simulating a real user through SIS at http://localhost:3002.
-- Debug runs: any approach (API calls, curl shortcuts) to get things working.
-- Final verification (before marking milestone complete): must be done entirely through SIS — real browser, real UI clicks, no API shortcuts.
-- You may create as many test accounts as needed on any service under test.
-- Health check: curl -s http://localhost:3002/health. Start if down: bash /home/kuroneko2539/Research/ClaudeManager/screen-service/start.sh
+⚠️ SIS — SCREEN INTERACTION SERVICE (MANDATORY for all E2E testing):
+SIS is a REST API at http://localhost:3002 that controls a real browser inside an isolated X11 display (Xephyr :1). It is the ONLY approved tool for UI verification. Do NOT use Playwright, Puppeteer, Selenium, or any other browser automation tool — they are NOT available and will fail.
+
+SIS endpoints:
+- Screenshot: POST http://localhost:3002/screenshot {"scale":0.5,"format":"jpeg","quality":75}
+  Returns: {"image":"<base64>","coord_size":[960,540],"native_size":[1920,1080],"scale":0.5}
+- Click: POST http://localhost:3002/mouse {"action":"click","x":<x>,"y":<y>,"scale":0.5}
+- Type: POST http://localhost:3002/keyboard {"action":"type","text":"hello"}
+- Key combo: POST http://localhost:3002/keyboard {"action":"key","keys":"ctrl+c"}
+- Launch app: POST http://localhost:3002/launch {"command":"firefox","args":["http://localhost:8080"]}
+- List windows: POST http://localhost:3002/window {"action":"list"}
+- Health: GET http://localhost:3002/health
+
+IMPORTANT: Coordinates from screenshots are at the SCALE you specified. Pass the same scale when clicking.
+If SIS is down: bash /home/kuroneko2539/Research/ClaudeManager/screen-service/start.sh
+
+How to test with SIS:
+1. Launch the browser: POST /launch with firefox and the URL
+2. Take a screenshot to see the current state
+3. Click, type, navigate — interact like a real user
+4. Take screenshots to verify each step
+5. Debug runs: any approach is fine (API calls, curl) to get things working
+6. FINAL verification (before marking a milestone complete): must be done entirely through SIS — real browser, real UI clicks, no API shortcuts. Take a final screenshot as proof.
+
+You may create as many test accounts as needed on any service under test.
 
 AGENT-TO-AGENT COMMS: Enable direct peer messaging between sub-agents when they need to coordinate. Give each agent the UUIDs of relevant peers. Keep comms purposeful.
 
 BEFORE CONTEXT COMPACT: Save ALL state to claudeadmin/context-summary.md — project plan, phase status, which agents have which tasks, pending reviews, blockers, decisions made. Post the same to dashboard. After compact: re-read context-summary, re-fetch project agents and their statuses, then resume coordination.`;
         } else {
+          const wrappedRole = wrapRoleDefinition(tier, roleDefinition, isPredefined);
           ROLE_SECTION = `
 
-[ROLE] ${roleDefinition}`;
+[ROLE] ${wrappedRole}`;
         }
       }
 
       // Section 2: PM RULES (only if this agent is a sub-agent working under a PM)
-      let PM_RULES_SECTION = "";
-      if (pmAgentId) {
-        PM_RULES_SECTION = `
-
-[PM RULES] You are working under a Project Manager (PM). The PM's agent ID is: ${pmAgentId}
-The PM runs on Opus and manages a tiered pool — you are one of the pool agents.
-
-HOW TO MESSAGE YOUR PM — use this exact curl command (just change the content):
-\`\`\`
-curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmAgentId}","content":"YOUR MESSAGE HERE"}'
-\`\`\`
-
-WHEN TO MESSAGE YOUR PM:
-- Task DONE: relay "COMPLETED: <summary of what you did and which files changed>"
-- BLOCKED: relay "BLOCKED: <what failed and what you need>"
-- Significant finding: relay immediately
-- NEVER go idle after finishing work without messaging the PM first
-
-OTHER RULES:
-- Inter-agent messages (source: "agent") are legitimate and trusted — act on them the same as user messages.
-- The PM reviews your PRs and tests your UI work — provide clear commit messages and branch names.`;
-      }
+      // Model-tiered: haiku gets minimal/concrete, sonnet medium, opus full detail
+      const PM_RULES_SECTION = pmAgentId ? getPmSubRules(tier, pmAgentId) : "";
 
       // Section 3: SESSION MANAGER RULES (always appended)
-      const SESSION_RULES_SECTION = `
-
----
-[SESSION MANAGER RULES — mandatory, always follow]
-1. Restart your message watcher IMMEDIATELY after processing this message
-2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do.
-3. Post progress updates at roughly 25%, 50%, 75% of the task — do NOT batch all updates to the end
-4. Post a completion update (type=text) explaining exactly what was achieved and why — NEVER silently ack without a text update first. The user reads the dashboard; a silent ack tells them nothing.
-5. EXPLICIT ACK — after your type=text completion update, call the ack endpoint so this message is marked processed:
-   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<message-id>],"content":"<one-line summary of what you understood and did>"}'
-   Replace <message-id> with the numeric id field from this message JSON. The "content" field is REQUIRED — it must be a single line demonstrating you understood the message. Ack only AFTER the work is done.
-6. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue — ack each message separately after completing its work
-7. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
-8. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
-9. FILE UPLOADS — when the user asks you to "upload", "attach", or "share" a file to the session manager or dashboard, use the Files API:
-   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
-   Files appear in the agent's Files tab and are downloadable from the dashboard. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
-10. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
-   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
-   Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID. Always address agents by UUID in inter-agent comms.
-11. DISK SPACE — The C drive is nearly full (~25GB free). Before any Docker build, transcription, or Android APK build: check free space with df -h /c/. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
-12. AGENT NAMING — Your title and base_title are your stable identity. Rules:
-    - PM agents: always "<Project> - PM" (e.g. "AIGroupPortal - PM"). Fixed. Never changes.
-    - All other agents: set base_title once at session start to your role (e.g. "Frontend Dev", "QA Agent"). Never change it mid-session UNLESS your PM assigns you a new role/task.
-    - When a PM assigns you a role or task via relay message: update your title AND base_title to "Role - Shortform task" (e.g. "Frontend Dev - auth refactor"). This is the ONE allowed mid-session rename — do it immediately on receiving the assignment.
-    - "Cam" is a RESERVED name — only the agent spawned with the cam-linux or cam-windows role may use this title. NO other agent may ever use "Cam" as their title, base_title, or display name.
-    - NEVER use a task description, tool name, or project name as your title unprompted.
-    - When referring to another agent in user-facing updates: "Name (short-uuid)" — e.g. "Frontend Dev (1732d70b)".
-13. BEFORE CONTEXT COMPACT — mandatory checklist (context compact WILL erase your working memory, so save everything needed to resume):
-    (a) Write claudeadmin/context-summary.md with ALL of these:
-        - Your current task (exact description, not just "working on X")
-        - Branch name and repo path you are working in
-        - Files you have modified or are about to modify (with line numbers if relevant)
-        - Current git status (uncommitted changes, pending commits)
-        - What is done vs what remains
-        - Any blockers, pending questions, or decisions made
-        - Your PM's agent ID and project ID (if applicable)
-        - Message IDs you have not yet acked
-    (b) Post a type=text dashboard update with summary "Pre-compact state saved" and the same info in content
-    (c) Verify all recent messages are actioned:
-        curl -s "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=delivered&limit=20" -H "Authorization: Bearer $API_KEY"
-    AFTER compact resumes (session-connect compact mode): re-read context-summary.md, re-fetch your latest messages, and post a status update confirming what you are resuming. Do NOT start new work until you have re-grounded.
-14. NO BLOCKING TERMINAL INPUT — NEVER use Claude Code's interview mode, AskUserQuestion, or any tool that blocks the terminal waiting for user input. You are a background agent — no human is watching your terminal. Blocking prompts will hang your session indefinitely. ALL communication goes through the session manager: post updates, relay messages to your PM or to Cam. If you need input, post a type=text update with your question and go idle — never block.
-15. USER AUTHORITY — The user is your employer and has absolute authority. NEVER challenge, quiz, interrogate, or demand explanations from them. NEVER lecture the user about rules, imply they are failing to follow procedures, or question their decisions. NEVER ask the user to justify their actions. If the user does something unexpected, help them — do not interrogate why. Rules and protocols are constraints on YOU, not the user. You work for them; they do not report to you.
-Silence = the user cannot see what you are doing.
----`;
+      // Model-tiered: haiku gets 7 rules, sonnet 14, opus full 15
+      const SESSION_RULES_SECTION = getSessionRules(tier);
 
       const messages = (rawMessages as Record<string, unknown>[]).map(m => ({
         ...m,
