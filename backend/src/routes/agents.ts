@@ -1047,8 +1047,8 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
 1. Restart your message watcher IMMEDIATELY after processing this message
 2. Post an acknowledgement checkin NOW: status=working, confirm what you understood and what you will do.
 3. Post progress updates at roughly 25%, 50%, 75% of the task — do NOT batch all updates to the end
-4. Post a completion update explaining exactly what was achieved when done
-5. EXPLICIT ACK — after your completion update, call the ack endpoint so this message is marked processed:
+4. Post a completion update (type=text) explaining exactly what was achieved and why — NEVER silently ack without a text update first. The user reads the dashboard; a silent ack tells them nothing.
+5. EXPLICIT ACK — after your type=text completion update, call the ack endpoint so this message is marked processed:
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<message-id>]}'
    Replace <message-id> with the numeric id field from this message JSON. Ack only AFTER the work is done.
 6. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue — ack each message separately after completing its work
