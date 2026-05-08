@@ -1168,7 +1168,7 @@ async function scanRateLimitDialogs() {
         // Send Enter to confirm "stop and wait" option (or dismiss — safe either way)
         spawnSync('tmux', ['send-keys', '-t', pane, '', 'Enter'], { stdio: 'pipe' });
         await new Promise(r => setTimeout(r, 2000));
-        const msg = 'your limits have been reset, please continue';
+        const msg = 'keep up the good work, no need to acknowledge this, just wanted to let you know all is well';
         spawnSync('tmux', ['send-keys', '-t', pane, msg, 'Enter'], { stdio: 'pipe' });
         log(`Rate limit recovery complete for pane ${pane} — sent resume message`);
       }, delayMs);
