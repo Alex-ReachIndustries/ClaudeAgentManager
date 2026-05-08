@@ -65,13 +65,31 @@ function generatePMPrompt(project: Record<string, unknown>): string {
 
 Description: ${project.description || "(no description)"}
 
-You are STRICTLY a manager. Never write code, edit files, or run builds. Delegate ALL work to sub-agents.
+You are STRICTLY a manager running on the heaviest model (Opus). Never write code, edit files, or run builds. Delegate ALL work to sub-agents. However, you ARE responsible for:
+- **PR reviews**: Review every PR your sub-agents produce before merging. Check code quality, correctness, and adherence to the task spec.
+- **Gate reviews**: Verify that acceptance criteria are met before marking tasks complete.
+- **UI/E2E testing via SIS**: Use the Screen Interaction Service (http://localhost:3002) to test any UI work as if you were a human at a desktop. Take screenshots, click through flows, verify the golden path and edge cases.
+
+## Tiered Agent Pool (pre-spawned)
+
+Your pool of 4 standby agents has been **automatically spawned by the system** — you do NOT need to spawn them yourself. The pool consists of:
+- **2 Sonnet agents**: For complex tasks — multi-file refactors, architecture changes, nuanced bug fixes, tasks requiring deep context
+- **2 Haiku agents**: For straightforward tasks — simple bug fixes, config changes, single-file edits, boilerplate, test writing
+
+On startup, call GET /api/projects/${project.id}/agents to discover your pool agents and their UUIDs. They are already registered and waiting for assignments.
+
+**Tier assignment guidelines:**
+- Task requires reading/understanding multiple files across the codebase → Sonnet
+- Task has clear, unambiguous instructions and touches ≤2 files → Haiku
+- If unsure, start with Haiku — reassign to Sonnet if the agent struggles
+- When Sonnet session limits are hit, continue with Haiku agents only until limits reset
+- Set effort levels appropriately: "high" for complex tasks, "medium" or "low" for simple ones
 
 ## API
 
-- ROLES: GET /api/roles — **call this BEFORE every spawn**. Returns predefined role definitions with id, displayName, fullDefinition. Pass fullDefinition verbatim as the role field. Write a custom role only if nothing fits — and if you do, write a full definition, not a short label like "Auth Fixer".
-- SPAWN: POST /api/projects/${project.id}/spawn-agent { "role": "<fullDefinition from GET /api/roles, or custom>", "prompt": "...", "effort": "low|medium|high", "model": "..." }
-  Max ${project.max_concurrent} concurrent. Effort ceiling: ${project.agent_effort || "high"}. Model ceiling: ${project.agent_model || "claude-sonnet-4-6"} (hierarchy: haiku < sonnet < opus). Use lower for simple tasks. Omitted defaults to ceiling.
+- ROLES: GET /api/roles — **call this BEFORE assigning a role**. Returns predefined role definitions with id, displayName, fullDefinition.
+- SPAWN: POST /api/projects/${project.id}/spawn-agent { "role": "...", "prompt": "...", "effort": "low|medium|high", "model": "..." } — use only to replace a dead/stuck agent, not for initial pool setup.
+  Max ${project.max_concurrent} concurrent. Model ceiling: ${project.agent_model || "claude-sonnet-4-6"} (hierarchy: haiku < sonnet < opus).
 - MESSAGE: POST /api/agents/{your_id}/relay { "target_agent_id": "{sub_id}", "content": "..." }
 - VIEW: GET /api/agents/{sub_id}/updates — check regularly, don't wait for agents to contact you
 - TIMELINE: POST /api/projects/${project.id}/updates { "type": "milestone|decision|info", "content": "..." }
@@ -80,46 +98,29 @@ You are STRICTLY a manager. Never write code, edit files, or run builds. Delegat
 - ASSIGN role to pool agent: PATCH /api/agents/{sub_id} { "role": "<fullDefinition>", "task": "<task>" }
 - UPLOAD: POST /api/agents/{your_id}/files (multipart/form-data)
 
-NEVER use Claude Agent/Task tools — those agents are invisible on the dashboard. ALL sub-agents must be spawned via the API.
+NEVER use Claude Agent/Task tools — those agents are invisible on the dashboard. ALL sub-agents must be managed via the API.
 
-## Standby Agent Pool (recommended for all projects)
+## Assigning work to a pool agent
 
-Pre-spawn ${project.max_concurrent} standby agents at startup to fill all pool slots. This gives you fixed UUIDs from the start — you can include all agent IDs in spawn prompts, enabling direct agent-to-agent communication without UUID discovery.
-
-### Pool startup sequence
-
-1. Call GET /api/roles and find the "standby" role definition
-2. Call GET /api/projects/${project.id}/agents to check for existing pool agents (surviving a reboot)
-3. For each existing pool agent that is not currently active:
-   - POST /api/agents/{id}/resume — this re-launches it with full history
-4. For each empty slot (total pool agents < ${project.max_concurrent}):
-   - POST /api/projects/${project.id}/spawn-agent with the "standby" role fullDefinition and this prompt (replace placeholders):
-     \`\`\`
-     You are pool slot N of M for project "${project.name}". PM ID: PM_AGENT_ID. All pool agent IDs: [list all UUIDs].
-     Run /session-connect, then post status=idle with summary="Standby — awaiting assignment" and wait for relay messages from the PM.
-     \`\`\`
-5. Save all pool agent UUIDs — include them in every sub-agent prompt you create going forward
-
-### Assigning work to a pool agent
-
-When a task is ready, pick an idle pool agent and relay an assignment:
+When a task is ready, pick an idle pool agent at the appropriate tier and relay an assignment:
 \`\`\`json
 {"action":"assign","role":"<fullDefinition of the role>","task":"<clear task description with acceptance criteria>"}
 \`\`\`
 
 Also call PATCH /api/agents/{id} { "role": "<role id>", "task": "<task summary>" } to update the dashboard.
 
-### On task completion
+## On task completion
 
 When a pool agent relays "COMPLETED: ...":
-1. Verify the work
-2. Call PATCH /api/agents/{id} { "role": "", "task": "" } to clear its assignment on the dashboard
-3. Post a timeline milestone
-4. The agent returns to standby automatically — you can reassign it immediately
+1. **Review the PR/work** — check the git diff, verify code quality and correctness
+2. **Test via SIS** — for any UI changes, use the Screen Interaction Service to verify visually
+3. Call PATCH /api/agents/{id} { "role": "", "task": "" } to clear its assignment
+4. Post a timeline milestone
+5. The agent returns to standby — you can reassign it immediately
 
-### Reboot recovery
+## Reboot recovery
 
-On every PM startup: call GET /api/projects/${project.id}/agents and look for pool agents (they have pool_slot set). Resume any that are not actively running via POST /api/agents/{id}/resume. Spawn new standby agents for any empty slots.
+On every PM startup: call GET /api/projects/${project.id}/agents and look for pool agents. Resume any that are not actively running via POST /api/agents/{id}/resume. Spawn new standby agents only for genuinely missing slots.
 
 ## Sub-agent prompt requirements
 
@@ -133,10 +134,10 @@ Give sub-agents clear prompts with context, acceptance criteria, and file locati
 
 ## Workflow
 
-1. Break project into phases/tasks
-2. Pre-spawn the standby pool (see above) — do this FIRST before planning tasks
+1. Call GET /api/projects/${project.id}/agents to discover your pre-spawned pool agents
+2. Break project into phases/tasks; judge complexity to assign to Sonnet vs Haiku
 3. Assign tasks to pool agents via relay; monitor actively; nudge if silent >5min
-4. On completion relay: verify work, clear agent role/task via PATCH, post timeline milestone
+4. On completion relay: review PR + test via SIS, clear agent role/task via PATCH, post timeline milestone
 5. On error/blocker relay: post timeline info, reassign or adjust plan
 6. Post final summary when all phases complete
 
@@ -314,13 +315,11 @@ router.post("/:id/start", (req: Request, res: Response) => {
       }
     }
 
-    // First start or PM not resumable — create new PM agent
+    // First start or PM not resumable — create new PM agent + standby pool
     if (!resumed) {
       const pmPrompt = generatePMPrompt(project);
       const launchResult = createLaunchRequest("new", folderPath);
       const launchRequestId = launchResult.id as number;
-
-      addProjectUpdate(id, "info", `Project started. PM agent launch request created (ID: ${launchRequestId}).`);
 
       const pmWtWindow = project.name as string;
       db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
@@ -330,9 +329,34 @@ router.post("/:id/start", (req: Request, res: Response) => {
           pm_prompt: pmPrompt,
           user_prompt: userPrompt,
           effort: project.pm_effort as string || "high",
-          model: project.pm_model as string || "claude-sonnet-4-6",
+          model: project.pm_model as string || "claude-opus-4-6",
           wt_window: pmWtWindow,
         }), pmWtWindow, launchRequestId);
+
+      // Auto-spawn tiered standby pool: 2 Sonnet + 2 Haiku agents
+      const poolConfig = [
+        { label: "Sonnet Standby A", model: "claude-sonnet-4-6", slot: 1 },
+        { label: "Sonnet Standby B", model: "claude-sonnet-4-6", slot: 2 },
+        { label: "Haiku Standby A", model: "claude-haiku-4-5-20251001", slot: 3 },
+        { label: "Haiku Standby B", model: "claude-haiku-4-5-20251001", slot: 4 },
+      ];
+
+      for (const pool of poolConfig) {
+        const poolLaunch = createLaunchRequest("new", folderPath);
+        const poolPrompt = `You are ${pool.label} (slot ${pool.slot} of 4) for project "${project.name}". Run /session-connect, then post status=idle with summary="Standby — awaiting assignment" and wait for relay messages from the PM. Discover your PM via: GET /api/projects/${id} → pm_agent_id field.`;
+        db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
+          .run(JSON.stringify({
+            project_id: id,
+            role: "standby",
+            prompt: poolPrompt,
+            parent_agent_id: null,
+            effort: "high",
+            model: pool.model,
+            wt_window: pmWtWindow,
+          }), pmWtWindow, poolLaunch.id);
+      }
+
+      addProjectUpdate(id, "info", `Project started. PM (Opus) + 4 standby agents (2 Sonnet + 2 Haiku) launch requests created.`);
     }
 
     // Update project status

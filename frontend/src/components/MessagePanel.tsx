@@ -188,6 +188,11 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                 <p className="text-sm text-dark-200 whitespace-pre-wrap break-words mb-2">
                   {msg.content}
                 </p>
+                {msg.status === 'acknowledged' && msg.ack_content && (
+                  <div className="mb-2 px-2.5 py-1.5 bg-purple-950/20 border border-purple-800/30 rounded text-xs text-purple-300 italic">
+                    <span className="text-purple-500 font-medium not-italic">Ack:</span> {msg.ack_content}
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <span
                     className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}

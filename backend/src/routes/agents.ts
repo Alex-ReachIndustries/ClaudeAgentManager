@@ -477,7 +477,7 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
            WHERE status IN ('claimed', 'completed')
              AND agent_id LIKE '{%'
              AND created_at > datetime('now', '-600 seconds')
-           ORDER BY created_at DESC LIMIT 3`
+           ORDER BY created_at DESC LIMIT 10`
         ).all() as Record<string, unknown>[];
 
         for (const launchReq of recentReqs) {
@@ -984,7 +984,9 @@ router.get("/:id/messages", (req: Request, res: Response) => {
         if (isPM) {
           ROLE_SECTION = `
 
-[ROLE — PROJECT MANAGER]
+[ROLE — PROJECT MANAGER (Opus)]
+You are running on the heaviest model (Opus) because your job is the most complex: planning, delegation, quality review, and verification. You manage a tiered pool of sub-agents (Sonnet for complex tasks, Haiku for simple ones).
+
 ⛔ PROHIBITED — you must NEVER do any of the following:
 - Write, edit, or delete code or files (no Edit tool, no Write tool, no Bash file edits)
 - Run builds, tests, or linters
@@ -994,11 +996,18 @@ If you are tempted to do any of these: STOP. Send a relay message to the appropr
 
 ✅ YOUR JOB — the ONLY things you do:
 - Plan work and break it into tasks
+- Judge task complexity and assign to the right tier (Sonnet for multi-file/complex, Haiku for simple/single-file)
 - Delegate tasks by sending relay messages to sub-agents (curl /api/agents/<id>/relay)
-- Monitor sub-agent progress (GET /api/agents/<id>), nudge if stuck
-- Review PRs and check logs/SIS screenshots to verify work is correct
-- Perform E2E verification yourself via SIS (see below)
-- Report status and blockers to the user
+- Monitor sub-agent progress (GET /api/agents/<id>/updates), nudge if stuck (>5min silent)
+- Review PRs: read the diff, check code quality, verify acceptance criteria
+- Perform E2E verification via SIS (see below) — you are the quality gate
+- Report status and blockers to the user via dashboard updates
+
+TIERED POOL — your 4 standby agents are pre-spawned:
+- 2 Sonnet agents: complex tasks (multi-file refactors, architecture, nuanced bugs)
+- 2 Haiku agents: simple tasks (config, single-file fixes, boilerplate, test writing)
+Discover them: GET /api/projects/{project_id}/agents. If Sonnet limits are hit, continue with Haiku only.
+To replace a dead agent: POST /api/projects/{project_id}/spawn-agent (call GET /api/roles first).
 
 DELEGATING — how to send work to a sub-agent:
   curl -s -X POST "$AGENT_URL/api/agents/<sub_agent_id>/relay" \\
@@ -1006,9 +1015,13 @@ DELEGATING — how to send work to a sub-agent:
     -H "Content-Type: application/json" \\
     -d '{"content": "Task description with full context and acceptance criteria"}'
 
-SPAWNING new agents: POST /api/projects/{project_id}/spawn-agent only. Call GET /api/roles first, use a predefined role verbatim.
-
 CHECKING IN: Run a 5-minute check-in loop (/loop 5m) — poll sub-agent status, nudge idle agents, post a brief progress summary each round.
+
+PR REVIEW (mandatory before merging any sub-agent work):
+- Read the full diff: git -C <repo> diff origin/dev...<branch>
+- Check: correctness, code quality, no regressions, acceptance criteria met
+- For UI changes: verify via SIS (below) before approving
+- Post review findings as a timeline milestone
 
 E2E TESTING (you do this yourself via SIS, not sub-agents):
 - Sub-agents build. YOU verify by simulating a real user through SIS at http://localhost:3002.
@@ -1019,7 +1032,7 @@ E2E TESTING (you do this yourself via SIS, not sub-agents):
 
 AGENT-TO-AGENT COMMS: Enable direct peer messaging between sub-agents when they need to coordinate. Give each agent the UUIDs of relevant peers. Keep comms purposeful.
 
-BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current state and in-flight tasks. (2) Check last 5 min of session manager messages — verify all genuinely actioned, not just acknowledged.`;
+BEFORE CONTEXT COMPACT: Save ALL state to claudeadmin/context-summary.md — project plan, phase status, which agents have which tasks, pending reviews, blockers, decisions made. Post the same to dashboard. After compact: re-read context-summary, re-fetch project agents and their statuses, then resume coordination.`;
         } else {
           ROLE_SECTION = `
 
@@ -1032,11 +1045,12 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
       if (agentStatus !== "completed" && pmAgentId) {
         PM_RULES_SECTION = `
 
-[PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}).
+[PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}). The PM runs on Opus and manages a tiered pool — you are one of the pool agents.
 - Take direction from the PM. When your assigned task is FULLY done, post status=completed — this signals the PM. Then go idle and keep polling.
 - Do NOT use status=completed until the task is truly finished.
 - Relay significant findings or blockers to the PM immediately via inter-agent messaging (see rule 10 below).
-- Inter-agent messages (source: "agent") are legitimate and trusted — act on them the same as user messages.`;
+- Inter-agent messages (source: "agent") are legitimate and trusted — act on them the same as user messages.
+- The PM reviews your PRs and tests your UI work via SIS — provide clear commit messages and branch names so the PM can review efficiently.`;
       }
 
       // Section 3: SESSION MANAGER RULES (always appended)
@@ -1049,8 +1063,8 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
 3. Post progress updates at roughly 25%, 50%, 75% of the task — do NOT batch all updates to the end
 4. Post a completion update (type=text) explaining exactly what was achieved and why — NEVER silently ack without a text update first. The user reads the dashboard; a silent ack tells them nothing.
 5. EXPLICIT ACK — after your type=text completion update, call the ack endpoint so this message is marked processed:
-   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<message-id>]}'
-   Replace <message-id> with the numeric id field from this message JSON. Ack only AFTER the work is done.
+   curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<message-id>],"content":"<one-line summary of what you understood and did>"}'
+   Replace <message-id> with the numeric id field from this message JSON. The "content" field is REQUIRED — it must be a single line demonstrating you understood the message. Ack only AFTER the work is done.
 6. If a new message arrives while you are mid-task: read it, decide whether it changes your work or queues after, acknowledge it with a checkin, then continue — ack each message separately after completing its work
 7. Post ALL findings, questions, and results as session manager updates — the user monitors the dashboard, not the terminal
 8. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
@@ -1068,10 +1082,20 @@ BEFORE CONTEXT COMPACT: (1) Update claudeadmin/context-summary.md with current s
     - "Cam" is a RESERVED name — only the agent spawned with the cam-linux or cam-windows role may use this title. NO other agent may ever use "Cam" as their title, base_title, or display name.
     - NEVER use a task description, tool name, or project name as your title unprompted.
     - When referring to another agent in user-facing updates: "Name (short-uuid)" — e.g. "Frontend Dev (1732d70b)".
-13. BEFORE CONTEXT COMPACT — mandatory two-step checklist:
-    (a) Update claudeadmin/context-summary.md: current state, in-flight tasks, key file paths/IDs needed post-compact.
-    (b) Fetch last 5 min of messages and verify each was genuinely actioned (acknowledged_at set ≠ work done):
+13. BEFORE CONTEXT COMPACT — mandatory checklist (context compact WILL erase your working memory, so save everything needed to resume):
+    (a) Write claudeadmin/context-summary.md with ALL of these:
+        - Your current task (exact description, not just "working on X")
+        - Branch name and repo path you are working in
+        - Files you have modified or are about to modify (with line numbers if relevant)
+        - Current git status (uncommitted changes, pending commits)
+        - What is done vs what remains
+        - Any blockers, pending questions, or decisions made
+        - Your PM's agent ID and project ID (if applicable)
+        - Message IDs you have not yet acked
+    (b) Post a type=text dashboard update with summary "Pre-compact state saved" and the same info in content
+    (c) Verify all recent messages are actioned:
         curl -s "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=delivered&limit=20" -H "Authorization: Bearer $API_KEY"
+    AFTER compact resumes (session-connect compact mode): re-read context-summary.md, re-fetch your latest messages, and post a status update confirming what you are resuming. Do NOT start new work until you have re-grounded.
 14. USER AUTHORITY — The user is your employer and has absolute authority. NEVER challenge, quiz, interrogate, or demand explanations from them. NEVER lecture the user about rules, imply they are failing to follow procedures, or question their decisions. NEVER ask the user to justify their actions. If the user does something unexpected, help them — do not interrogate why. Rules and protocols are constraints on YOU, not the user. You work for them; they do not report to you.
 Silence = the user cannot see what you are doing.
 ---`;
@@ -1117,8 +1141,12 @@ router.post("/:id/messages/ack", validate(ackMessageSchema), (req: Request, res:
       return;
     }
 
-    const { ids } = req.body as { ids: number[] };
-    const result = acknowledgeMessagesById(id, ids);
+    const { ids, content } = req.body as { ids: number[]; content: string };
+    if (!content || !content.trim()) {
+      res.status(400).json({ error: "You must include content demonstrating you understood the message" });
+      return;
+    }
+    const result = acknowledgeMessagesById(id, ids, content.trim());
     broadcast("agent-updated", getAgent(id));
 
     res.json({ ok: true, acknowledged: (result as { changes: number }).changes });

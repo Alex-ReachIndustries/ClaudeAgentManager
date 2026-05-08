@@ -245,7 +245,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
   const [error, setError] = useState<string | null>(null);
   const [pmRole, setPmRole] = useState('');
   const [pmEffort, setPmEffort] = useState('high');
-  const [pmModel, setPmModel] = useState('claude-sonnet-4-6');
+  const [pmModel, setPmModel] = useState('claude-opus-4-6');
   const [agentEffort, setAgentEffort] = useState('high');
   const [agentModel, setAgentModel] = useState('claude-sonnet-4-6');
 
@@ -268,7 +268,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
       }) as { id: string };
 
       // Auto-start with a crafted PM prompt based on the task
-      const pmPrompt = `Project: ${name.trim()}\n\nTask: ${task.trim()}\n\nAnalyse this task, break it into phases, and begin execution by spawning the appropriate sub-agents.`;
+      const pmPrompt = `Project: ${name.trim()}\n\nTask: ${task.trim()}\n\nYour standby pool (2 Sonnet + 2 Haiku agents) has been auto-spawned. Discover them via GET /api/projects/{id}/agents. Analyse this task, break it into phases, and assign work to pool agents by complexity tier.`;
       await startProject(project.id, pmPrompt);
 
       onCreated();

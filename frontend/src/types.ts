@@ -45,6 +45,7 @@ export interface AgentMessage {
   content: string;
   status: 'pending' | 'delivered' | 'acknowledged' | 'executed';
   acknowledged_at: string | null;
+  ack_content?: string | null;
   source?: string;
   source_agent_id?: string;
   source_peer_name?: string;

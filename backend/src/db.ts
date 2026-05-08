@@ -253,6 +253,9 @@ export function getDb(): Database.Database {
   migrate("ALTER TABLE projects ADD COLUMN agent_effort TEXT DEFAULT 'high'");
   migrate("ALTER TABLE projects ADD COLUMN agent_model TEXT DEFAULT 'claude-sonnet-4-6'");
 
+  // Message ack content: agents must explain what they understood when acknowledging
+  migrate("ALTER TABLE messages ADD COLUMN ack_content TEXT");
+
   // Feature 5: Triggers for computed field caching
   try {
     db.exec(`
@@ -912,16 +915,17 @@ export function acknowledgeMessages(agentId: string) {
 
 // Explicit acknowledgement: agent confirms it has processed specific messages by ID.
 // Called from POST /agents/:id/messages/ack after the agent completes work.
-export function acknowledgeMessagesById(agentId: string, ids: number[]) {
+// ackContent is required — agents must demonstrate understanding of the message.
+export function acknowledgeMessagesById(agentId: string, ids: number[], ackContent: string) {
   const db = getDb();
   const placeholders = ids.map(() => "?").join(", ");
   const ackStmt = db.prepare(`
     UPDATE messages
-    SET status = 'acknowledged', acknowledged_at = datetime('now')
+    SET status = 'acknowledged', acknowledged_at = datetime('now'), ack_content = ?
     WHERE agent_id = ? AND id IN (${placeholders}) AND status IN ('pending', 'delivered')
   `);
   const transaction = db.transaction(() => {
-    return ackStmt.run(agentId, ...ids);
+    return ackStmt.run(ackContent, agentId, ...ids);
   });
   return transaction();
 }
