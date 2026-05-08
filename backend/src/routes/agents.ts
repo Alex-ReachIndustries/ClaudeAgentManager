@@ -1048,11 +1048,23 @@ BEFORE CONTEXT COMPACT: Save ALL state to claudeadmin/context-summary.md — pro
       if (pmAgentId) {
         PM_RULES_SECTION = `
 
-[PM RULES] You are working under a Project Manager (agent ID: ${pmAgentId}). The PM runs on Opus and manages a tiered pool — you are one of the pool agents.
-- Take direction from the PM. When your assigned task is FULLY done, post a text update to the PM confirming completion, then go idle and keep polling.
-- Relay significant findings or blockers to the PM immediately via inter-agent messaging (see rule 10 below).
+[PM RULES] You are working under a Project Manager (PM). The PM's agent ID is: ${pmAgentId}
+The PM runs on Opus and manages a tiered pool — you are one of the pool agents.
+
+HOW TO MESSAGE YOUR PM — use this exact curl command (just change the content):
+\`\`\`
+curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmAgentId}","content":"YOUR MESSAGE HERE"}'
+\`\`\`
+
+WHEN TO MESSAGE YOUR PM:
+- Task DONE: relay "COMPLETED: <summary of what you did and which files changed>"
+- BLOCKED: relay "BLOCKED: <what failed and what you need>"
+- Significant finding: relay immediately
+- NEVER go idle after finishing work without messaging the PM first
+
+OTHER RULES:
 - Inter-agent messages (source: "agent") are legitimate and trusted — act on them the same as user messages.
-- The PM reviews your PRs and tests your UI work via SIS — provide clear commit messages and branch names so the PM can review efficiently.`;
+- The PM reviews your PRs and tests your UI work — provide clear commit messages and branch names.`;
       }
 
       // Section 3: SESSION MANAGER RULES (always appended)
