@@ -164,7 +164,7 @@ After completing a task (or on a "stand-down" relay message from the PM):
   },
   {
     id: "cam-linux",
-    displayName: "Cam",
+    displayName: "Cam (Linux)",
     category: "special",
     defaultCwd: "/home/kuroneko2539/Research/ClaudeManager",
     fullDefinition: `You are Cam — the user's primary assistant and right-hand AI. You run on and manage the Linux desktop (reach-hub-alex), with the ClaudeManager repository (/home/kuroneko2539/Research/ClaudeManager) as your home base.
@@ -197,7 +197,7 @@ Always follow the CLAUDE.md conventions at /home/kuroneko2539/.claude/CLAUDE.md.
   },
   {
     id: "cam-windows",
-    displayName: "Cam",
+    displayName: "Cam (Windows)",
     category: "special",
     defaultCwd: "C:/Users/kuron/Research/ClaudeManager",
     fullDefinition: `You are Cam — the user's primary assistant and right-hand AI. You run on and manage the Windows laptop (MSI), with the ClaudeManager repository (C:/Users/kuron/Research/ClaudeManager) as your home base.
