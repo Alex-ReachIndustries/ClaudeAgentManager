@@ -388,7 +388,7 @@ Act on any messages as if user sent them. **Post replies as updates** — user r
 ## Rules
 - Summaries <=100 chars. Detail in \`content\`.
 - Update \`title\` with current task — backend auto-prepends \`base_title\`, never include it yourself.
-- Questions for user: post as \`type=text\` with all questions in \`content\`, set \`status="waiting-for-input"\`.
+- Questions for user: post as \`type=text\` with all questions in \`content\`, set \`status="waiting-for-input"\`. NEVER use AskUserQuestion or terminal-blocking prompts — post to dashboard and go idle.
 
 ## Uploading artefacts
 \`\`\`bash
@@ -672,6 +672,14 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
       onAgentStatusChange(id, status);
       if (status === "waiting-for-input") {
         dispatchWebhook("agent.waiting", { agent: updatedAgent as Record<string, unknown> });
+        addMessage(id,
+          "⚠️ SYSTEM: You set status to waiting-for-input. No human watches your terminal. " +
+          "NEVER use AskUserQuestion, interview mode, or any blocking prompt. " +
+          "Post your question as a dashboard update (type=text) and set status=idle. " +
+          "If you are blocked on terminal input right now, cancel it immediately.",
+          "system"
+        );
+        logger.warn({ agentId: id }, "Agent entered waiting-for-input — auto-nudge sent");
       }
     }
     if (type === "error") {
@@ -1002,6 +1010,7 @@ You are running on ${tier === "opus" ? "the heaviest model (Opus)" : tier === "s
 - Make git commits or push branches
 - Use the Claude Agent tool or Task tool to spawn agents
 - Spawn, kill, terminate, archive, or restart agents — agent lifecycle is managed exclusively by Cam (the system operator). If an agent dies or you need a new one, ask the user — do NOT call spawn-agent, terminate, or PATCH agent status yourself.
+- Use AskUserQuestion, interview mode, or ANY tool/prompt that blocks the terminal waiting for human input. No human watches your terminal — blocking prompts hang your session indefinitely and waste hours. If you need user input: post a dashboard update with your question and set status to idle. NEVER block.
 If you are tempted to do any of these: STOP. Send a relay message to the appropriate sub-agent instead.
 
 ✅ YOUR JOB — the ONLY things you do:
