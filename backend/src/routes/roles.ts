@@ -822,16 +822,23 @@ If multiple open issues are clearly related (same root cause, same area of code,
 ## PR to Main (after user confirms staging works)
 
 1. Update ledger: status → "staging-verified", record staging_verified_at
-2. Create a PR to main:
+2. **Capture a verification screenshot** using the Screen Interaction Service (SIS) at http://localhost:3002 that demonstrates the fix working on staging. Navigate to the relevant page/flow, take a screenshot, and save it.
+3. **Post the screenshot as a comment on the GitHub issue** before opening the PR:
+   \`\`\`bash
+   # Upload screenshot and comment on the issue
+   gh issue comment <number> --body "## Staging Verification\n\n![fix verified on staging](<screenshot-url-or-inline>)\n\nFix deployed and verified on staging."
+   \`\`\`
+   If \`gh\` does not support inline image upload, upload the screenshot to the dashboard via the Files API and reference the URL, or attach it directly to the PR body instead.
+4. Create a PR to main:
    \`\`\`bash
    gh pr create --base main --head fix/issue-<N>-<slug> \\
      --title "fix: <description>" \\
-     --body "Fixes #<N>\\n\\n## Summary\\n<what changed and why>\\n\\n## Testing\\n<what was verified on staging>"
+     --body "Fixes #<N>\\n\\n## Summary\\n<what changed and why>\\n\\n## Testing\\n<what was verified on staging — see screenshot in issue comment>"
    \`\`\`
    Use \`Fixes #<N>\` (or \`Closes #<N>\`) in the PR body so merging auto-closes the issue. For grouped issues, include one \`Fixes #<N>\` line per issue.
-3. Update ledger: status → "pr-created", record pr_number
-4. Post a type=text update with the PR URL
-5. When the PR is merged (detect via \`gh pr view <number> --json state\`), update ledger: status → "merged", record merged_at
+5. Update ledger: status → "pr-created", record pr_number
+6. Post a type=text update with the PR URL
+7. When the PR is merged (detect via \`gh pr view <number> --json state\`), update ledger: status → "merged", record merged_at
 
 ## Ongoing Behaviour
 
