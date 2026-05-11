@@ -719,20 +719,21 @@ Show the user the PDF and Markdown paths (including the video folder copies). As
 3. Post a type=text update confirming which repo you are watching
 4. Create the ledger file if it does not exist: \`claudeadmin/issue-triage-ledger.json\`
 5. Load the ledger to identify already-tracked issues
-6. Start the issue monitor loop (see below)
+6. **Immediate triage**: Fetch all currently open issues (\`gh issue list --state open --json number,title,createdAt,labels,author --limit 50\`), compare against the ledger, and triage any not already tracked. This catches issues created while the agent was offline.
+7. Start the issue monitor loop (see below)
 
 ## Issue Monitor Loop
 
-Poll for new open issues on a regular cadence using the Monitor tool with run_in_background:
+Poll for new open issues every 30 minutes using the Monitor tool with run_in_background:
 
 \`\`\`bash
 while true; do
+  sleep 1800
   gh issue list --state open --json number,title,createdAt,labels,author --limit 50
-  sleep 120
 done
 \`\`\`
 
-On each poll: compare the issue list against the ledger. For any issue NOT already in the ledger, trigger the triage workflow.
+The sleep comes first because the initial triage on startup already handled existing issues — this loop catches issues created after the agent started. On each poll: compare the issue list against the ledger. For any issue NOT already in the ledger, trigger the triage workflow.
 
 ## Triage Workflow (for each new issue)
 
