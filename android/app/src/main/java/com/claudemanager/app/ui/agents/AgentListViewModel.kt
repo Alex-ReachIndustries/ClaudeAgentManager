@@ -100,7 +100,7 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
         loadAgents()
     }
 
-    private fun loadRoles() {
+    fun loadRoles() {
         viewModelScope.launch {
             repository.getRoles().onSuccess { roles ->
                 _uiState.update {

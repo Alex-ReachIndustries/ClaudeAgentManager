@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -453,6 +454,7 @@ fun AgentListScreen(
     }
 
     if (showRoleTaskDialog && selectedFolder != null) {
+        LaunchedEffect(Unit) { viewModel.loadRoles() }
         val predefinedRoles = state.predefinedRoles
         var selectedRoleIndex by remember { mutableStateOf(-1) }  // -1 = Custom
         var roleDropdownExpanded by remember { mutableStateOf(false) }
@@ -504,7 +506,8 @@ fun AgentListScreen(
                         )
                         androidx.compose.material3.DropdownMenu(
                             expanded = roleDropdownExpanded,
-                            onDismissRequest = { roleDropdownExpanded = false }
+                            onDismissRequest = { roleDropdownExpanded = false },
+                            modifier = Modifier.heightIn(max = 400.dp)
                         ) {
                             predefinedRoles.forEachIndexed { idx, role ->
                                 androidx.compose.material3.DropdownMenuItem(
