@@ -48,6 +48,18 @@ export function useAgent(id: string) {
             setMessages((prev) => [...prev, event.data]);
           }
           break;
+        case 'messages-acknowledged':
+          if (event.data.agent_id === id) {
+            const { ids, ack_content } = event.data;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                ids.includes(msg.id)
+                  ? { ...msg, status: 'acknowledged' as const, ack_content }
+                  : msg
+              )
+            );
+          }
+          break;
         case 'agent-deleted':
           if (event.data.id === id) {
             setAgent(null);

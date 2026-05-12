@@ -302,14 +302,20 @@ function subscribeToSSE(
     onEvent({ type: 'message-queued', data: JSON.parse(e.data) });
   };
 
+  const handleMessagesAcknowledged = (e: MessageEvent) => {
+    onEvent({ type: 'messages-acknowledged', data: JSON.parse(e.data) });
+  };
+
   es.addEventListener('agent-updated', handleAgentUpdated);
   es.addEventListener('agent-deleted', handleAgentDeleted);
   es.addEventListener('message-queued', handleMessageQueued);
+  es.addEventListener('messages-acknowledged', handleMessagesAcknowledged);
 
   return () => {
     es.removeEventListener('agent-updated', handleAgentUpdated);
     es.removeEventListener('agent-deleted', handleAgentDeleted);
     es.removeEventListener('message-queued', handleMessageQueued);
+    es.removeEventListener('messages-acknowledged', handleMessagesAcknowledged);
     es.close();
     emitState('disconnected');
   };

@@ -145,6 +145,7 @@ class AgentDetailViewModel(
         markRead()
         startPolling()
         listenForTerminalOutput()
+        listenForAcknowledgements()
     }
 
     private fun loadWtWindows() {
@@ -894,6 +895,37 @@ class AgentDetailViewModel(
                 combined
             }
             state.copy(terminalLines = trimmed)
+        }
+    }
+
+    /**
+     * Listen for messages-acknowledged SSE events and update the relevant message
+     * cards in-place so ack text appears without waiting for the next poll.
+     */
+    private fun listenForAcknowledgements() {
+        viewModelScope.launch {
+            try {
+                com.claudemanager.app.service.AgentNotificationService.sseEvents?.collect { event ->
+                    if (event is SSEEvent.MessagesAcknowledged && event.agentId == agentId) {
+                        _uiState.update { state ->
+                            state.copy(
+                                messages = state.messages.map { msg ->
+                                    if (event.ids.contains(msg.id)) {
+                                        msg.copy(
+                                            status = com.claudemanager.app.data.models.MessageStatus.ACKNOWLEDGED,
+                                            ackContent = event.ackContent
+                                        )
+                                    } else {
+                                        msg
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // SSE not available; ack text will appear on next poll
+            }
         }
     }
 

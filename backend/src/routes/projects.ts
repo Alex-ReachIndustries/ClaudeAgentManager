@@ -379,6 +379,7 @@ router.post("/:id/start", (req: Request, res: Response) => {
       const launchRequestId = launchResult.id as number;
 
       const pmWtWindow = project.name as string;
+      const pmTitle = `${project.name} - PM`;
       db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
         .run(JSON.stringify({
           project_id: id,
@@ -388,19 +389,20 @@ router.post("/:id/start", (req: Request, res: Response) => {
           effort: project.pm_effort as string || "high",
           model: project.pm_model as string || "claude-opus-4-6",
           wt_window: pmWtWindow,
+          base_title: pmTitle,
         }), pmWtWindow, launchRequestId);
 
       // Auto-spawn tiered standby pool: 2 Sonnet + 2 Haiku agents
       const poolConfig = [
-        { label: "Sonnet Standby A", model: "claude-sonnet-4-6", slot: 1 },
-        { label: "Sonnet Standby B", model: "claude-sonnet-4-6", slot: 2 },
-        { label: "Haiku Standby A", model: "claude-haiku-4-5-20251001", slot: 3 },
-        { label: "Haiku Standby B", model: "claude-haiku-4-5-20251001", slot: 4 },
+        { label: `${project.name} - Sonnet A`, model: "claude-sonnet-4-6", slot: 1 },
+        { label: `${project.name} - Sonnet B`, model: "claude-sonnet-4-6", slot: 2 },
+        { label: `${project.name} - Haiku A`, model: "claude-haiku-4-5-20251001", slot: 3 },
+        { label: `${project.name} - Haiku B`, model: "claude-haiku-4-5-20251001", slot: 4 },
       ];
 
       for (const pool of poolConfig) {
         const poolLaunch = createLaunchRequest("new", folderPath);
-        const poolPrompt = `You are ${pool.label} (slot ${pool.slot} of 4) for project "${project.name}". Run /session-connect, then post status=idle with summary="Standby — awaiting assignment" and wait for relay messages from the PM. Discover your PM via: GET /api/projects/${id} → pm_agent_id field.`;
+        const poolPrompt = `You are ${pool.label} for project "${project.name}". Your title is EXACTLY "${pool.label}" — set it in every status update and NEVER change it or append anything to it. Run /session-connect, then post status=idle with title="${pool.label}" and summary="Standby — awaiting assignment". Wait for relay messages from the PM. Discover your PM via: GET /api/projects/${id} → pm_agent_id field.`;
         db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
           .run(JSON.stringify({
             project_id: id,
@@ -410,6 +412,7 @@ router.post("/:id/start", (req: Request, res: Response) => {
             effort: "high",
             model: pool.model,
             wt_window: pmWtWindow,
+            base_title: pool.label,
           }), pmWtWindow, poolLaunch.id);
       }
 

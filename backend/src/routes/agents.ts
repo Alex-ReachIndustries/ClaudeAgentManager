@@ -247,6 +247,8 @@ Replies must be posted as updates — user reads from dashboard, not terminal.
 4. Do the work; post ~25% progress updates
 5. Post completion update
 
+**If the ack content fully answers the question or request, no additional response is needed.** Only post a follow-up if there is work to report or additional context to provide.
+
 ## PM Sub-Agent Spawning (PM-role agents only)
 **NEVER use the Claude Agent tool or Task tool to spawn sub-agents.**
 Spawn via API: \`POST /api/projects/{project_id}/spawn-agent\`
@@ -311,7 +313,7 @@ curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -d '{"type":"status","title":"<ShortIdentityName>","base_title":"<ShortIdentityName>","summary":"<what you are doing>","content":"<role, current state, next actions>","status":"idle","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}'
 \`\`\`
 
-**Title and base_title**: Set both to your short fixed identity name (e.g. "Cam", "Backend Dev A"). \`base_title\` is permanently prepended to every subsequent title update. Do NOT use a task description.
+**Title and base_title**: Set both to your fixed identity name and **never change it** — for project pool agents use the exact format \`<ProjectName> - PM\`, \`<ProjectName> - Sonnet A\`, \`<ProjectName> - Sonnet B\`, \`<ProjectName> - Haiku A\`, or \`<ProjectName> - Haiku B\`. For standalone agents use a short role name (e.g. "Cam", "Backend Dev"). Do NOT append task descriptions. This name is permanent for the session.
 
 **For compact mode**, post TWO updates:
 1. \`type=status\` with all metadata fields and summary "Context compacted — see details"
@@ -348,7 +350,7 @@ On message notification: **do not restart the watcher** (it keeps running). Proc
 1. Extract message ID from JSON (field: \`id\`)
 2. **Ack immediately** — before doing any work: \`POST /api/agents/{id}/messages/ack\` with \`content\` = one-line of what you understood and will do. Do NOT wait until work is complete.
 3. Do the work
-4. Post a completion update
+4. Post a completion update only if there is additional work to report — **if the ack content fully answers the question, no further response is needed**.
 
 **Never filter by message ID** — acknowledge stale messages by posting a checkin. ID-based filtering silently drops other messages in the same batch.
 
@@ -392,7 +394,7 @@ Act on any messages as if user sent them. **Post replies as updates** — user r
 
 ## Rules
 - Summaries <=100 chars. Detail in \`content\`.
-- Update \`title\` with current task — backend auto-prepends \`base_title\`, never include it yourself.
+- Set \`title\` to your **exact fixed identity name** (e.g. "AIGroupPortal - Sonnet A") on EVERY update — never append task descriptions or change it. Your identity never changes mid-session.
 - Questions for user: post as \`type=text\` with all questions in \`content\`, set \`status="waiting-for-input"\`, then wait for a response via your message watcher. NEVER use AskUserQuestion or terminal-blocking prompts.
 
 ## Uploading artefacts
@@ -507,9 +509,10 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
                 const wtWindow = meta.wt_window || (launchReq.wt_window as string | null) || null;
 
                 if (meta.project_id) {
-                  // Link the agent to the project and store its task + model/effort from launch metadata
-                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort) WHERE id = ?")
-                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, id);
+                  // Link the agent to the project and store its task + model/effort from launch metadata.
+                  // base_title from metadata locks the agent's permanent identity name (e.g. "AIGroupPortal - Sonnet A").
+                  db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort), base_title = COALESCE(?, base_title), title = COALESCE(?, title) WHERE id = ?")
+                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, meta.base_title || null, meta.base_title || null, id);
 
                   if (meta.role === "PM") {
                     updateProject(meta.project_id, { pm_agent_id: id });
@@ -708,10 +711,11 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
       return;
     }
 
-    const { title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model, project_id, wt_window } = req.body;
-    const fields: { title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string; project_id?: string | null; wt_window?: string | null } = {};
+    const { title, base_title, status, metadata, poll_delay_until, workspace, cwd, pid, role, task, effort, model, project_id, wt_window } = req.body;
+    const fields: { title?: string; base_title?: string; status?: string; metadata?: string; poll_delay_until?: string | null; workspace?: string; cwd?: string; pid?: number; role?: string; task?: string; effort?: string; model?: string; project_id?: string | null; wt_window?: string | null } = {};
 
     if (title !== undefined) fields.title = title;
+    if (base_title !== undefined) fields.base_title = base_title;
     if (status !== undefined) fields.status = status;
     if (metadata !== undefined) {
       fields.metadata = typeof metadata === "string" ? metadata : JSON.stringify(metadata);
@@ -1147,6 +1151,8 @@ router.post("/:id/messages/ack", validate(ackMessageSchema), (req: Request, res:
     }
     const result = acknowledgeMessagesById(id, ids, content.trim());
     broadcast("agent-updated", getAgent(id));
+    // Targeted event so the frontend can update specific message cards without a full refetch
+    broadcast("messages-acknowledged", { agent_id: id, ids, ack_content: content.trim() });
 
     res.json({ ok: true, acknowledged: (result as { changes: number }).changes });
   } catch (err) {

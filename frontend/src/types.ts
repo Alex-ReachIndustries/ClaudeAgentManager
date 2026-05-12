@@ -82,4 +82,5 @@ export interface TodoStatus {
 export type SSEEvent =
   | { type: 'agent-updated'; data: Agent }
   | { type: 'agent-deleted'; data: { id: string } }
-  | { type: 'message-queued'; data: AgentMessage };
+  | { type: 'message-queued'; data: AgentMessage }
+  | { type: 'messages-acknowledged'; data: { agent_id: string; ids: number[]; ack_content: string } };

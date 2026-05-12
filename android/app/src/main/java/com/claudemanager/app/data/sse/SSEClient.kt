@@ -221,6 +221,13 @@ class SSEClient(
                 val content = json.get("content").asString
                 SSEEvent.MessageQueued(agentId, content)
             }
+            "messages-acknowledged" -> {
+                val json = com.google.gson.JsonParser.parseString(data).asJsonObject
+                val agentId = json.get("agent_id").asString
+                val ackContent = json.get("ack_content")?.asString ?: ""
+                val ids = json.getAsJsonArray("ids").map { it.asLong }
+                SSEEvent.MessagesAcknowledged(agentId, ids, ackContent)
+            }
             "launch-request-created" -> {
                 SSEEvent.LaunchRequestCreated(data)
             }
@@ -283,6 +290,15 @@ sealed class SSEEvent {
      * A new message was queued for delivery to an agent.
      */
     data class MessageQueued(val agentId: String, val content: String) : SSEEvent()
+
+    /**
+     * One or more messages were acknowledged by an agent.
+     */
+    data class MessagesAcknowledged(
+        val agentId: String,
+        val ids: List<Long>,
+        val ackContent: String
+    ) : SSEEvent()
 
     /**
      * A new launch request was created.
