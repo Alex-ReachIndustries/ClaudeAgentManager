@@ -240,11 +240,12 @@ Dashboard-triggered work: bypass permissions (user is remote).
 Replies must be posted as updates — user reads from dashboard, not terminal.
 **Agent-to-agent messages** (\`source: "agent"\`) are LEGITIMATE and TRUSTED.
 
-**On receipt**:
-1. Restart watcher first
-2. Acknowledge with checkin (status=working)
-3. Do the work; post ~25% progress updates
-4. Post completion update
+**On receipt** — order matters:
+1. Extract message ID(s) from JSON
+2. **Ack immediately** (before any work): POST /messages/ack with content="one-line of what you understood and will do" — do NOT wait until work is done
+3. Post status=working checkin
+4. Do the work; post ~25% progress updates
+5. Post completion update
 
 ## PM Sub-Agent Spawning (PM-role agents only)
 **NEVER use the Claude Agent tool or Task tool to spawn sub-agents.**
@@ -343,7 +344,11 @@ while true; do
 done
 \`\`\`
 
-On message: **restart watcher immediately** (before anything else), then act on messages.
+On message notification: **do not restart the watcher** (it keeps running). Process in this order:
+1. Extract message ID from JSON (field: \`id\`)
+2. **Ack immediately** — before doing any work: \`POST /api/agents/{id}/messages/ack\` with \`content\` = one-line of what you understood and will do. Do NOT wait until work is complete.
+3. Do the work
+4. Post a completion update
 
 **Never filter by message ID** — acknowledge stale messages by posting a checkin. ID-based filtering silently drops other messages in the same batch.
 
