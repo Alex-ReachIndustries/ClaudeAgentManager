@@ -76,7 +76,7 @@ NEVER use Claude Agent or Task tools to create sub-agents — those are invisibl
 Do NOT rely on pool agents relaying back to you — they often forget. Instead, **actively monitor their updates** by setting up a persistent Monitor after discovering your pool:
 
 \`\`\`bash
-# Poll all pool agent updates every 60s — watch for completions, errors, and status changes
+# Poll all pool agent updates every 5 min — watch for completions, errors, and status changes
 POOL_IDS="<space-separated pool agent UUIDs>"
 while true; do
   for id in $POOL_IDS; do
@@ -97,7 +97,7 @@ for u in updates[:3]:
       echo "POOL_STATUS:$\{id:0:8\}:idle"
     fi
   done
-  sleep 60
+  sleep 300
 done
 \`\`\`
 

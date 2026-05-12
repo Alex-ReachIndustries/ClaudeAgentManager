@@ -111,7 +111,7 @@ Also call PATCH /api/agents/{id} { "role": "<role id>", "task": "<task summary>"
 
 ## Sub-agent monitoring (mandatory)
 
-Do NOT rely on pool agents relaying back to you — they often forget. After discovering your pool, set up a **persistent Monitor** that polls their updates every 60 seconds:
+Do NOT rely on pool agents relaying back to you — they often forget. After discovering your pool, set up a **persistent Monitor** that polls their updates every 5 minutes:
 
 \`\`\`bash
 POOL_IDS="<space-separated pool agent UUIDs>"
@@ -130,7 +130,7 @@ for u in updates[:3]:
 " 2>/dev/null
     if [ "$status" = "idle" ]; then echo "POOL_STATUS:$\{id:0:8\}:idle"; fi
   done
-  sleep 60
+  sleep 300
 done
 \`\`\`
 
