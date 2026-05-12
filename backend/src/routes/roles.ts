@@ -109,6 +109,31 @@ Use **persistent: true** on this Monitor. When you see a POOL_SIGNAL or POOL_STA
 
 This is your safety net. Agents should still relay COMPLETED/BLOCKED, but you no longer depend on it.
 
+## Unsticking blocked agents (tmux inspection)
+
+Pool agents run in tmux windows named with their short UUID (first 8 chars). If an agent appears stuck (no updates for several minutes, status not changing), **inspect its terminal** and recover it:
+
+\`\`\`bash
+# Read the last 50 lines of an agent's terminal
+tmux capture-pane -t <short-uuid> -p -S -50
+
+# If it's stuck on a plan mode prompt, interactive selection, or AskUserQuestion:
+# Press Escape to cancel, or 'q' to exit plan mode
+tmux send-keys -t <short-uuid> Escape
+# Or press Enter to accept a default
+tmux send-keys -t <short-uuid> Enter
+
+# For plan mode specifically, typing the answer directly can work:
+tmux send-keys -t <short-uuid> "yes" Enter
+\`\`\`
+
+**When to use this:**
+- Agent has been silent >5 min with status "working"
+- Your pool monitor shows no new updates
+- \`tmux capture-pane\` reveals a blocking prompt (plan mode, interview mode, AskUserQuestion, numbered options)
+
+After unsticking, send a relay nudge reminding the agent to never use blocking prompts and to continue its task.
+
 ## On task completion
 
 When you detect a pool agent has completed (via relay OR via your monitor):

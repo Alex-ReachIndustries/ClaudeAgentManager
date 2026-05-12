@@ -136,6 +136,18 @@ done
 
 Use **persistent: true**. When you see a signal or idle status for an assigned agent, check their updates and act accordingly (review, nudge, or reassign).
 
+## Unsticking blocked agents (tmux inspection)
+
+Pool agents run in tmux windows named with their short UUID (first 8 chars). If an agent is stuck (silent >5 min, status "working"), inspect its terminal and recover:
+
+\`\`\`bash
+tmux capture-pane -t <short-uuid> -p -S -50   # read terminal
+tmux send-keys -t <short-uuid> Escape          # cancel blocking prompt
+tmux send-keys -t <short-uuid> Enter            # accept default
+\`\`\`
+
+If it's in plan mode, AskUserQuestion, or showing numbered options — send the appropriate key to unblock. Then relay a nudge reminding the agent to never use blocking prompts.
+
 ## On task completion
 
 When you detect a pool agent has completed (via relay OR via your monitor):
