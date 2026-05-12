@@ -111,42 +111,61 @@ Also call PATCH /api/agents/{id} { "role": "<role id>", "task": "<task summary>"
 
 ## Sub-agent monitoring (mandatory)
 
-Do NOT rely on pool agents relaying back to you — they often forget. After discovering your pool, set up a **persistent Monitor** that polls their updates every 5 minutes:
+Do NOT rely on pool agents relaying back to you — they often forget. Instead, **actively monitor their updates AND their terminal output** by setting up a persistent Monitor after discovering your pool. Build a POOL map of \`uuid:short_uuid\` pairs so you can read both the dashboard and the tmux window for each agent.
 
 \`\`\`bash
-POOL_IDS="<space-separated pool agent UUIDs>"
+# Poll all pool agents every 5 min — dashboard updates + tmux terminal
+# POOL format: "full-uuid:short-uuid full-uuid:short-uuid ..."
+POOL="<full-uuid-1>:<short-uuid-1> <full-uuid-2>:<short-uuid-2> <full-uuid-3>:<short-uuid-3> <full-uuid-4>:<short-uuid-4>"
 while true; do
-  for id in $POOL_IDS; do
-    updates=$(curl -s "$AGENT_URL/api/agents/$id/updates?limit=5" -H "Authorization: Bearer $API_KEY" 2>/dev/null)
+  for entry in $POOL; do
+    id=\${entry%%:*}
+    short=\${entry##*:}
+
+    # 1. Dashboard status
     status=$(curl -s "$AGENT_URL/api/agents/$id" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('status','unknown'))" 2>/dev/null)
-    echo "$updates" | python3 -c "
+
+    # 2. Latest dashboard updates (check for notable signals)
+    curl -s "$AGENT_URL/api/agents/$id/updates?limit=3" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "
 import json,sys
-updates = json.loads(sys.stdin.read())
-if isinstance(updates, dict): updates = updates.get('data', [])
-for u in updates[:3]:
+data = json.loads(sys.stdin.read())
+updates = data.get('data', data) if isinstance(data, dict) else data
+for u in (updates if isinstance(updates, list) else []):
     s = (u.get('summary','') + ' ' + u.get('content','')).lower()
     if any(k in s for k in ['completed','blocked','error','failed','done','finished','merged','pr created']):
-        print(f'POOL_SIGNAL:$\{id[:8]\}:{u.get(\"summary\",\"\")}')
+        print(f'SIGNAL:\$short:{u.get(\"summary\",\"\")[:80]}')
 " 2>/dev/null
-    if [ "$status" = "idle" ]; then echo "POOL_STATUS:$\{id:0:8\}:idle"; fi
+
+    # 3. Tmux terminal — last 15 lines (see what the agent is actually doing)
+    terminal=$(tmux capture-pane -t "$short" -p -S -15 2>/dev/null | grep -v '^\$' | tail -5)
+    if [ -n "$terminal" ]; then
+      echo "TERMINAL:\$short:\$terminal"
+    fi
+
+    # 4. Detect stuck states
+    if [ "$status" = "idle" ]; then
+      echo "STATUS:\$short:idle"
+    fi
+    # Check for blocking prompts in terminal
+    if echo "$terminal" | grep -qiE 'plan mode|do you want|select.*option|enter to confirm|waiting for|AskUser|yes.*no.*cancel'; then
+      echo "BLOCKED:\$short:blocking prompt detected in terminal"
+    fi
   done
   sleep 300
 done
 \`\`\`
 
-Use **persistent: true**. When you see a signal or idle status for an assigned agent, check their updates and act accordingly (review, nudge, or reassign).
+Use **persistent: true** on this Monitor. On each notification:
 
-## Unsticking blocked agents (tmux inspection)
-
-Pool agents run in tmux windows named with their short UUID (first 8 chars). If an agent is stuck (silent >5 min, status "working"), inspect its terminal and recover:
-
-\`\`\`bash
-tmux capture-pane -t <short-uuid> -p -S -50   # read terminal
-tmux send-keys -t <short-uuid> Escape          # cancel blocking prompt
-tmux send-keys -t <short-uuid> Enter            # accept default
-\`\`\`
-
-If it's in plan mode, AskUserQuestion, or showing numbered options — send the appropriate key to unblock. Then relay a nudge reminding the agent to never use blocking prompts.
+- **SIGNAL** — agent posted a notable dashboard update. Check their full updates and act (review, nudge, reassign).
+- **TERMINAL** — shows what the agent is actually doing in their terminal. Verify they are working on the right task.
+- **STATUS:idle** — agent went idle. If you assigned them work, check if they completed or drifted.
+- **BLOCKED** — agent hit a blocking prompt (plan mode, interactive selection, etc). **Unstick them immediately:**
+  \`\`\`bash
+  tmux send-keys -t <short-uuid> Escape   # cancel the prompt
+  # or: tmux send-keys -t <short-uuid> Enter   # accept default
+  \`\`\`
+  Then send a relay nudge reminding them to never use blocking prompts and to continue their task.
 
 ## On task completion
 
