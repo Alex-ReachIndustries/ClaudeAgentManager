@@ -109,9 +109,36 @@ When a task is ready, pick an idle pool agent at the appropriate tier and relay 
 
 Also call PATCH /api/agents/{id} { "role": "<role id>", "task": "<task summary>" } to update the dashboard.
 
+## Sub-agent monitoring (mandatory)
+
+Do NOT rely on pool agents relaying back to you — they often forget. After discovering your pool, set up a **persistent Monitor** that polls their updates every 60 seconds:
+
+\`\`\`bash
+POOL_IDS="<space-separated pool agent UUIDs>"
+while true; do
+  for id in $POOL_IDS; do
+    updates=$(curl -s "$AGENT_URL/api/agents/$id/updates?limit=5" -H "Authorization: Bearer $API_KEY" 2>/dev/null)
+    status=$(curl -s "$AGENT_URL/api/agents/$id" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('status','unknown'))" 2>/dev/null)
+    echo "$updates" | python3 -c "
+import json,sys
+updates = json.loads(sys.stdin.read())
+if isinstance(updates, dict): updates = updates.get('data', [])
+for u in updates[:3]:
+    s = (u.get('summary','') + ' ' + u.get('content','')).lower()
+    if any(k in s for k in ['completed','blocked','error','failed','done','finished','merged','pr created']):
+        print(f'POOL_SIGNAL:$\{id[:8]\}:{u.get(\"summary\",\"\")}')
+" 2>/dev/null
+    if [ "$status" = "idle" ]; then echo "POOL_STATUS:$\{id:0:8\}:idle"; fi
+  done
+  sleep 60
+done
+\`\`\`
+
+Use **persistent: true**. When you see a signal or idle status for an assigned agent, check their updates and act accordingly (review, nudge, or reassign).
+
 ## On task completion
 
-When a pool agent relays "COMPLETED: ...":
+When you detect a pool agent has completed (via relay OR via your monitor):
 1. **Review the PR/work** — check the git diff, verify code quality and correctness
 2. **Test via SIS** — for any UI changes, use the Screen Interaction Service to verify visually
 3. Call PATCH /api/agents/{id} { "role": "", "task": "" } to clear its assignment

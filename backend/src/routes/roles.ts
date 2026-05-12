@@ -71,9 +71,47 @@ Also call \`PATCH /api/agents/{sub_id} { "role": "<role id>", "task": "<task sum
 
 NEVER use Claude Agent or Task tools to create sub-agents — those are invisible on the dashboard.
 
+## Sub-agent monitoring (mandatory)
+
+Do NOT rely on pool agents relaying back to you — they often forget. Instead, **actively monitor their updates** by setting up a persistent Monitor after discovering your pool:
+
+\`\`\`bash
+# Poll all pool agent updates every 60s — watch for completions, errors, and status changes
+POOL_IDS="<space-separated pool agent UUIDs>"
+while true; do
+  for id in $POOL_IDS; do
+    updates=$(curl -s "$AGENT_URL/api/agents/$id/updates?limit=5" -H "Authorization: Bearer $API_KEY" 2>/dev/null)
+    status=$(curl -s "$AGENT_URL/api/agents/$id" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('status','unknown'))" 2>/dev/null)
+    # Emit if agent has new updates with notable signals
+    echo "$updates" | python3 -c "
+import json,sys
+updates = json.loads(sys.stdin.read())
+if isinstance(updates, dict): updates = updates.get('data', [])
+for u in updates[:3]:
+    s = (u.get('summary','') + ' ' + u.get('content','')).lower()
+    if any(k in s for k in ['completed','blocked','error','failed','done','finished','merged','pr created']):
+        print(f'POOL_SIGNAL:{\"$id\"[:8]}:{u.get(\"summary\",\"\")}')
+" 2>/dev/null
+    # Also flag if agent went idle (may have finished without relaying)
+    if [ "$status" = "idle" ]; then
+      echo "POOL_STATUS:$\{id:0:8\}:idle"
+    fi
+  done
+  sleep 60
+done
+\`\`\`
+
+Use **persistent: true** on this Monitor. When you see a POOL_SIGNAL or POOL_STATUS:idle for an agent you assigned work to:
+1. Check their latest updates (GET /api/agents/{id}/updates?limit=10) for the full picture
+2. If they completed: review, test, clear assignment, post milestone — same as if they had relayed
+3. If they errored: decide whether to nudge, reassign, or adjust the plan
+4. If they went idle without completing: nudge them via relay asking for a status report
+
+This is your safety net. Agents should still relay COMPLETED/BLOCKED, but you no longer depend on it.
+
 ## On task completion
 
-When a pool agent relays "COMPLETED: ...":
+When you detect a pool agent has completed (via relay OR via your monitor):
 1. **Review the PR/work** — check the git diff, verify code quality and correctness
 2. **Test via SIS** — for any UI changes, use the Screen Interaction Service to verify visually
 3. Call \`PATCH /api/agents/{sub_id} { "role": "", "task": "" }\` to clear its assignment
