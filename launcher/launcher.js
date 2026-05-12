@@ -1101,7 +1101,9 @@ const rateLimitScheduled = new Map();
 
 function parseRateLimitReset(paneText) {
   // Absolute time formats: "resets at 1:30 PM", "reset at 7:00 AM", "after 2:30 PM"
-  const absMatch = paneText.match(/(?:resets?\s+at|reset\s+at|after|until)\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
+  // Restrict to unambiguous reset-context keywords only — avoid matching "after" mid-sentence.
+  const absMatch = paneText.match(/(?:resets?\s+at|reset\s+at|resets?\s+after|reset\s+after|until\s+(?:limit\s+)?resets?)\s+(\d{1,2}:\d{2}\s*[AP]M)/i)
+    || paneText.match(/\bat\s+(\d{1,2}:\d{2}\s*[AP]M)\b/i);
   if (absMatch) {
     const parts = absMatch[1].match(/(\d{1,2}):(\d{2})\s*([AP]M)/i);
     if (parts) {
@@ -1118,8 +1120,9 @@ function parseRateLimitReset(paneText) {
       return reset;
     }
   }
-  // Relative time: "in 2h 30m", "in 45 minutes", "in 1 hour"
-  const relMatch = paneText.match(/in\s+(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?/i);
+  // Relative time: "in 2h 30m", "in 2 hours and 34 minutes", "in 45 minutes", "in 1 hour"
+  // "(?:and\s+)?" handles natural-language phrasing like "2 hours and 34 minutes"
+  const relMatch = paneText.match(/in\s+(?:(\d+)\s*h(?:ours?)?)?\s*(?:and\s+)?(?:(\d+)\s*m(?:in(?:utes?)?)?)?/i);
   if (relMatch && (relMatch[1] || relMatch[2])) {
     const hours = parseInt(relMatch[1] || 0);
     const mins = parseInt(relMatch[2] || 0);
@@ -1142,11 +1145,12 @@ async function scanRateLimitDialogs() {
       const captureResult = spawnSync('tmux', ['capture-pane', '-p', '-t', pane],
         { encoding: 'utf8', stdio: 'pipe' });
       const content = captureResult.stdout || '';
-      if (!/rate.?limit/i.test(content)) continue;
+      if (!/rate.?limit|usage.?limit/i.test(content)) continue;
 
-      log(`Rate limit dialog detected in pane ${pane}`);
+      log(`Rate/usage limit dialog detected in pane ${pane}`);
       const resetAt = parseRateLimitReset(content);
-      const recoveryAt = resetAt ? new Date(resetAt.getTime() + 2 * 60000) : new Date(Date.now() + 5 * 60000);
+      // Fallback: 60 min when we can't parse the reset time (safe default vs 5 min which fires before reset)
+      const recoveryAt = resetAt ? new Date(resetAt.getTime() + 2 * 60000) : new Date(Date.now() + 60 * 60000);
       const delayMs = Math.max(0, recoveryAt.getTime() - Date.now());
       log(`Rate limit recovery scheduled for pane ${pane} in ${Math.round(delayMs / 60000)} min (at ${recoveryAt.toLocaleTimeString()})`);
 
@@ -1160,8 +1164,8 @@ async function scanRateLimitDialogs() {
           return;
         }
         const currentContent = check.stdout || '';
-        if (!/rate.?limit/i.test(currentContent)) {
-          log(`Rate limit recovery: pane ${pane} no longer shows rate-limit dialog — skipping`);
+        if (!/rate.?limit|usage.?limit/i.test(currentContent)) {
+          log(`Rate limit recovery: pane ${pane} no longer shows rate/usage-limit dialog — skipping`);
           return;
         }
         log(`Rate limit recovery firing for pane ${pane}`);

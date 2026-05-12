@@ -257,6 +257,13 @@ export function getDb(): Database.Database {
   migrate("ALTER TABLE messages ADD COLUMN ack_content TEXT");
   migrate("ALTER TABLE agents ADD COLUMN latest_ack_content TEXT");
 
+  // Message re-delivery backoff: track re-delivery count and when to next surface the message.
+  // Schedule: +1m initial, then +2m, +5m, +10m, +15m, +30m, +60m, repeat 60m until acked.
+  migrate("ALTER TABLE messages ADD COLUMN redeliver_count INTEGER DEFAULT 0");
+  migrate("ALTER TABLE messages ADD COLUMN next_redeliver_at TEXT");
+  // Backfill: give any already-delivered-unacked messages a 60s grace window before first re-ping.
+  migrate("UPDATE messages SET next_redeliver_at = datetime('now', '+60 seconds') WHERE status = 'delivered' AND acknowledged_at IS NULL AND next_redeliver_at IS NULL");
+
   // Feature 5: Triggers for computed field caching
   try {
     db.exec(`
@@ -837,19 +844,32 @@ export function getPendingMessages(agentId: string) {
     SELECT * FROM messages WHERE agent_id = ? AND status = 'pending' AND source != 'system'
     ORDER BY priority DESC, created_at ASC
   `);
-  // Re-surface messages delivered to the agent but never acknowledged (e.g. agent was
-  // interrupted before posting a checkin, or context was compressed mid-task).
-  // 30-second grace period avoids the race where the watcher restarts before the agent
-  // has had time to post its acknowledgement checkin.
+  // Re-surface messages delivered to the agent but never acknowledged, subject to backoff.
+  // Backoff schedule: +1m initial, then +2m, +5m, +10m, +15m, +30m, +60m (repeat).
   const selectUnacknowledged = db.prepare(`
     SELECT * FROM messages WHERE agent_id = ? AND status = 'delivered' AND acknowledged_at IS NULL
       AND source != 'system'
-      AND delivered_at < datetime('now', '-30 seconds')
+      AND (next_redeliver_at IS NULL OR next_redeliver_at <= datetime('now'))
     ORDER BY priority DESC, created_at ASC
+  `);
+  // Bump redeliver_count and schedule the next re-ping for messages just re-surfaced.
+  const updateRedelivered = db.prepare(`
+    UPDATE messages
+    SET redeliver_count = redeliver_count + 1,
+        next_redeliver_at = datetime('now', '+' || CASE redeliver_count
+          WHEN 0 THEN '120'
+          WHEN 1 THEN '300'
+          WHEN 2 THEN '600'
+          WHEN 3 THEN '900'
+          WHEN 4 THEN '1800'
+          ELSE '3600'
+        END || ' seconds')
+    WHERE agent_id = ? AND status = 'delivered' AND acknowledged_at IS NULL
+      AND (next_redeliver_at IS NULL OR next_redeliver_at <= datetime('now'))
   `);
   const markDelivered = db.prepare(`
     UPDATE messages
-    SET status = 'delivered', delivered_at = datetime('now')
+    SET status = 'delivered', delivered_at = datetime('now'), next_redeliver_at = datetime('now', '+60 seconds')
     WHERE agent_id = ? AND status = 'pending'
   `);
   const resetPendingCount = db.prepare(`
@@ -860,6 +880,7 @@ export function getPendingMessages(agentId: string) {
     const pending = selectPending.all(agentId);
     const unacked = selectUnacknowledged.all(agentId);
     markDelivered.run(agentId);
+    if (unacked.length > 0) updateRedelivered.run(agentId);
     resetPendingCount.run(agentId);
     // Combine new pending + previously-delivered-but-unacknowledged, deduped by id
     const seen = new Set<unknown>();
@@ -897,11 +918,14 @@ export function addMessage(agentId: string, content: string, source: string = "u
 // messages — those require an explicit POST /messages/ack from the agent.
 export function acknowledgeMessages(agentId: string) {
   const db = getDb();
+  // Only auto-ack if next_redeliver_at was >5 min ago — means the agent never picked it up
+  // after the backoff window passed (dead/crashed agent). Live agents keep next_redeliver_at
+  // fresh on each re-delivery so they won't be incorrectly auto-acked mid-backoff.
   const ackStmt = db.prepare(`
     UPDATE messages
     SET status = 'acknowledged', acknowledged_at = datetime('now')
-    WHERE agent_id = ? AND status = 'delivered'
-      AND delivered_at < datetime('now', '-300 seconds')
+    WHERE agent_id = ? AND status = 'delivered' AND acknowledged_at IS NULL
+      AND (next_redeliver_at IS NULL OR next_redeliver_at < datetime('now', '-300 seconds'))
   `);
   const resetCount = db.prepare(`
     UPDATE agents SET pending_message_count = 0 WHERE id = ?
