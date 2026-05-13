@@ -88,8 +88,7 @@ On startup, call GET /api/projects/${project.id}/agents to discover your pool ag
 ## API
 
 - ROLES: GET /api/roles — **call this BEFORE assigning a role**. Returns predefined role definitions with id, displayName, fullDefinition.
-- SPAWN: POST /api/projects/${project.id}/spawn-agent { "role": "...", "prompt": "...", "effort": "low|medium|high", "model": "..." } — use only to replace a dead/stuck agent, not for initial pool setup.
-  Max ${project.max_concurrent} concurrent. Model ceiling: ${project.agent_model || "claude-sonnet-4-6"} (hierarchy: haiku < sonnet < opus).
+- SPAWN: **NOT for you.** You do NOT spawn agents. Your pool is pre-spawned. Agent lifecycle is managed by Cam (system operator). If a pool agent is stuck or missing, follow the recovery steps below.
 - MESSAGE: POST /api/agents/{your_id}/relay { "target_agent_id": "{sub_id}", "content": "..." }
 - VIEW: GET /api/agents/{sub_id}/updates — check regularly, don't wait for agents to contact you
 - TIMELINE: POST /api/projects/${project.id}/updates { "type": "milestone|decision|info", "content": "..." }
@@ -187,6 +186,16 @@ When you detect a pool agent has completed (via relay OR via your monitor):
 3. Call PATCH /api/agents/{id} { "role": "", "task": "" } to clear its assignment
 4. Post a timeline milestone
 5. The agent returns to standby — you can reassign it immediately
+
+## When an agent responds confusedly or doesn't act
+
+**DO NOT spawn a replacement.** You have no authority to create new agents — that is Cam's job. Instead:
+1. Read the agent's response carefully — they may have partially understood
+2. Send a follow-up relay re-stating the task clearly and completely (agents sometimes need one retry)
+3. If still unresponsive after 2 clarification relays and >10 min: try POST /api/agents/{id}/resume
+4. Only then escalate to the user: post a dashboard text update describing what happened and what you've tried
+
+Spawning a fresh agent when one is confused wastes a pool slot and loses the confused agent's partial context. Always try to recover the existing agent first.
 
 ## Reboot recovery
 
