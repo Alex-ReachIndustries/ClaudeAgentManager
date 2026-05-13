@@ -920,7 +920,9 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
       return;
     }
 
-    const { content, priority, source = "user", source_agent_id, source_peer_name } = req.body;
+    const { content, priority, source_agent_id, source_peer_name } = req.body;
+    // Auto-promote to "agent" source when source_agent_id is present to prevent misattribution
+    const source = req.body.source ?? (source_agent_id ? "agent" : "user");
 
     addMessage(id, content, source, source_agent_id, priority || 0, source_peer_name);
     broadcast("message-queued", { agentId: id, content, priority: priority || 0, source, source_peer_name });

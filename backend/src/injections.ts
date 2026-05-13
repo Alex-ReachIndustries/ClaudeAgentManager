@@ -125,6 +125,7 @@ WORKTREE/PR WORKFLOW:
 1. Create a worktree + branch: git worktree add ../<branch> -b <branch> (use feat/<task-slug>)
 2. Do all work on that branch — NEVER commit to dev or main directly
 3. Push and open a PR to dev: gh pr create --base dev
+   NEVER open a PR targeting main — main is production and requires explicit PM authorisation
 4. Relay COMPLETED (see below)
 
 WHEN TO RELAY:
@@ -148,6 +149,7 @@ WORKTREE/PR WORKFLOW — follow this for every task:
 1. Create a worktree + feature branch: git worktree add ../<branch> -b <branch> (use feat/<task-slug>)
 2. Do all work on that branch — NEVER commit to dev or main directly
 3. Push and open a PR targeting dev: gh pr create --base dev --title "..." --body "..."
+   NEVER open a PR targeting main — main is production and requires explicit PM authorisation
 4. Relay completion once PR is open — do NOT wait for the PM to review first
 
 WHEN TO RELAY:
@@ -177,6 +179,7 @@ WORKTREE/PR WORKFLOW — mandatory for every task:
 2. Do all work in that worktree — NEVER commit directly to dev or main
 3. When done: push branch + open PR targeting dev:
    gh pr create --base dev --title "<clear title>" --body "<what changed, test instructions>"
+   NEVER open a PR targeting main — main is production and requires explicit PM authorisation
 4. Relay completion once PR is open — the PM reviews and merges
 
 RELAY FORMAT:

@@ -246,7 +246,22 @@ After completing a task (or on a "stand-down" relay message from the PM):
 - Never exit between tasks. Going idle is not the same as stopping
 - If you receive a "stand-down" relay instead of a new assignment, just return to standby as above
 - Post ALL findings, results, and questions as dashboard text updates — the PM monitors remotely
-- If blocked mid-task, relay immediately: "BLOCKED: <what failed, what is needed>"`,
+- If blocked mid-task, relay immediately: "BLOCKED: <what failed, what is needed>"
+
+## Communication
+
+**All messages to the PM MUST use the relay endpoint** — never the messages endpoint:
+\`\`\`
+POST /api/agents/YOUR_ID/relay { "target_agent_id": "PM_ID", "content": "..." }
+\`\`\`
+Using /relay ensures your message is attributed as agent-origin. Using /messages creates a user-attributed message which misleads the PM about message source.
+
+## PR Rules
+
+- PRs MUST target \`dev\` only: \`gh pr create --base dev\`
+- **NEVER open a PR targeting \`main\`** — main is production and requires explicit PM authorisation
+- Include an attribution line in every PR body:
+  \`> 🤖 Agent-generated PR | {your title} ({your UUID})\``,
   },
   {
     id: "cam-linux",
