@@ -559,20 +559,17 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number; base_title?: string; progress?: number } = {};
     if (title && existing) {
       const storedBaseTitle = (existing as Record<string, unknown>).base_title as string | null;
-      // explicitBaseTitle allows agents to reset their identity name on any registration
-      const effectiveBaseTitle = explicitBaseTitle || storedBaseTitle;
       if (explicitBaseTitle) {
+        // Agent explicitly resetting their identity (e.g. PM-assigned role change) — allow it
         agentFields.base_title = explicitBaseTitle;
-      }
-      if (effectiveBaseTitle && !title.startsWith(effectiveBaseTitle)) {
-        // Enforce fixed-name prefix: "BaseName — current status"
-        agentFields.title = `${effectiveBaseTitle} — ${title}`;
+        agentFields.title = explicitBaseTitle;
+      } else if (storedBaseTitle) {
+        // Identity locked: ignore whatever title the agent sent and keep the stored base_title
+        agentFields.title = storedBaseTitle;
       } else {
+        // No identity set yet — lock it from the provided title
         agentFields.title = title;
-        // First update for an existing agent without base_title: backfill it
-        if (!effectiveBaseTitle) {
-          agentFields.base_title = title;
-        }
+        agentFields.base_title = title;
       }
     }
 
