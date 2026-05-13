@@ -783,6 +783,24 @@ private fun AgentRelayBubble(message: AgentMessage) {
             }
         }
 
+        if (message.status == MessageStatus.ACKNOWLEDGED && !message.ackContent.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(LumiInfo.copy(alpha = 0.10f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "Ack: ${message.ackContent}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    ),
+                    color = LumiInfo
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(2.dp))
 
         Row(
@@ -864,6 +882,24 @@ private fun PeerMessageBubble(message: AgentMessage) {
                     text = message.content,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LumiOnSurface
+                )
+            }
+        }
+
+        if (message.status == MessageStatus.ACKNOWLEDGED && !message.ackContent.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(LumiSuccess.copy(alpha = 0.10f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "Ack: ${message.ackContent}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    ),
+                    color = LumiSuccess
                 )
             }
         }
