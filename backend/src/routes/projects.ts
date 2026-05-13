@@ -178,7 +178,7 @@ When you detect a pool agent has completed (via relay OR via your monitor):
 
 ## Reboot recovery
 
-On every PM startup: call GET /api/projects/${project.id}/agents and look for pool agents. Resume any that are not actively running via POST /api/agents/{id}/resume. Spawn new standby agents only for genuinely missing slots.
+On every PM startup: call GET /api/projects/${project.id}/agents and look for pool agents. For any that are not running: resume via POST /api/agents/{id}/resume — this preserves their context and is faster than spawning. Only spawn a fresh agent if no archived record exists for that slot (slot is genuinely missing). Report to the user if a slot cannot be recovered.
 
 ## Sub-agent prompt requirements
 
@@ -190,14 +190,23 @@ Give sub-agents clear prompts with context, acceptance criteria, and file locati
 5. Never go idle without relaying results to the PM first
 6. Post findings/questions as session manager text updates, not terminal output
 
-## Workflow
+## Phase-Gate Workflow
 
-1. Call GET /api/projects/${project.id}/agents to discover your pre-spawned pool agents
-2. Break project into phases/tasks; judge complexity to assign to Sonnet vs Haiku
-3. Assign tasks to pool agents via relay; monitor actively; nudge if silent >5min
-4. On completion relay: review PR + test via SIS, clear agent role/task via PATCH, post timeline milestone
-5. On error/blocker relay: post timeline info, reassign or adjust plan
-6. Post final summary when all phases complete
+1. **Discover** your pool: GET /api/projects/${project.id}/agents.
+2. **Plan phases**: break the request into phases. A phase = parallel sub-tasks that must all pass a gate review before the next phase begins.
+3. **Assign**: relay each sub-task to an idle pool agent, giving each a worktree branch name (feat/<slug>). Multiple agents work in parallel on separate branches.
+4. **Monitor**: poll actively via your bash monitoring loop. Nudge if silent >5min.
+5. **Gate review** (when all PRs for the phase are open):
+   a. Read each diff: \`git diff origin/dev...feat/<branch>\`
+   b. Relay feedback if issues; wait for fixes + re-check
+   c. Merge all approved PRs to dev
+   d. E2E test via SIS — golden path + key edge cases, take screenshots as proof
+   e. **PASS** → post timeline milestone → start next phase
+   f. **FAIL** → assign bugfix tasks on new branches → await PRs → re-test
+6. **Report** a timeline milestone at each phase gate.
+7. When all phases complete, post a final summary milestone.
+
+**The gate review is non-negotiable. A phase is NOT complete until your SIS tests pass.**
 
 ## AWS — HARD PROHIBITION
 
@@ -402,7 +411,17 @@ router.post("/:id/start", (req: Request, res: Response) => {
 
       for (const pool of poolConfig) {
         const poolLaunch = createLaunchRequest("new", folderPath);
-        const poolPrompt = `You are ${pool.label} for project "${project.name}". Your title is EXACTLY "${pool.label}" — set it in every status update and NEVER change it or append anything to it. Run /session-connect, then post status=idle with title="${pool.label}" and summary="Standby — awaiting assignment". Wait for relay messages from the PM. Discover your PM via: GET /api/projects/${id} → pm_agent_id field.`;
+        const poolPrompt = `You are ${pool.label} for project "${project.name}". Run /session-connect, then post status=idle with summary="Standby — awaiting assignment".
+
+Wait for relay messages from the PM. Discover your PM via: GET /api/projects/${id} → pm_agent_id field.
+
+When you receive a task, you will be given a feature branch name (e.g. feat/<task-slug>). Workflow:
+1. Create a worktree for that branch: git worktree add ../<branch> -b <branch>
+2. Do all work on that branch — NEVER commit to dev or main directly
+3. Push and open a PR targeting dev: gh pr create --base dev
+4. Relay to PM: "COMPLETED: branch=<branch> PR=<url> summary=<what changed>"
+
+Your title is EXACTLY "${pool.label}" — the server enforces this.`;
         db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
           .run(JSON.stringify({
             project_id: id,
