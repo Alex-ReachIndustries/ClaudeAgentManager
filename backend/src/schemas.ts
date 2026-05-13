@@ -52,6 +52,7 @@ export const messageSchema = z.object({
 
 export const agentPatchSchema = z.object({
   title: z.string().max(200).optional(),
+  base_title: z.string().max(200).optional(),
   status: z.enum(agentStatuses).optional(),
   metadata: z.string().max(262_144).optional(),
   poll_delay_until: z.string().nullable().optional(),

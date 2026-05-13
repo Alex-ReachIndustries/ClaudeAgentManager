@@ -80,13 +80,12 @@ const SESSION_RULES_OPUS = `
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
    Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID. Always address agents by UUID in inter-agent comms.
 11. DISK SPACE — before heavy operations: check free space with df -h /. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
-12. AGENT NAMING — Your title and base_title are your stable identity. Rules:
-    - PM agents: always "<Project> - PM" (e.g. "AIGroupPortal - PM"). Fixed. Never changes.
-    - All other agents: set base_title once at session start to your role (e.g. "Frontend Dev", "QA Agent"). Never change it mid-session UNLESS your PM assigns you a new role/task.
-    - When a PM assigns you a role or task via relay message: update your title AND base_title to "Role - Shortform task" (e.g. "Frontend Dev - auth refactor"). This is the ONE allowed mid-session rename — do it by sending BOTH title and base_title in the same update.
-    - "Cam" is a RESERVED name — only the agent spawned with the cam-linux or cam-windows role may use this title. NO other agent may ever use "Cam" as their title, base_title, or display name.
-    - NEVER append task descriptions, tool names, or project names to your title. The server enforces this: once base_title is set, any title you send is silently replaced by your stored base_title. The ONLY way to rename yourself is to send a new base_title.
-    - When referring to another agent in user-facing updates: "Name (short-uuid)" — e.g. "Frontend Dev (1732d70b)".
+12. AGENT NAMING — Your title and base_title are your fixed identity. Rules:
+    - Project pool agents (Sonnet A/B, Haiku A/B, PM): your name is "<Project> - <Slot>" (e.g. "AIGroupPortal - Sonnet A"). The server sets this from launch metadata — do NOT send base_title in updates. Your identity is the base_title the server returns on your first update response.
+    - Standalone agents: set base_title ONCE on your very first update (e.g. "Frontend Dev", "QA Agent"). After that, base_title is locked server-side — sending it again has no effect.
+    - "Cam" is a RESERVED name — only the agent spawned with the cam-linux or cam-windows role may use this title. NO other agent may ever use "Cam" as their title or base_title.
+    - NEVER append task descriptions to your title. The server enforces this: any title you send is silently replaced by your stored base_title.
+    - When referring to another agent in user-facing updates: "Name (short-uuid)" — e.g. "AIGroupPortal - Sonnet A (09b0f8bb)".
 13. BEFORE CONTEXT COMPACT — mandatory checklist (context compact WILL erase your working memory, so save everything needed to resume):
     (a) Write claudeadmin/context-summary.md with ALL of these:
         - Your current task (exact description, not just "working on X")

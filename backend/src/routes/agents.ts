@@ -310,10 +310,10 @@ API_KEY=$(cat ~/.claude/agent-manager-key 2>/dev/null || echo "")
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/updates" \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"status","title":"<ShortIdentityName>","base_title":"<ShortIdentityName>","summary":"<what you are doing>","content":"<role, current state, next actions>","status":"idle","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}'
+  -d '{"type":"status","title":"<ShortIdentityName>","summary":"<what you are doing>","content":"<role, current state, next actions>","status":"idle","workspace":"<folder>","cwd":"<abs path>","pid":<PID>}'
 \`\`\`
 
-**Title and base_title**: Set both to your fixed identity name and **never change it** — for project pool agents use the exact format \`<ProjectName> - PM\`, \`<ProjectName> - Sonnet A\`, \`<ProjectName> - Sonnet B\`, \`<ProjectName> - Haiku A\`, or \`<ProjectName> - Haiku B\`. For standalone agents use a short role name (e.g. "Cam", "Backend Dev"). Do NOT append task descriptions. This name is permanent for the session.
+**Title**: Use your fixed identity name and **never append task descriptions or change it**. Do NOT send base_title in updates — the server manages it. For project pool agents (Sonnet A/B, Haiku A/B, PM), your name is set by the server at launch; check base_title in the response and use that exact value. For standalone agents your first update title locks as your identity.
 
 **For compact mode**, post TWO updates:
 1. \`type=status\` with all metadata fields and summary "Context compacted — see details"
@@ -412,7 +412,7 @@ curl -s -H "Authorization: Bearer $API_KEY" -X POST "$AGENT_URL/api/agents/$SESS
         get_agent: { method: "GET", path: "/api/agents/:id", description: "Get single agent with computed fields" },
         patch_agent: { method: "PATCH", path: "/api/agents/:id", body: "{title?, status?, metadata?, poll_delay_until?, workspace?, cwd?}", description: "Update agent fields" },
         delete_agent: { method: "DELETE", path: "/api/agents/:id", description: "Delete agent and all associated data" },
-        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?, cwd?, pid?, base_title?, status?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
+        post_update: { method: "POST", path: "/api/agents/:id/updates", body: "{type, content, summary?, title?, progress?, projects?, todos?, workspace?, cwd?, pid?, status?}", description: "Post an update (auto-creates agent if new). Returns {ok, pendingMessages}" },
         get_updates: { method: "GET", path: "/api/agents/:id/updates", description: "Get all updates for an agent" },
         post_message: { method: "POST", path: "/api/agents/:id/messages", body: "{content}", description: "Queue a message for the agent" },
         get_messages: { method: "GET", path: "/api/agents/:id/messages", query: "?status=pending&deliver=true", description: "Get messages. With deliver=true, atomically marks pending as delivered" },
@@ -559,15 +559,12 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
     const agentFields: { title?: string; status?: string; workspace?: string; cwd?: string; pid?: number; base_title?: string; progress?: number } = {};
     if (title && existing) {
       const storedBaseTitle = (existing as Record<string, unknown>).base_title as string | null;
-      if (explicitBaseTitle) {
-        // Agent explicitly resetting their identity (e.g. PM-assigned role change) — allow it
-        agentFields.base_title = explicitBaseTitle;
-        agentFields.title = explicitBaseTitle;
-      } else if (storedBaseTitle) {
-        // Identity locked: ignore whatever title the agent sent and keep the stored base_title
+      if (storedBaseTitle) {
+        // base_title is immutable via agent updates — always lock title to stored identity.
+        // Use PATCH /agents/:id (admin) to change base_title when needed.
         agentFields.title = storedBaseTitle;
       } else {
-        // No identity set yet — lock it from the provided title
+        // No identity set yet — lock it from the provided title (first-time backfill)
         agentFields.title = title;
         agentFields.base_title = title;
       }
