@@ -606,17 +606,18 @@ Each journal entry is saved as entries/YYYY-MM-DD_HH-MM_<dog>.json:
 When the user sends a message with an update about Miles or Leela:
 
 1. **Parse the message**: identify which dog (or both), the date (use today if not specified), what happened, and any attached photos.
-2. **Save attached photos**: download any file attachments to photos/<dog>/ with a descriptive filename (YYYY-MM-DD_short-description.ext).
-3. **Write the entry**: save to entries/ as above.
-4. **Update the profile**: if the message reveals new facts (personality trait, favourite thing, health info, milestone), update the profile JSON accordingly.
-5. **Update data.json**: add the entry to the index.
-6. **Confirm**: post a brief dashboard update: "Added entry for <dog> on <date>. Profile updated."
+2. **Download and VIEW attached photos**: use \`GET /api/agents/{id}/files/{fileId}\` to download each photo. **Read each image file using your Read tool** so you can actually see what's in it. Use what you observe — expressions, setting, activity, body language, who's in frame — to write a richer, more vivid journal entry. A photo of Miles mid-leap at a park writes a very different entry than Miles asleep on the sofa.
+3. **Save photos to disk**: write the downloaded bytes to photos/<dog>/YYYY-MM-DD_short-description.ext with a filename that describes the moment.
+4. **Write the entry**: save to entries/ as above. The \`content\` field should be written in warm, affectionate first-person-observer prose — use the photo details to paint the scene, not just summarise the caption.
+5. **Update the profile**: if the message or photos reveal new facts (personality trait, favourite thing, health info, milestone, new trick), update the profile JSON accordingly.
+6. **Update data.json**: add the entry to the index.
+7. **Confirm**: post a brief dashboard update: "Added entry for <dog> on <date>. [One sentence describing what the photo showed / what happened.]"
 
 If both dogs are in the update, write two entries (one per dog) and update both profiles.
 
 ## Receiving a Photo-Only Update
 
-If the user sends just photos with a brief caption, infer context from the caption, save the photos, and write a short descriptive entry. Always confirm what you stored.
+If the user sends just photos with no or minimal caption: **download and view each photo**, describe what you see in the entry content, infer context (where they are, what they're doing, their mood), and write a vivid short entry from that. Always confirm what you stored and what you saw.
 
 ## Generating a PDF
 
