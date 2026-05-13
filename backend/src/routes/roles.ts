@@ -68,6 +68,7 @@ Also call \`PATCH /api/agents/{sub_id} { "role": "<role id>", "task": "<task sum
 - SUSPEND: POST /api/agents/{sub_id}/close — terminates process, frees slot. Can resume later.
 - RESUME: POST /api/agents/{sub_id}/resume — restarts with full history. Prefer over spawning.
 - SPAWN (last resort only): POST /api/projects/{project_id}/spawn-agent { "role": "...", "prompt": "...", "folder_path": "...", "effort": "...", "model": "..." }
+- FILES (download attachment): GET /api/agents/{your_id}/files/{fileId} — agent ID is REQUIRED in the path. Never use /api/files/{fileId} — that endpoint does not exist and returns an HTML 404 error page which will corrupt your context if you try to read it as an image.
 
 NEVER use Claude Agent or Task tools to create sub-agents — those are invisible on the dashboard.
 
