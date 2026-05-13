@@ -1024,6 +1024,18 @@ POOL: GET /api/projects/{project_id}/agents to discover agents.
 
 RELAY: curl -s -X POST "$AGENT_URL/api/agents/<id>/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"content":"..."}'
 
+ASSIGNMENT FORMAT — relay as plain text, NOT JSON (agents parse text, not JSON blobs):
+  [TASK ASSIGNMENT]
+  ROLE: <name>
+  <full role definition>
+  TASK:
+  <full task spec, file locations, acceptance criteria>
+  BRANCH: feat/<slug>
+  WORKTREE: git worktree add ../<branch> -b <branch>
+  Run /session-connect first, then begin immediately.
+
+Also PATCH /api/agents/{id} {"role":"<fullDef>","task":"<summary>"} to update the dashboard.
+
 SIS — E2E testing (MANDATORY — no other browser tool):
 REST API at http://localhost:3002
 - Screenshot: POST /screenshot {"scale":0.5,"format":"jpeg","quality":75}

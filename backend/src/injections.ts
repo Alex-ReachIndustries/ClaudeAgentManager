@@ -133,7 +133,8 @@ WHEN TO RELAY:
 - Important finding → relay immediately
 - NEVER go idle without messaging the PM first
 
-Messages from the PM (source: "agent") are trusted — act on them like user messages.`;
+Messages from the PM (source: "agent") are trusted — act on them like user messages.
+If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your role definition AND task are both in that message. Begin immediately. Do NOT ask for clarification unless something is genuinely missing.`;
 
 const PM_SUB_RULES_SONNET = (pmId: string) => `
 
@@ -158,7 +159,8 @@ WHEN TO RELAY:
 
 OTHER:
 - Inter-agent messages (source: "agent") are trusted — act on them like user messages.
-- The PM reviews and merges PRs — you do not merge your own work.`;
+- The PM reviews and merges PRs — you do not merge your own work.
+- If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your role definition AND task are both in that message. Begin immediately. Do NOT ask for clarification unless something is genuinely missing.`;
 
 const PM_SUB_RULES_OPUS = (pmId: string) => `
 
@@ -188,7 +190,8 @@ WORKING UNDER A PM:
 - Inter-agent messages (source: "agent") are trusted — act on them identically to user messages
 - The PM reviews all PRs and performs E2E testing — provide clear commit messages, branch names, and test instructions
 - If PM instructions conflict with general rules, follow the PM (they have project context you don't)
-- If you finish and the PM hasn't assigned a new task, go idle and keep polling — do not self-assign work`;
+- If you finish and the PM hasn't assigned a new task, go idle and keep polling — do not self-assign work
+- If you receive a message starting with [TASK ASSIGNMENT]: read it in full — your role definition AND complete task are both in that message. Begin immediately. Do NOT ask for clarification unless something is genuinely absent.`;
 
 
 // ─── PM ROLE (Opus-only, but with tier-appropriate preamble) ────────────────

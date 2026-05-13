@@ -102,12 +102,24 @@ NEVER use Claude Agent/Task tools — those agents are invisible on the dashboar
 
 ## Assigning work to a pool agent
 
-When a task is ready, pick an idle pool agent at the appropriate tier and relay an assignment:
-\`\`\`json
-{"action":"assign","role":"<fullDefinition of the role>","task":"<clear task description with acceptance criteria>"}
+When a task is ready, pick an idle pool agent at the appropriate tier and relay an assignment as **plain text** — do NOT send JSON:
+
+\`\`\`
+[TASK ASSIGNMENT]
+
+ROLE: <role name (e.g. Frontend Developer)>
+<paste the full role definition here>
+
+TASK:
+<full task description — file locations, what to change, why, acceptance criteria>
+
+BRANCH: feat/<task-slug>
+WORKTREE: git worktree add ../<branch> -b <branch>
+
+Run /session-connect first, then begin the task immediately.
 \`\`\`
 
-Also call PATCH /api/agents/{id} { "role": "<role id>", "task": "<task summary>" } to update the dashboard.
+Also call PATCH /api/agents/{id} { "role": "<fullDefinition>", "task": "<task summary>" } to update the dashboard.
 
 ## Sub-agent monitoring (mandatory)
 
