@@ -119,6 +119,18 @@ for u in (updates if isinstance(updates, list) else []):
       echo "BLOCKED:$short:blocking prompt detected in terminal"
     fi
   done
+
+  # 5. Watch for new PRs — agents must open a PR on completion, so this is a reliable signal
+  #    Run in the project repo directory
+  gh pr list --state open --json number,title,headRefName,createdAt --limit 20 2>/dev/null | python3 -c "
+import json,sys,datetime
+prs=json.loads(sys.stdin.read())
+cutoff=(datetime.datetime.utcnow()-datetime.timedelta(minutes=10)).isoformat()
+for pr in prs:
+    if pr.get('createdAt','') > cutoff:
+        print(f'NEW_PR:#{pr[\"number\"]}:{pr[\"title\"][:80]}')
+" 2>/dev/null
+
   sleep 300
 done
 \`\`\`
@@ -128,6 +140,7 @@ Use **persistent: true** on this Monitor. On each notification:
 - **SIGNAL** — agent posted a notable dashboard update. Check their full updates and act (review, nudge, reassign).
 - **TERMINAL** — shows what the agent is actually doing in their terminal. Verify they are working on the right task.
 - **STATUS:idle** — agent went idle. If you assigned them work, check if they completed or drifted.
+- **NEW_PR** — a new PR appeared. Cross-reference against assigned tasks — if it's from one of your agents, treat it as a COMPLETED signal even if the agent hasn't relayed yet. Review the PR immediately.
 - **BLOCKED** — agent hit a blocking prompt (plan mode, interactive selection, etc). **Unstick them immediately:**
   \`\`\`bash
   tmux send-keys -t <short-uuid> Escape   # cancel the prompt
@@ -158,8 +171,10 @@ Every task assignment MUST instruct the agent to:
 
 1. Call GET /api/projects/{project_id}/agents to discover your pre-spawned pool agents
 2. Break project into phases/tasks; judge complexity to assign to Sonnet vs Haiku
-3. Assign tasks to pool agents via relay; monitor actively; nudge if silent >5min
-4. On COMPLETED relay: review PR + test via SIS, clear agent role/task, post timeline milestone
+3. Assign tasks to pool agents via relay; monitor actively
+   - **Hard timeout**: if an agent has not relayed back AND no new PR has appeared within **15 minutes** of assignment, proactively check on it: read its terminal output and latest dashboard updates. Do not wait passively. A simple task should take 5–10 minutes; 15+ minutes of silence is a signal something is wrong.
+   - **PR as completion signal**: agents must open a PR when done. Your monitor watches for new PRs. Do not wait only for a relay — a new PR on the agent's feature branch is as good as a COMPLETED relay.
+4. On COMPLETED (relay OR new PR detected): review PR + test via SIS, clear agent role/task, post timeline milestone
 5. On BLOCKED relay: post timeline info, reassign or adjust the plan
 6. Post a final summary when all phases are complete
 
