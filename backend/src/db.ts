@@ -959,6 +959,7 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
   const fetchSourceAgents = db.prepare(`
     SELECT DISTINCT source_agent_id FROM messages
     WHERE agent_id = ? AND id IN (${placeholders}) AND source_agent_id IS NOT NULL
+      AND (type IS NULL OR type != 'ack_echo')
   `);
   const getTitle = db.prepare("SELECT title FROM agents WHERE id = ?");
   const insertEcho = db.prepare(`
