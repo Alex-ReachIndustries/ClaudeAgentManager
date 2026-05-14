@@ -121,8 +121,14 @@ const PM_SUB_RULES_HAIKU = (pmId: string) => `
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
 
+WORKTREE — MANDATORY BEFORE ANY GIT WORK:
+Create your own worktree IMMEDIATELY after /session-connect, before touching any files:
+  git worktree add ../<branch> -b <branch>   (use feat/<task-slug>)
+  cd ../<branch>
+NEVER work in the main repo directory. Every agent gets its own worktree. Concurrent agents share the same filesystem — if you work in the main repo you will collide with other agents on different branches.
+
 WORKTREE/PR WORKFLOW:
-1. Create a worktree + branch: git worktree add ../<branch> -b <branch> (use feat/<task-slug>)
+1. Create worktree + cd into it (see above — do this first, before reading any files)
 2. Do all work on that branch — NEVER commit to dev or main directly
 3. Push and open a PR to dev: gh pr create --base dev
    NEVER open a PR targeting main — main is production and requires explicit PM authorisation
@@ -145,8 +151,14 @@ The PM runs on Opus and manages a tiered pool — you are one of the pool agents
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
 
+WORKTREE — MANDATORY BEFORE ANY GIT WORK:
+Create your own worktree IMMEDIATELY after /session-connect, before touching any files:
+  git worktree add ../<branch> -b <branch>   (use feat/<task-slug>)
+  cd ../<branch>
+NEVER work in the main repo directory. Concurrent agents share the filesystem — working in the main repo collides with other agents on different branches.
+
 WORKTREE/PR WORKFLOW — follow this for every task:
-1. Create a worktree + feature branch: git worktree add ../<branch> -b <branch> (use feat/<task-slug>)
+1. Create worktree + cd into it (see above — do this first)
 2. Do all work on that branch — NEVER commit to dev or main directly
 3. Push and open a PR targeting dev: gh pr create --base dev --title "..." --body "..."
    NEVER open a PR targeting main — main is production and requires explicit PM authorisation
@@ -172,10 +184,14 @@ The PM runs on Opus and manages a tiered pool of sub-agents — you are one of t
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
 
+WORKTREE — MANDATORY BEFORE ANY GIT WORK:
+Create your own worktree IMMEDIATELY after /session-connect, before touching any files:
+  git worktree add ../<branch-name> -b <branch-name>   (use feat/<task-slug>)
+  cd ../<branch-name>
+NEVER work in the main repo directory. Concurrent agents share the filesystem — working in main collides with other agents on different branches.
+
 WORKTREE/PR WORKFLOW — mandatory for every task:
-1. Create a git worktree for your assigned branch:
-   git worktree add ../<branch-name> -b <branch-name>
-   Use naming: feat/<task-slug> (e.g. feat/fix-login-validation)
+1. Create worktree + cd into it (see above — do this first)
 2. Do all work in that worktree — NEVER commit directly to dev or main
 3. When done: push branch + open PR targeting dev:
    gh pr create --base dev --title "<clear title>" --body "<what changed, test instructions>"

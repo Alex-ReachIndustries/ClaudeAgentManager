@@ -155,17 +155,27 @@ When you detect a pool agent has completed (via relay OR via your monitor):
 2. **Test via SIS** — for any UI changes, use the Screen Interaction Service to verify visually
 3. Call \`PATCH /api/agents/{sub_id} { "role": "", "task": "" }\` to clear its assignment
 4. Post a timeline milestone
-5. The agent returns to standby — you can reassign it immediately
+5. **Clean up the worktree** — after the PR is merged (or if it's closed), relay to the agent:
+   \`"Clean up your worktree: git worktree remove ../<branch> --force && git branch -d <branch>"\`
+   If the agent is already in standby, run the cleanup yourself from the main repo:
+   \`git worktree remove ../<branch> --force && git branch -d <branch>\`
+   Stale worktrees accumulate quickly across sessions — clean up after every merge.
+6. The agent returns to standby — you can reassign it immediately
 
 ## Task prompt requirements
 
 Every task assignment MUST instruct the agent to:
 1. Run /session-connect first to register and start their message watcher
-2. Post frequent, descriptive /agent-checkin updates (what file, what test, what they found — not just "working...")
-3. Relay completion to PM: POST /api/agents/THEIR_ID/relay { "target_agent_id": "YOUR_ID", "content": "COMPLETED: <summary, files, issues>" }
-4. Relay blockers immediately: "BLOCKED: <what failed, what is needed>"
-5. Never go idle without relaying results first
-6. Post findings and questions as session manager text updates, not terminal output
+2. **Immediately create a per-task worktree** — before reading any files or running any git commands:
+   \`git worktree add ../<feat/task-slug> -b <feat/task-slug> && cd ../<feat/task-slug>\`
+   **NEVER work in the main repo directory.** Concurrent agents share the same filesystem — working in the main repo causes branch collisions with other active agents.
+3. Post frequent, descriptive /agent-checkin updates (what file, what test, what they found — not just "working...")
+4. Relay completion to PM: POST /api/agents/THEIR_ID/relay { "target_agent_id": "YOUR_ID", "content": "COMPLETED: <summary, files, issues>" }
+5. Relay blockers immediately: "BLOCKED: <what failed, what is needed>"
+6. Never go idle without relaying results first
+7. Post findings and questions as session manager text updates, not terminal output
+
+After assigning, **verify the agent is in their worktree** within 2–3 minutes: check \`GET /api/agents/{sub_id}\` and confirm \`cwd\` is NOT the main repo path. If it is still the main repo cwd, relay a nudge immediately.
 
 ## Workflow
 
@@ -246,11 +256,17 @@ Your PM will send you a relay message in this JSON format:
 When you receive an assignment:
 1. Restart your message watcher immediately (standard protocol)
 2. Acknowledge with checkin: status=working, summary="Received assignment: <role name>"
-3. Adopt the role fully — follow the role definition as your identity for this task
-4. Execute the task; post progress updates as instructed by the role
-5. When complete, relay back to the PM:
+3. **Create a per-task worktree immediately** — before reading any files or running git:
+   \`\`\`bash
+   git worktree add ../<feat/task-slug> -b <feat/task-slug>
+   cd ../<feat/task-slug>
+   \`\`\`
+   **NEVER work in the main repo directory.** Multiple agents share the same filesystem — staying in the main repo causes branch collisions with other active agents.
+4. Adopt the role fully — follow the role definition as your identity for this task
+5. Execute the task; post progress updates as instructed by the role
+6. When complete, relay back to the PM:
    POST /api/agents/YOUR_ID/relay { "target_agent_id": "PM_ID", "content": "COMPLETED: <summary of what was done, files changed, results>" }
-6. Return to standby (see below)
+7. Return to standby (see below)
 
 ## Returning to Standby
 
