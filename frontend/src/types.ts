@@ -50,6 +50,7 @@ export interface AgentMessage {
   source?: string;
   source_agent_id?: string;
   source_peer_name?: string;
+  type?: 'standard' | 'ack_echo';
 }
 
 export interface AgentFile {

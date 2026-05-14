@@ -257,6 +257,10 @@ export function getDb(): Database.Database {
   migrate("ALTER TABLE messages ADD COLUMN ack_content TEXT");
   migrate("ALTER TABLE agents ADD COLUMN latest_ack_content TEXT");
 
+  // Message type: 'standard' (default) or 'ack_echo' (auto-created reply when an agent acks a message
+  // sent by another agent, so the sender can see the ack content in their own inbox)
+  migrate("ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'standard'");
+
   // Message re-delivery backoff: track re-delivery count and when to next surface the message.
   // Schedule: +1m initial, then +2m, +5m, +10m, +15m, +30m, +60m, repeat 60m until acked.
   migrate("ALTER TABLE messages ADD COLUMN redeliver_count INTEGER DEFAULT 0");
@@ -896,16 +900,16 @@ export function getPendingMessages(agentId: string) {
   return transaction();
 }
 
-export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0, sourcePeerName?: string) {
+export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0, sourcePeerName?: string, type: string = "standard") {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name) VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name, type) VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   const touchActivity = db.prepare(`
     UPDATE agents SET last_activity_at = datetime('now') WHERE id = ?
   `);
   const transaction = db.transaction(() => {
-    const result = insert.run(agentId, content, source, sourceAgentId ?? null, priority, sourcePeerName ?? null);
+    const result = insert.run(agentId, content, source, sourceAgentId ?? null, priority, sourcePeerName ?? null, type);
     touchActivity.run(agentId);
     return result;
   });
@@ -941,6 +945,8 @@ export function acknowledgeMessages(agentId: string) {
 // Explicit acknowledgement: agent confirms it has processed specific messages by ID.
 // Called from POST /agents/:id/messages/ack after the agent completes work.
 // ackContent is required — agents must demonstrate understanding of the message.
+// Side-effect: for any message that originated from another agent (source_agent_id set),
+// auto-inserts an ack_echo message into that agent's inbox so it can see the response.
 export function acknowledgeMessagesById(agentId: string, ids: number[], ackContent: string) {
   const db = getDb();
   const placeholders = ids.map(() => "?").join(", ");
@@ -950,9 +956,27 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
     WHERE agent_id = ? AND id IN (${placeholders}) AND status IN ('pending', 'delivered')
   `);
   const updateAgent = db.prepare("UPDATE agents SET latest_ack_content = ? WHERE id = ?");
+  const fetchSourceAgents = db.prepare(`
+    SELECT DISTINCT source_agent_id FROM messages
+    WHERE agent_id = ? AND id IN (${placeholders}) AND source_agent_id IS NOT NULL
+  `);
+  const getTitle = db.prepare("SELECT title FROM agents WHERE id = ?");
+  const insertEcho = db.prepare(`
+    INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name, type)
+    VALUES (?, ?, 'agent', ?, 0, NULL, 'ack_echo')
+  `);
   const transaction = db.transaction(() => {
     const result = ackStmt.run(ackContent, agentId, ...ids);
     if (ackContent) updateAgent.run(ackContent, agentId);
+
+    // Echo ack back to each originating agent
+    const ackingAgent = getTitle.get(agentId) as { title: string } | undefined;
+    const senderName = ackingAgent?.title ?? "Agent";
+    const sources = fetchSourceAgents.all(agentId, ...ids) as { source_agent_id: string }[];
+    for (const { source_agent_id } of sources) {
+      insertEcho.run(source_agent_id, `[ACK from ${senderName}]: ${ackContent}`, agentId);
+    }
+
     return result;
   });
   return transaction();

@@ -60,6 +60,45 @@ When a task is ready, pick an idle pool agent at the appropriate tier and relay 
 \`\`\`
 Also call \`PATCH /api/agents/{sub_id} { "role": "<role id>", "task": "<task summary>" }\` to update the dashboard.
 
+**Immediately after relaying**, start a per-task completion monitor for that agent (in addition to the pool health monitor). This monitor runs every 60s and terminates as soon as it detects a completion signal, giving you near-real-time detection rather than waiting up to 5 minutes:
+
+\`\`\`bash
+# Per-task completion monitor — start immediately after relaying assignment to SUB_ID
+# Replace SUB_ID and BRANCH with the assigned agent's UUID and expected branch name
+SUB_ID="<agent-uuid>"
+BRANCH="feat/<task-slug>"
+TIMEOUT_AT=$(date -d "+90 minutes" +%s)
+while [ $(date +%s) -lt $TIMEOUT_AT ]; do
+  # Check for relay completion message in PM's own inbox
+  msgs=$(curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=pending&deliver=true" 2>/dev/null)
+  if echo "$msgs" | grep -qi "COMPLETED\|BLOCKED"; then
+    echo "TASK_SIGNAL:$SUB_ID:relay received"
+    break
+  fi
+
+  # Check for new PR on the agent's branch
+  pr=$(gh pr list --head "$BRANCH" --state open --json number,title --limit 1 2>/dev/null)
+  if [ -n "$pr" ] && [ "$pr" != "[]" ]; then
+    echo "TASK_PR:$SUB_ID:$pr"
+    break
+  fi
+
+  # Check agent status — went idle = likely done
+  status=$(curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SUB_ID" 2>/dev/null | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('status',''))" 2>/dev/null)
+  if [ "$status" = "idle" ]; then
+    echo "TASK_IDLE:$SUB_ID:agent returned to idle"
+    break
+  fi
+
+  sleep 60
+done
+echo "TASK_MONITOR_DONE:$SUB_ID"
+\`\`\`
+
+On **TASK_SIGNAL** or **TASK_PR**: treat as COMPLETED — review the PR immediately.
+On **TASK_IDLE** with no PR: agent may have drifted — check terminal and relay a nudge.
+On **TASK_MONITOR_DONE** (timeout): agent exceeded 90 min — investigate immediately.
+
 **Always call GET /api/roles before assigning a role.** Use a predefined role whenever one fits — pass its fullDefinition verbatim, not a summary. Write a custom role only when no predefined role fits AND the task genuinely requires specialised context.
 
 ## Core API (Agent Manager)
