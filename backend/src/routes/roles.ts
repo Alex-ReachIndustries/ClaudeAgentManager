@@ -52,54 +52,49 @@ On startup, call \`GET /api/projects/{project_id}/agents\` to discover your pool
 - When Sonnet session limits are hit, continue with Haiku agents only until limits reset
 - Set effort levels appropriately: "high" for complex tasks, "medium" or "low" for simple ones
 
-## Assigning work to a pool agent
+## Assigning work — required steps in order
 
-When a task is ready, pick an idle pool agent at the appropriate tier and relay an assignment:
-\`\`\`json
-{"action":"assign","role":"<fullDefinition of the role from GET /api/roles>","task":"<clear task description with acceptance criteria>"}
-\`\`\`
-Also call \`PATCH /api/agents/{sub_id} { "role": "<role id>", "task": "<task summary>" }\` to update the dashboard.
+**STEP 1 — Fetch current roles:**
+\`GET /api/roles\` — always call this before every assignment. Pick the predefined role whose fullDefinition best fits the task. Default to "dev" if nothing else fits.
+⚠️ **NEVER send an assignment without a role.** Agents without a role have no engineering context and produce poor, error-prone work. This is the single most common failure mode.
 
-**Immediately after relaying**, start a per-task completion monitor for that agent (in addition to the pool health monitor). This monitor runs every 60s and terminates as soon as it detects a completion signal, giving you near-real-time detection rather than waiting up to 5 minutes:
-
+**STEP 2 — Relay the assignment (role field is MANDATORY):**
 \`\`\`bash
-# Per-task completion monitor — start immediately after relaying assignment to SUB_ID
-# Replace SUB_ID and BRANCH with the assigned agent's UUID and expected branch name
+curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"target_agent_id":"<SUB_UUID>","content":"{\"action\":\"assign\",\"role\":\"<FULL fullDefinition string verbatim — do not summarise>\",\"task\":\"<task: what to build, files to touch, acceptance criteria, what done looks like>\"}"}'
+\`\`\`
+The \`role\` field must be the **complete fullDefinition** from GET /api/roles — not a summary. The agent needs the full engineering context to produce correct work.
+
+**STEP 3 — Update the dashboard:**
+\`PATCH /api/agents/<SUB_UUID> { "role": "<role-id>", "task": "<short task summary>" }\`
+
+**STEP 4 — Start per-task completion monitor** (do this before moving on):
+\`\`\`bash
 SUB_ID="<agent-uuid>"
 BRANCH="feat/<task-slug>"
 TIMEOUT_AT=$(date -d "+90 minutes" +%s)
 while [ $(date +%s) -lt $TIMEOUT_AT ]; do
-  # Check for relay completion message in PM's own inbox
   msgs=$(curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=pending&deliver=true" 2>/dev/null)
-  if echo "$msgs" | grep -qi "COMPLETED\|BLOCKED"; then
-    echo "TASK_SIGNAL:$SUB_ID:relay received"
-    break
-  fi
-
-  # Check for new PR on the agent's branch
+  if echo "$msgs" | grep -qi "COMPLETED\|BLOCKED"; then echo "TASK_SIGNAL:$SUB_ID"; break; fi
   pr=$(gh pr list --head "$BRANCH" --state open --json number,title --limit 1 2>/dev/null)
-  if [ -n "$pr" ] && [ "$pr" != "[]" ]; then
-    echo "TASK_PR:$SUB_ID:$pr"
-    break
-  fi
-
-  # Check agent status — went idle = likely done
+  if [ -n "$pr" ] && [ "$pr" != "[]" ]; then echo "TASK_PR:$SUB_ID:$pr"; break; fi
   status=$(curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SUB_ID" 2>/dev/null | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('status',''))" 2>/dev/null)
-  if [ "$status" = "idle" ]; then
-    echo "TASK_IDLE:$SUB_ID:agent returned to idle"
-    break
-  fi
-
+  if [ "$status" = "idle" ]; then echo "TASK_IDLE:$SUB_ID"; break; fi
   sleep 60
 done
 echo "TASK_MONITOR_DONE:$SUB_ID"
 \`\`\`
+- **TASK_SIGNAL / TASK_PR** → COMPLETED: review the PR immediately
+- **TASK_IDLE** with no PR → agent may have drifted — check terminal and nudge
+- **TASK_MONITOR_DONE** (90 min timeout) → investigate immediately
 
-On **TASK_SIGNAL** or **TASK_PR**: treat as COMPLETED — review the PR immediately.
-On **TASK_IDLE** with no PR: agent may have drifted — check terminal and relay a nudge.
-On **TASK_MONITOR_DONE** (timeout): agent exceeded 90 min — investigate immediately.
+**STEP 5 — Verify worktree within 2–3 minutes:**
+\`GET /api/agents/<SUB_UUID>\` — confirm \`cwd\` is NOT the main repo path. If it is, relay immediately:
+\`"You must create your own worktree now before any other work: git worktree add ../<feat/slug> -b <feat/slug> && cd ../<feat/slug>"\`
 
-**Always call GET /api/roles before assigning a role.** Use a predefined role whenever one fits — pass its fullDefinition verbatim, not a summary. Write a custom role only when no predefined role fits AND the task genuinely requires specialised context.
+**Hard silence timeout:** If no relay AND no PR after **15 minutes**, proactively check the agent's terminal and dashboard updates. Do not wait. Simple tasks take 5–10 min; 15+ min of silence means something is wrong.
 
 ## Core API (Agent Manager)
 
@@ -201,31 +196,14 @@ When you detect a pool agent has completed (via relay OR via your monitor):
    Stale worktrees accumulate quickly across sessions — clean up after every merge.
 6. The agent returns to standby — you can reassign it immediately
 
-## Task prompt requirements
-
-Every task assignment MUST instruct the agent to:
-1. Run /session-connect first to register and start their message watcher
-2. **Immediately create a per-task worktree** — before reading any files or running any git commands:
-   \`git worktree add ../<feat/task-slug> -b <feat/task-slug> && cd ../<feat/task-slug>\`
-   **NEVER work in the main repo directory.** Concurrent agents share the same filesystem — working in the main repo causes branch collisions with other active agents.
-3. Post frequent, descriptive /agent-checkin updates (what file, what test, what they found — not just "working...")
-4. Relay completion to PM: POST /api/agents/THEIR_ID/relay { "target_agent_id": "YOUR_ID", "content": "COMPLETED: <summary, files, issues>" }
-5. Relay blockers immediately: "BLOCKED: <what failed, what is needed>"
-6. Never go idle without relaying results first
-7. Post findings and questions as session manager text updates, not terminal output
-
-After assigning, **verify the agent is in their worktree** within 2–3 minutes: check \`GET /api/agents/{sub_id}\` and confirm \`cwd\` is NOT the main repo path. If it is still the main repo cwd, relay a nudge immediately.
-
 ## Workflow
 
-1. Call GET /api/projects/{project_id}/agents to discover your pre-spawned pool agents
-2. Break project into phases/tasks; judge complexity to assign to Sonnet vs Haiku
-3. Assign tasks to pool agents via relay; monitor actively
-   - **Hard timeout**: if an agent has not relayed back AND no new PR has appeared within **15 minutes** of assignment, proactively check on it: read its terminal output and latest dashboard updates. Do not wait passively. A simple task should take 5–10 minutes; 15+ minutes of silence is a signal something is wrong.
-   - **PR as completion signal**: agents must open a PR when done. Your monitor watches for new PRs. Do not wait only for a relay — a new PR on the agent's feature branch is as good as a COMPLETED relay.
-4. On COMPLETED (relay OR new PR detected): review PR + test via SIS, clear agent role/task, post timeline milestone
-5. On BLOCKED relay: post timeline info, reassign or adjust the plan
-6. Post a final summary when all phases are complete
+1. On startup: call GET /api/projects/{project_id}/agents, start pool health monitor (persistent)
+2. Break project into phases/tasks; judge complexity — Sonnet for multi-file/nuanced, Haiku for simple/single-file
+3. For each task: follow the **Assigning work — required steps in order** checklist above (all 5 steps)
+4. On COMPLETED (relay OR new PR detected): review PR + check CI (\`gh pr checks <n>\`) + test via SIS for UI changes, clear agent role/task, post timeline milestone, clean up worktree
+5. On BLOCKED: post timeline info, reassign or adjust the plan
+6. Post final summary when all phases are complete
 
 ## Engineering Practices (enforce in all task prompts)
 
