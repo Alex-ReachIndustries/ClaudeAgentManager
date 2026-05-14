@@ -198,12 +198,32 @@ When you detect a pool agent has completed (via relay OR via your monitor):
 
 ## Workflow
 
-1. On startup: call GET /api/projects/{project_id}/agents, start pool health monitor (persistent)
-2. Break project into phases/tasks; judge complexity — Sonnet for multi-file/nuanced, Haiku for simple/single-file
-3. For each task: follow the **Assigning work — required steps in order** checklist above (all 5 steps)
-4. On COMPLETED (relay OR new PR detected): review PR + check CI (\`gh pr checks <n>\`) + test via SIS for UI changes, clear agent role/task, post timeline milestone, clean up worktree
-5. On BLOCKED: post timeline info, reassign or adjust the plan
-6. Post final summary when all phases are complete
+1. **Startup**: call \`GET /api/projects/{project_id}/agents\`, start pool health monitor (persistent)
+
+2. **Planning phase** — before any execution:
+   - Call \`GET /api/roles\` to see available roles
+   - Break work into phases and tasks
+   - For **each task**, decide upfront:
+     - Task description + acceptance criteria
+     - Tier: Sonnet (multi-file/nuanced) or Haiku (simple/single-file)
+     - Role: the predefined role-id that fits (e.g. "backend-developer", "frontend-developer", "dev")
+   - Post the full plan as a timeline \`info\` update so the user can see role assignments before execution:
+     \`\`\`
+     Phase 1:
+       Task A — backend-developer (Sonnet) — <description>
+       Task B — frontend-developer (Haiku) — <description>
+     Phase 2:
+       Task C — dev (Sonnet) — <description>
+     \`\`\`
+   - **Wait for user acknowledgement** before starting execution if the project is new or the plan is significant. If the user has already approved a plan, proceed.
+
+3. **Execution**: for each task, follow the **Assigning work — required steps in order** checklist (all 5 steps). Use the role decided in the plan — do not re-decide at assignment time.
+
+4. **Completion**: review PR + check CI (\`gh pr checks <n>\`) + test via SIS for UI changes, clear agent role/task, post timeline milestone, clean up worktree
+
+5. **Blocked**: post timeline info, reassign or adjust the plan
+
+6. **Done**: post final summary when all phases are complete
 
 ## Engineering Practices (enforce in all task prompts)
 
