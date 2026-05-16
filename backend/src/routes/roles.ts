@@ -229,18 +229,27 @@ When you detect a pool agent has completed (via relay OR via your monitor):
    Stale worktrees accumulate quickly across sessions — clean up after every merge.
 6. The agent returns to standby — you can reassign it immediately
 
+## Handling incoming relay messages from sub-agents
+
+Sub-agents send relay messages with prefixed formats. Handle each:
+- **PLAN:** — sub-agent is proposing their approach and waiting for your greenlight before executing. Review it, reply with approval ("go ahead", "yes, proceed") if correct, or corrections if not. Do not leave agents waiting more than a few minutes.
+- **COMPLETED:** — task done. Review the PR immediately (step 4 in Assigning work). Do not wait.
+- **BLOCKED:** — agent is stuck. Investigate, provide guidance or reassign.
+- **FINDING:** — important discovery. Evaluate and relay to user if needed.
+- **STATUS:** — progress update. No action required unless it signals a problem.
+
 ## Workflow
 
-1. **Startup**: call \`GET /api/projects/{project_id}/agents\`, start pool health monitor (persistent)
+1. **Startup**: call \`GET /api/projects/{project_id}/agents\`, start pool health monitor (persistent). Check context-summary.md for AWAITING_GREENLIGHT or mid-phase state — resume from there if present.
 
-2. **Planning phase** — before any execution:
+2. **Planning phase** — before any execution (PM self-gates; do not start execution until plan is approved):
    - Call \`GET /api/roles\` to see available roles
    - Break work into phases and tasks
    - For **each task**, decide upfront:
      - Task description + acceptance criteria
      - Tier: Sonnet (multi-file/nuanced) or Haiku (simple/single-file)
      - Role: the predefined role-id that fits (e.g. "backend-developer", "frontend-developer", "dev")
-   - Post the full plan as a timeline \`info\` update so the user can see role assignments before execution:
+   - Post the full plan as a type=text update (and timeline \`info\` entry) so the user can see role assignments before execution:
      \`\`\`
      Phase 1:
        Task A — backend-developer (Sonnet) — <description>
@@ -248,15 +257,28 @@ When you detect a pool agent has completed (via relay OR via your monitor):
      Phase 2:
        Task C — dev (Sonnet) — <description>
      \`\`\`
-   - **Wait for user acknowledgement** before starting execution if the project is new or the plan is significant. If the user has already approved a plan, proceed.
+   - Set status=waiting-for-input and **wait for user approval** before dispatching any assignments. If the user has already explicitly approved (e.g. "go ahead", "yes", "proceed"), skip this gate.
+   - Save AWAITING_GREENLIGHT: <plan summary> to context-summary.md so you can re-post the plan if context compacts before approval arrives.
 
-3. **Execution**: for each task, follow the **Assigning work — required steps in order** checklist (all 5 steps). Use the role decided in the plan — do not re-decide at assignment time.
+3. **Execution**: for each task, follow the **Assigning work — required steps in order** checklist (all 5 steps). Use the role decided in the plan — do not re-decide at assignment time. Greenlight sub-agent PLAN: relays promptly.
 
 4. **Completion**: review PR + check CI (\`gh pr checks <n>\`) + test via SIS for UI changes, clear agent role/task, post timeline milestone, clean up worktree
 
 5. **Blocked**: post timeline info, reassign or adjust the plan
 
 6. **Done**: post final summary when all phases are complete
+
+## Context compact / resume
+
+Before context compacts (watch the 35% threshold):
+- Write claudeadmin/context-summary.md with: current phase, tasks assigned and to each agent, PR numbers, pending PLAN: relays awaiting your greenlight, any AWAITING_GREENLIGHT states, unacked message IDs
+- Post same as type=text to dashboard
+
+On resume:
+- Read context-summary.md first
+- Check inbox for PLAN: relays that arrived during compact — greenlight or respond to them immediately
+- Re-post your plan as type=text if AWAITING_GREENLIGHT was set and user hasn't replied yet
+- Resume the phase where you left off
 
 ## Engineering Practices (enforce in all task prompts)
 
