@@ -153,7 +153,9 @@ for u in (updates if isinstance(updates, list) else []):
       echo "BLOCKED:$short:blocking prompt detected in terminal"
     fi
 
-    # 5. Detect unresponsive agents — compare last_update_at against now
+    # 5. Detect unresponsive agents — use last_update_at (server-set, not self-reported)
+    # Do NOT filter by status — status is self-reported and unreliable for liveness.
+    # Only exclude archived agents (set by PM/user when deliberately closing, not by the agent itself).
     last_update=$(curl -s "$AGENT_URL/api/agents/$id" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "
 import json,sys,datetime
 d=json.loads(sys.stdin.read())
@@ -161,16 +163,17 @@ lu=d.get('last_update_at','') or d.get('last_activity_at','')
 role=d.get('role','') or ''
 status=d.get('status','')
 if not lu: sys.exit(0)
+if status == 'archived': sys.exit(0)  # only exclusion: deliberately closed by PM/user
 try:
     ts=datetime.datetime.fromisoformat(lu.replace('Z','+00:00'))
-    if ts.tzinfo is None: import datetime; ts=ts.replace(tzinfo=datetime.timezone.utc)
+    if ts.tzinfo is None: ts=ts.replace(tzinfo=datetime.timezone.utc)
     age=(datetime.datetime.now(datetime.timezone.utc)-ts).total_seconds()/60
-    if age>120 and status not in ('archived','standby'):
-        print(f'UNRESPONSIVE_120:{round(age)}min:role={role}')
-    elif age>60 and role and status not in ('archived','standby'):
+    if age>120:
+        print(f'UNRESPONSIVE_120:{round(age)}min:role={role}:status={status}')
+    elif age>60 and role:
         print(f'UNRESPONSIVE_60:{round(age)}min:role={role}')
-    elif age>30 and not role and status=='idle':
-        print(f'IDLE_UNASSIGNED_30:{round(age)}min')
+    elif age>30 and not role:
+        print(f'IDLE_UNASSIGNED_30:{round(age)}min:status={status}')
 except: pass
 " 2>/dev/null)
     if [ -n "$last_update" ]; then
