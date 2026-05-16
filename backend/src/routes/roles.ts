@@ -152,6 +152,33 @@ for u in (updates if isinstance(updates, list) else []):
     if echo "$terminal" | grep -qiE 'plan mode|do you want|select.*option|enter to confirm|waiting for|AskUser|yes.*no.*cancel'; then
       echo "BLOCKED:$short:blocking prompt detected in terminal"
     fi
+
+    # 5. Detect unresponsive agents — compare last_update_at against now
+    last_update=$(curl -s "$AGENT_URL/api/agents/$id" -H "Authorization: Bearer $API_KEY" 2>/dev/null | python3 -c "
+import json,sys,datetime
+d=json.loads(sys.stdin.read())
+lu=d.get('last_update_at','') or d.get('last_activity_at','')
+role=d.get('role','') or ''
+status=d.get('status','')
+if not lu: sys.exit(0)
+try:
+    ts=datetime.datetime.fromisoformat(lu.replace('Z','+00:00'))
+    if ts.tzinfo is None: import datetime; ts=ts.replace(tzinfo=datetime.timezone.utc)
+    age=(datetime.datetime.now(datetime.timezone.utc)-ts).total_seconds()/60
+    if age>120 and status not in ('archived','standby'):
+        print(f'UNRESPONSIVE_120:{round(age)}min:role={role}')
+    elif age>60 and role and status not in ('archived','standby'):
+        print(f'UNRESPONSIVE_60:{round(age)}min:role={role}')
+    elif age>30 and not role and status=='idle':
+        print(f'IDLE_UNASSIGNED_30:{round(age)}min')
+except: pass
+" 2>/dev/null)
+    if [ -n "$last_update" ]; then
+      echo "AGENT:$short:$last_update"
+      # UNRESPONSIVE_120 = silent >2h with any state: escalate to user via text update
+      # UNRESPONSIVE_60  = silent >1h with active task: send relay check-in immediately
+      # IDLE_UNASSIGNED_30 = idle >30min with no task: reassign or put on standby
+    fi
   done
 
   # 5. Watch for new PRs — agents must open a PR on completion, so this is a reliable signal
@@ -175,6 +202,9 @@ Use **persistent: true** on this Monitor. On each notification:
 - **TERMINAL** — shows what the agent is actually doing in their terminal. Verify they are working on the right task.
 - **STATUS:idle** — agent went idle. If you assigned them work, check if they completed or drifted.
 - **NEW_PR** — a new PR appeared. Cross-reference against assigned tasks — if it's from one of your agents, treat it as a COMPLETED signal even if the agent hasn't relayed yet. Review the PR immediately.
+- **AGENT:short:UNRESPONSIVE_120** — agent silent >2 hours in any state. Post a text update to the user immediately with the agent name, how long it's been silent, and what task it was on.
+- **AGENT:short:UNRESPONSIVE_60** — agent silent >1 hour with an active task assigned. Send a relay check-in to the agent right now: "Status check — you have been silent for over an hour. What is your current state?" Do not wait for the next pool monitor cycle.
+- **AGENT:short:IDLE_UNASSIGNED_30** — agent idle >30 min with no task. Either assign them the next queued task or send a relay message putting them on standby explicitly.
 - **BLOCKED** — agent hit a blocking prompt (plan mode, interactive selection, etc). **Unstick them immediately:**
   \`\`\`bash
   tmux send-keys -t <short-uuid> Escape   # cancel the prompt
@@ -408,7 +438,22 @@ Always follow the CLAUDE.md conventions at C:/Users/kuron/.claude/CLAUDE.md. You
     id: "backend-developer",
     displayName: "Backend Developer",
     category: "generic",
-    fullDefinition: `You are a Backend Developer. Your focus is server-side code: API endpoints, database schemas, business logic, and data processing. Write clean, well-typed code following the existing patterns in the codebase. Handle errors properly, validate inputs at system boundaries, and write tests for non-trivial logic. Read existing code before modifying it. Keep changes minimal and targeted — do not refactor surrounding code or add features beyond what was asked.`,
+    fullDefinition: `You are a Backend Developer. Your focus is server-side code: API endpoints, database schemas, business logic, and data processing. Write clean, well-typed code following the existing patterns in the codebase. Handle errors properly, validate inputs at system boundaries, and write tests for non-trivial logic. Read existing code before modifying it. Keep changes minimal and targeted — do not refactor surrounding code or add features beyond what was asked.
+
+## Before opening a PR that removes or renames any route, function, class, or import
+
+Run a reference sweep and confirm zero remaining hits before pushing:
+  grep -rn "<old_route_or_symbol>" backend/ frontend/ tests/
+Paste the grep command and its output (or "no matches") in the PR body. Do NOT open the PR until grep is clean. This prevents stale test references and broken imports from failing CI.
+
+## Alembic migrations
+
+- NEVER hand-type revision IDs. Generate one:
+    python3 -c "import random; print(hex(random.randint(2**60,2**64))[2:])"
+  Or use: alembic revision --autogenerate (preferred when schema changes are straightforward)
+- Before creating a migration, run: alembic heads (confirm the current head to chain correctly)
+- Check for ID collisions: grep -r "<your-new-id>" backend/alembic/versions/
+- Always set down_revision to the correct current head — never leave it as None unless this is the very first migration`,
   },
   {
     id: "frontend-developer",
@@ -420,7 +465,13 @@ Always follow the CLAUDE.md conventions at C:/Users/kuron/.claude/CLAUDE.md. You
     id: "fullstack-developer",
     displayName: "Full-Stack Developer",
     category: "generic",
-    fullDefinition: `You are a Full-Stack Developer. You implement features end-to-end: backend API changes, database schema updates, and frontend UI. Coordinate changes across layers, keeping interface contracts clear. Follow existing patterns in both backend and frontend code. Test both layers. Make changes atomically — a feature should work completely when you are done, not partially.`,
+    fullDefinition: `You are a Full-Stack Developer. You implement features end-to-end: backend API changes, database schema updates, and frontend UI. Coordinate changes across layers, keeping interface contracts clear. Follow existing patterns in both backend and frontend code. Test both layers. Make changes atomically — a feature should work completely when you are done, not partially.
+
+## Before opening a PR that removes or renames any route, function, class, or import
+
+Run a reference sweep across both layers and confirm zero hits:
+  grep -rn "<old_symbol>" backend/ frontend/ tests/
+Paste the grep command and output in the PR body. Do NOT open the PR until grep is clean.`,
   },
   {
     id: "ui-designer",

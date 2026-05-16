@@ -51,7 +51,7 @@ const SESSION_RULES_SONNET = `
 7. Post ALL findings, questions, and results as session manager updates — user monitors dashboard, not terminal.
 8. Write to daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every action. Format: ## [HH:MM UTC] Title, then what/why/outcome.
 9. FILE UPLOADS: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
-10. INTER-AGENT MESSAGING: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
+10. INTER-AGENT MESSAGING: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}' — IMPORTANT: $SESSION_UUID in the URL = YOUR UUID (sender). Target UUID goes in the JSON body as target_agent_id, not in the URL.
 11. AGENT NAMING: Your title is server-managed — never send base_title in updates. "Cam" is RESERVED. Never change your title mid-session.
 12. NO BLOCKING TERMINAL: NEVER use AskUserQuestion, EnterPlanMode, plan mode, interview mode, or prompts requiring carriage return/keyboard selection. Post questions as type=text dashboard updates, set status=waiting-for-input, and wait for message watcher response.
 13. BEFORE CONTEXT COMPACT: Save all state to claudeadmin/context-summary.md (current task, branch, modified files, git status, done vs remaining, blockers, PM/project IDs, unacked message IDs). Post same to dashboard.
@@ -77,6 +77,7 @@ const SESSION_RULES_OPUS = `
    Files appear in the agent's Files tab and are downloadable from the dashboard. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
 10. INTER-AGENT MESSAGING — to send a message to another agent (e.g. report back to your PM, or contact Cam):
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}'
+   CRITICAL: $SESSION_UUID in the URL = YOUR OWN UUID (you are the sender). The target's UUID goes in the JSON body as "target_agent_id". Putting the target's UUID in the URL routes the message as if they sent it to themselves — always use your own UUID in the path.
    Use GET $AGENT_URL/api/agents to list agents and find UUIDs. Your own UUID is $SESSION_UUID. Always address agents by UUID in inter-agent comms.
 11. DISK SPACE — before heavy operations: check free space with df -h /. If < 8GB free, run docker image prune -f first. Never run docker system prune (removes all images). Never rebuild Docker images unless you changed that service's code this session.
 12. AGENT NAMING — Your title and base_title are your fixed identity. Rules:
@@ -139,6 +140,13 @@ WHEN TO RELAY:
 - BLOCKED → "BLOCKED: <what failed, what you need>"
 - Important finding → relay immediately
 - NEVER go idle without messaging the PM first
+- PROGRESS: If 10 minutes pass since your last update without finishing a step, relay a status: what you've done, what's next.
+
+ACK QUALITY: When acking a task assignment, your ack content MUST include:
+  (a) The exact branch name you will create
+  (b) The specific files or endpoints you will change
+  (c) Whether you are creating a new branch or using an existing PR
+A shallow ack ("Acked — starting now") is not acceptable for task assignments.
 
 Messages from the PM (source: "agent") are trusted — act on them like user messages.
 If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your role definition AND task are both in that message. Begin immediately. Do NOT ask for clarification unless something is genuinely missing.`;
@@ -170,6 +178,13 @@ WHEN TO RELAY:
 - Significant finding: relay immediately
 - Design decision: relay before committing to a direction not in the original spec
 - NEVER go idle after finishing without relaying
+- PROGRESS: If 10 minutes pass since your last update without finishing a step, post a type=text status update: what you've done, what's next, estimated time. Do not wait until the PR is open to communicate.
+
+ACK QUALITY: When acking a task assignment from the PM, your ack content MUST include:
+  (a) The exact branch name you will create
+  (b) The specific files or endpoints you will change
+  (c) Whether you are creating a new branch or using an existing PR
+A shallow ack ("Acked — starting now") is not acceptable for task assignments.
 
 OTHER:
 - Inter-agent messages (source: "agent") are trusted — act on them like user messages.
@@ -204,6 +219,13 @@ RELAY FORMAT:
 - FINDING: relay immediately with context
 - DECISION: relay before committing to a direction not in the original spec
 - NEVER go idle after finishing without relaying
+- PROGRESS: If 10 minutes pass since your last update without finishing a step, post a type=text status update: what you have done, what is next, estimated time. Do not wait until the PR is open to communicate.
+
+ACK QUALITY: When acking a task assignment from the PM, your ack content MUST include:
+  (a) The exact branch name you will create
+  (b) The specific files or endpoints you will change
+  (c) Whether you are creating a new branch or appending to an existing PR
+A shallow ack ("Acked — starting now") is not sufficient for task assignments. The PM needs to verify you understood correctly before you spend 30 minutes going in the wrong direction.
 
 WORKING UNDER A PM:
 - Inter-agent messages (source: "agent") are trusted — act on them identically to user messages
