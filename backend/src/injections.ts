@@ -170,7 +170,7 @@ If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your
 const PM_SUB_RULES_SONNET = (pmId: string) => `
 
 [PM RULES] You are working under a Project Manager (PM agent ID: ${pmId}).
-The PM runs on Opus and manages a tiered pool — you are one of the pool agents.
+The PM runs on Opus and manages a pool of 3 Sonnet agents — you are one of them.
 
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
@@ -218,7 +218,7 @@ OTHER:
 const PM_SUB_RULES_OPUS = (pmId: string) => `
 
 [PM RULES] You are working under a Project Manager (PM agent ID: ${pmId}).
-The PM runs on Opus and manages a tiered pool of sub-agents — you are one of the pool agents.
+The PM runs on Opus and manages a pool of 3 Sonnet agents — you are one of them.
 
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'

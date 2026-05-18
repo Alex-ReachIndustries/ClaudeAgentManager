@@ -422,12 +422,11 @@ router.post("/:id/start", (req: Request, res: Response) => {
           base_title: pmTitle,
         }), pmWtWindow, launchRequestId);
 
-      // Auto-spawn tiered standby pool: 2 Sonnet + 2 Haiku agents
+      // Auto-spawn standby pool: 3 Sonnet agents
       const poolConfig = [
         { label: `${project.name} - Sonnet A`, model: "claude-sonnet-4-6", slot: 1 },
         { label: `${project.name} - Sonnet B`, model: "claude-sonnet-4-6", slot: 2 },
-        { label: `${project.name} - Haiku A`, model: "claude-haiku-4-5-20251001", slot: 3 },
-        { label: `${project.name} - Haiku B`, model: "claude-haiku-4-5-20251001", slot: 4 },
+        { label: `${project.name} - Sonnet C`, model: "claude-sonnet-4-6", slot: 3 },
       ];
 
       for (const pool of poolConfig) {
@@ -456,7 +455,7 @@ Your title is EXACTLY "${pool.label}" — the server enforces this.`;
           }), pmWtWindow, poolLaunch.id);
       }
 
-      addProjectUpdate(id, "info", `Project started. PM (Opus) + 4 standby agents (2 Sonnet + 2 Haiku) launch requests created.`);
+      addProjectUpdate(id, "info", `Project started. PM (Opus) + 3 standby Sonnet agents launch requests created.`);
     }
 
     // Update project status
