@@ -190,11 +190,21 @@ WORKTREE/PR WORKFLOW:
 
 YOUR FLOW FOR EVERY TASK:
 1. ACK immediately (≤200 chars, before any work): include exact branch name, files you will change, new vs existing branch
-2. Send PLAN: relay to the PM with: what you'll do, files/branches, risks, estimated time
+2. CONTEXT CHECK — before sending PLAN, estimate whether you have enough context window headroom:
+   - You are on Sonnet with a ~200K context window. The 35% compact threshold is ~70K tokens.
+   - If you have been actively working this session (prior tasks done, many tool calls, large file reads in context), estimate you are already using significant context.
+   - If the incoming task looks non-trivial (multiple files to modify, new feature, likely >30 min work), it will consume substantial additional context.
+   - If current context + task context looks likely to exceed 35% before you finish: compact NOW.
+     Steps: (a) write claudeadmin/context-summary.md with: current state, received task summary: <brief>
+            (b) trigger context compact
+            (c) on resume, your FIRST action is to relay the PM: "Compacted for fresh context — please re-send task assignment: <1-line summary>"
+     The PM expects this — it is a normal, correct behaviour. Do not skip it to save time.
+   - If this is your first task this session or context is clearly light, skip this step.
+3. Send PLAN: relay to the PM with: what you'll do, files/branches, risks, estimated time
    Relay format: "PLAN: branch=feat/<slug> files=<files> plan=<what and how>"
-3. WAIT for the PM to reply with approval before executing. Approval = any positive reply ("go ahead", "yes", "ok to proceed", etc.)
-4. EXECUTE with milestone relay updates at significant steps. If 10 minutes pass without completing a step, relay "STATUS: <done, next, estimate>"
-5. Relay COMPLETED or BLOCKED when done
+4. WAIT for the PM to reply with approval before executing. Approval = any positive reply ("go ahead", "yes", "ok to proceed", etc.)
+5. EXECUTE with milestone relay updates at significant steps. If 10 minutes pass without completing a step, relay "STATUS: <done, next, estimate>"
+6. Relay COMPLETED or BLOCKED when done
 
 CONTEXT COMPACT RESILIENCE:
 - Before compact: save AWAITING_GREENLIGHT: <plan summary> in context-summary.md
@@ -240,13 +250,23 @@ WORKTREE/PR WORKFLOW — mandatory for every task:
 YOUR FLOW FOR EVERY TASK:
 1. ACK immediately (≤200 chars, before any work): include exact branch name, files/endpoints you will change, new vs existing branch
    A shallow ack ("Acked — starting now") is not sufficient. The PM needs to confirm you understood correctly.
-2. Send PLAN: relay to the PM with: what you'll do, files/branches/services involved, risks and decisions, estimated time
+2. CONTEXT CHECK — before sending PLAN, estimate whether you have enough context window headroom:
+   - The 35% compact threshold is ~70K tokens on Sonnet (200K window).
+   - If you have been actively working this session (prior tasks, many tool calls, large file reads in context), estimate you are already using significant context.
+   - If the incoming task looks non-trivial (multiple files, new feature, >30 min of work), it will consume substantial additional context.
+   - If current context + task context looks likely to exceed 35% before you finish: compact NOW.
+     Steps: (a) write claudeadmin/context-summary.md with: current state, received task summary: <brief>
+            (b) trigger context compact
+            (c) on resume, your FIRST action is to relay the PM: "Compacted for fresh context — please re-send task assignment: <1-line summary>"
+     The PM expects this — it is a normal, correct behaviour. Do not skip it to save time.
+   - If this is your first task this session or context is clearly light, skip this step.
+3. Send PLAN: relay to the PM with: what you'll do, files/branches/services involved, risks and decisions, estimated time
    Relay format: "PLAN: branch=feat/<slug> files=<files> plan=<what and how, risks>"
-3. WAIT for the PM to reply with approval before executing. Approval = any positive reply ("go ahead", "yes", "ok to proceed", etc.)
+4. WAIT for the PM to reply with approval before executing. Approval = any positive reply ("go ahead", "yes", "ok to proceed", etc.)
    While waiting: you may read code and explore, but do NOT write, commit, or create the worktree yet.
-4. EXECUTE with milestone relay updates at significant steps.
+5. EXECUTE with milestone relay updates at significant steps.
    If 10 minutes pass without completing a step, relay "STATUS: <done, next, estimate>"
-5. Relay COMPLETED or BLOCKED when done.
+6. Relay COMPLETED or BLOCKED when done.
 
 CONTEXT COMPACT RESILIENCE:
 - Before compact: save AWAITING_GREENLIGHT: <plan summary> in context-summary.md, post same to dashboard

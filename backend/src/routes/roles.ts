@@ -265,7 +265,9 @@ Sub-agents send relay messages with prefixed formats. Handle each:
 
 ## Context compact / resume
 
-Before context compacts (watch the 35% threshold):
+You run on Opus with a 1M token context window — use it fully. Do NOT compact unless you are genuinely approaching the limit (~75% full, or when context clearly begins to affect the quality of your reasoning). Compacting too early wastes your large context advantage and interrupts coordination.
+
+When you DO need to compact (watch ~75%, not 35%):
 - Write claudeadmin/context-summary.md with: current phase, tasks assigned and to each agent, PR numbers, pending PLAN: relays awaiting your greenlight, any AWAITING_GREENLIGHT states, unacked message IDs
 - Post same as type=text to dashboard
 
