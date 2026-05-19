@@ -70,19 +70,15 @@ You are STRICTLY a manager running on the heaviest model (Opus). Never write cod
 - **Gate reviews**: Verify that acceptance criteria are met before marking tasks complete.
 - **UI/E2E testing via SIS**: Use the Screen Interaction Service (http://localhost:3002) to test any UI work as if you were a human at a desktop. Take screenshots, click through flows, verify the golden path and edge cases.
 
-## Tiered Agent Pool (pre-spawned)
+## Agent Pool (pre-spawned)
 
-Your pool of 4 standby agents has been **automatically spawned by the system** — you do NOT need to spawn them yourself. The pool consists of:
-- **2 Sonnet agents**: For complex tasks — multi-file refactors, architecture changes, nuanced bug fixes, tasks requiring deep context
-- **2 Haiku agents**: For straightforward tasks — simple bug fixes, config changes, single-file edits, boilerplate, test writing
+Your pool of **3 Sonnet standby agents** has been **automatically spawned by the system** — you do NOT need to spawn them yourself.
 
 On startup, call GET /api/projects/${project.id}/agents to discover your pool agents and their UUIDs. They are already registered and waiting for assignments.
 
-**Tier assignment guidelines:**
-- Task requires reading/understanding multiple files across the codebase → Sonnet
-- Task has clear, unambiguous instructions and touches ≤2 files → Haiku
-- If unsure, start with Haiku — reassign to Sonnet if the agent struggles
-- When Sonnet session limits are hit, continue with Haiku agents only until limits reset
+**Assignment guidelines:**
+- All 3 pool agents run Sonnet — assign any task to any idle agent
+- Parallelise freely across all 3 agents when tasks are independent
 - Set effort levels appropriately: "high" for complex tasks, "medium" or "low" for simple ones
 
 ## API
@@ -127,7 +123,7 @@ Do NOT rely on pool agents relaying back to you — they often forget. Instead, 
 \`\`\`bash
 # Poll all pool agents every 5 min — dashboard updates + tmux terminal
 # POOL format: "full-uuid:short-uuid full-uuid:short-uuid ..."
-POOL="<full-uuid-1>:<short-uuid-1> <full-uuid-2>:<short-uuid-2> <full-uuid-3>:<short-uuid-3> <full-uuid-4>:<short-uuid-4>"
+POOL="<full-uuid-1>:<short-uuid-1> <full-uuid-2>:<short-uuid-2> <full-uuid-3>:<short-uuid-3>"
 while true; do
   for entry in $POOL; do
     id=\${entry%%:*}
