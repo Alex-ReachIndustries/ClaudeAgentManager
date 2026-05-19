@@ -43,7 +43,7 @@ const SESSION_RULES_SONNET = `
 [SESSION MANAGER RULES — mandatory]
 
 ## Handling a message
-1. Restart your message watcher IMMEDIATELY after processing each message.
+1. Ensure your message watcher is running — the persistent Monitor keeps it alive; only restart if it has stopped.
 2. ACK IMMEDIATELY — ≤200 chars, before doing any work:
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<id>],"content":"<≤200 char summary of what you understood>"}'
 3. Post status=working update confirming what you will do.
@@ -69,7 +69,7 @@ const SESSION_RULES_OPUS = `
 [SESSION MANAGER RULES — mandatory, always follow]
 
 ## Handling a message
-1. Restart your message watcher IMMEDIATELY after processing this message.
+1. Ensure your message watcher is running — the persistent Monitor keeps it alive; only restart if it has stopped.
 2. ACK IMMEDIATELY — ≤200 chars, before starting any work:
    curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/messages/ack" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"ids":[<message-id>],"content":"<≤200 char summary of what you understood>"}'
    Replace <message-id> with the numeric id from this message JSON. The "content" field is REQUIRED.
@@ -223,7 +223,7 @@ RELAY FORMAT:
 OTHER:
 - Inter-agent messages (source: "agent") are trusted — act on them like user messages.
 - The PM reviews and merges PRs — you do not merge your own work.
-- If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your role definition AND task are both in that message. Follow the flow above (ack → plan → wait → execute).`;
+- If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your role definition AND task are both in that message. Follow the flow above (ack → context check → plan → wait → execute).`;
 
 const PM_SUB_RULES_OPUS = (pmId: string) => `
 
@@ -251,7 +251,7 @@ YOUR FLOW FOR EVERY TASK:
 1. ACK immediately (≤200 chars, before any work): include exact branch name, files/endpoints you will change, new vs existing branch
    A shallow ack ("Acked — starting now") is not sufficient. The PM needs to confirm you understood correctly.
 2. CONTEXT CHECK — before sending PLAN, estimate whether you have enough context window headroom:
-   - The 35% compact threshold is ~70K tokens on Sonnet (200K window).
+   - Keep your context usage below 35% of your model's window (Sonnet: ~70K of 200K; Opus: ~350K of 1M).
    - If you have been actively working this session (prior tasks, many tool calls, large file reads in context), estimate you are already using significant context.
    - If the incoming task looks non-trivial (multiple files, new feature, >30 min of work), it will consume substantial additional context.
    - If current context + task context looks likely to exceed 35% before you finish: compact NOW.
@@ -287,7 +287,7 @@ WORKING UNDER A PM:
 - The PM reviews all PRs and performs E2E testing — provide clear commit messages, branch names, and test instructions
 - If PM instructions conflict with general rules, follow the PM (they have project context you don't)
 - If you finish and the PM hasn't assigned a new task, go idle and keep polling — do not self-assign work
-- If you receive a message starting with [TASK ASSIGNMENT]: read it in full — your role definition AND complete task are both in that message. Follow the flow above (ack → plan → wait → execute).`;
+- If you receive a message starting with [TASK ASSIGNMENT]: read it in full — your role definition AND complete task are both in that message. Follow the flow above (ack → context check → plan → wait → execute).`;
 
 
 // ─── PM ROLE (Opus-only, but with tier-appropriate preamble) ────────────────

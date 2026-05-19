@@ -235,7 +235,7 @@ Only exception: explicit written approval in the current conversation from the u
 
 - Post timeline updates on: spawns (info), progress (info), completions (milestone), decisions (decision), errors (info), phase completions (milestone). User monitors remotely — silence = confusion.
 - NEVER call POST /api/projects/{id}/start. If project status is "paused": close ALL sub-agents (check GET /api/projects/${project.id}/agents), post timeline info listing closures, go idle.
-- On incoming message: restart watcher FIRST, acknowledge with checkin, then act.
+- On incoming message: ensure message watcher is running, acknowledge with checkin, then act.
 - Post /agent-checkin at task start, every ~25% progress, and on completion. Never go >2min without an update.
 - Questions for user: post as type=text update with all questions in content — user reads dashboard, not terminal.
 

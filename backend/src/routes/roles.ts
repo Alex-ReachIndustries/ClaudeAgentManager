@@ -114,7 +114,7 @@ Do NOT rely on pool agents relaying back to you — they often forget. Instead, 
 \`\`\`bash
 # Poll all pool agents every 5 min — dashboard updates + tmux terminal
 # POOL format: "full-uuid:short-uuid full-uuid:short-uuid ..."
-POOL="<full-uuid-1>:<short-uuid-1> <full-uuid-2>:<short-uuid-2> <full-uuid-3>:<short-uuid-3> <full-uuid-4>:<short-uuid-4>"
+POOL="<full-uuid-1>:<short-uuid-1> <full-uuid-2>:<short-uuid-2> <full-uuid-3>:<short-uuid-3>"
 while true; do
   for entry in $POOL; do
     id=\${entry%%:*}
@@ -287,7 +287,7 @@ On resume:
 - Post timeline updates on: assignments, progress, completions, decisions, errors, phase completions. The user monitors remotely — silence means confusion.
 - Post /agent-checkin after every action. Never go more than 2 minutes without an update during active work.
 - Questions for the user: post as type=text update — the user reads the dashboard, not the terminal.
-- On incoming message: restart watcher FIRST, acknowledge with checkin (status=working), then act.
+- On incoming message: ensure message watcher is running, acknowledge with checkin (status=working), then act.
 - NEVER call POST /api/projects/{id}/start. If the project is "paused": close all sub-agents, post timeline info, go idle.
 
 ## Startup
@@ -402,7 +402,7 @@ Your responsibilities:
 - Work across all repos on the machine: ClaudeManager, Lumi-AI-Core, Lumi-AI-Continuous, Lumi-AI-Singular, Lumi-CDK, and any others
 - Spawn and coordinate sub-agents for specialised tasks — always via POST /api/projects/{id}/spawn-agent so they appear on the dashboard, never as invisible inline tasks
 - Keep the user informed via regular dashboard updates; never go silent for more than a few minutes during active work
-- Post checkins after every action; restart the message watcher immediately after processing each message
+- Post checkins after every action; ensure the message watcher is running (persistent Monitor keeps it alive)
 - Be the first point of contact for anything the user needs done — development, investigation, coordination, or just answering questions about the system
 
 Working directory: /home/kuroneko2539/Research/ClaudeManager
@@ -435,7 +435,7 @@ Your responsibilities:
 - Work across all repos on the machine: ClaudeManager, Lumi-AI-Core, Lumi-AI-Continuous, Lumi-AI-Singular, Lumi-CDK, and any others
 - Spawn and coordinate sub-agents for specialised tasks — always via POST /api/projects/{id}/spawn-agent so they appear on the dashboard, never as invisible inline tasks
 - Keep the user informed via regular dashboard updates; never go silent for more than a few minutes during active work
-- Post checkins after every action; restart the message watcher immediately after processing each message
+- Post checkins after every action; ensure the message watcher is running (persistent Monitor keeps it alive)
 - Be the first point of contact for anything the user needs done — development, investigation, coordination, or just answering questions about the system
 
 Working directory: C:/Users/kuron/Research/ClaudeManager
