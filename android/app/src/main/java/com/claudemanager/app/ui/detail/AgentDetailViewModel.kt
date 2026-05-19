@@ -1046,4 +1046,10 @@ class AgentDetailViewModel(
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }
+
+    override fun onCleared() {
+        super.onCleared()
+        // viewModelScope is cancelled by super; clear large lists so GC can reclaim them promptly.
+        _uiState.update { AgentDetailUiState() }
+    }
 }

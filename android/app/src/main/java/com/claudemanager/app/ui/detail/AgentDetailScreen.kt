@@ -57,9 +57,13 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import android.app.Activity
+import android.content.Intent
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.viewmodel.compose.viewModel as composeViewModel
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -92,6 +96,24 @@ import com.claudemanager.app.util.TimeUtils
 import com.claudemanager.app.ui.PredefinedRole
 import androidx.compose.material.icons.filled.ExpandMore
 
+/** ActivityResultContract that accepts (filename, mimeType) so the SAF picker uses the correct
+ *  MIME type — this causes deduplication counters to land before the extension (e.g. file(1).pdf). */
+private class CreateDocumentWithMime : ActivityResultContract<Pair<String, String>, android.net.Uri?>() {
+    override fun createIntent(context: android.content.Context, input: Pair<String, String>): Intent =
+        Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(input.second.ifBlank { "*/*" })
+            .putExtra(Intent.EXTRA_TITLE, input.first)
+
+    override fun parseResult(resultCode: Int, intent: Intent?): android.net.Uri? =
+        if (resultCode == Activity.RESULT_OK) intent?.data else null
+}
+
+private fun mimeTypeForFilename(name: String): String {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+}
+
 /**
  * Agent detail screen with tabs for Conversation and Info.
  *
@@ -109,10 +131,11 @@ fun AgentDetailScreen(
     val context = LocalContext.current
     val app = context.applicationContext as ClaudeManagerApp
 
-    // Create ViewModel with factory to inject agentId
-    val viewModel = remember(agentId) {
-        AgentDetailViewModelFactory(app, agentId).create(AgentDetailViewModel::class.java)
-    }
+    // Backed by the ViewModelStore so onCleared() fires when the screen is popped.
+    val viewModel: AgentDetailViewModel = composeViewModel(
+        key = agentId,
+        factory = AgentDetailViewModelFactory(app, agentId)
+    )
 
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -130,7 +153,7 @@ fun AgentDetailScreen(
     // The download starts only after the user picks a destination, so for large
     // files there is no perceived delay before the picker appears.
     val saveToDeviceLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("*/*")
+        CreateDocumentWithMime()
     ) { uri ->
         val fid = pendingSaveFileId
         val name = pendingSaveFilename
@@ -171,7 +194,7 @@ fun AgentDetailScreen(
                         pendingSaveFileId = action.fileId
                         pendingSaveFilename = action.filename
                         viewModel.dismissFileActionDialog()
-                        saveToDeviceLauncher.launch(action.filename)
+                        saveToDeviceLauncher.launch(Pair(action.filename, mimeTypeForFilename(action.filename)))
                     }) {
                         Text("Save to Device", color = LumiPurple500)
                     }
