@@ -159,7 +159,15 @@ sudo tailscale up
 This will print a URL. Tell the human:
 
 > Tailscale needs a browser login. Open the URL it just printed and authorise
-> this machine. Tell me when "tailscale status" shows it as authenticated.
+> this machine.
+>
+> **⚠️ IMPORTANT — do NOT sign in with your @reach.industries email.**
+> All @reach.industries addresses automatically join the company tailnet (this
+> is a Tailscale domain-sharing feature). Use a **personal Gmail address**
+> (or any non-reach.industries account) to keep this machine on its own
+> personal tailnet, separate from the company network.
+>
+> Tell me when "tailscale status" shows it as authenticated.
 
 Wait. Then verify:
 

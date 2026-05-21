@@ -75,7 +75,7 @@ Tell Claude:
 
 Claude will run scripts 01–08, pausing for you when:
 - **Step 01 (GitHub):** browser auth via `gh auth login --web`
-- **Step 04 (Tailscale):** `sudo tailscale up` and browser auth for the tailnet
+- **Step 04 (Tailscale):** `sudo tailscale up` and browser auth for the tailnet — **use a personal Gmail address, NOT your @reach.industries email** (reach.industries accounts auto-join the company tailnet)
 - **Step 05 (Steam):** Steam licence agreement (pre-accepted in the script, but first launch wants you to log in)
 
 Or run the master script directly:
@@ -95,12 +95,14 @@ bash 09-run-all.sh
 | 02 | `02-system-update.sh` | apt update/upgrade + base tools | No |
 | 02b | `02b-nvidia.sh` | Nvidia driver (Blackwell-capable, latest from PPA) + CUDA + container toolkit. No-op if no Nvidia GPU or driver already loaded. **Reboot may follow.** | No |
 | 03 | `03-docker.sh` | Docker CE, compose, user→docker group | No |
-| 04 | `04-tailscale.sh` | Tailscale + x11vnc remote desktop service | Tailscale auth |
+| 04 | `04-tailscale.sh` | Tailscale + x11vnc remote desktop service | Tailscale auth — **personal Gmail only** (see note below) |
 | 05 | `05-desktop-apps.sh` | Chrome, Slack, Steam (+Steam Link firewall) | No |
 | 06 | `06-android-dev.sh` | JDK 17, Android SDK, Gradle 8.2 | No |
 | 07 | `07-claude-manager.sh` | Clone repo, set API_KEY in .env, docker compose up | No |
 | 08 | `08-systemd-autostart.sh` | Systemd user service for ClaudeManager | No |
 | 09 | `09-run-all.sh` | Master runner — runs 01–08 in order | Inherits sub-step prompts |
+
+> **⚠️ Tailscale account warning**: When authenticating in step 04, **do NOT use an @reach.industries email**. Tailscale's domain-sharing feature automatically adds all @reach.industries users to the company tailnet — your machine would join the company network instead of your personal one, and could be removed if the business ever revokes domain access. Use a **personal Gmail address** (or any other non-reach.industries account) to keep the machine on a separate personal tailnet.
 
 ---
 
