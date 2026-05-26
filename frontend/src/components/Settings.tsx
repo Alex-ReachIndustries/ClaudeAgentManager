@@ -262,6 +262,8 @@ export default function Settings() {
   };
 
   // ============================================================
+  const [settingsTab, setSettingsTab] = useState<'apikey' | 'webhooks' | 'retention'>('apikey');
+
   // Render
   // ============================================================
   return (
@@ -274,9 +276,31 @@ export default function Settings() {
         <span>Back to Dashboard</span>
       </button>
 
-      <h1 className="text-2xl font-semibold text-dark-100 mb-8">Settings</h1>
+      <h1 className="text-2xl font-semibold text-dark-100 mb-6">Settings</h1>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-dark-800 mb-6">
+        {([
+          { id: 'apikey', label: 'API Key' },
+          { id: 'webhooks', label: 'Webhooks' },
+          { id: 'retention', label: 'Retention' },
+        ] as const).map(({ id, label }) => (
+          <button
+            key={id}
+            onClick={() => setSettingsTab(id)}
+            className={`px-5 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              settingsTab === id
+                ? 'text-lumi-300 border-lumi-500'
+                : 'text-dark-500 border-transparent hover:text-dark-300 hover:border-dark-600'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {/* ====== API Key Section ====== */}
+      {settingsTab === 'apikey' &&
       <div className="bg-dark-900 border border-dark-700 rounded-xl p-6 mb-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 bg-lumi-600/20 rounded-lg">
@@ -368,10 +392,10 @@ export default function Settings() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* ====== Webhooks Section ====== */}
-      <div className="bg-dark-900 border border-dark-700 rounded-xl p-6 mb-6">
+      {settingsTab === 'webhooks' && <div className="bg-dark-900 border border-dark-700 rounded-xl p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-lumi-600/20 rounded-lg">
@@ -504,10 +528,10 @@ export default function Settings() {
             ))}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* ====== Data Retention Section ====== */}
-      <div className="bg-dark-900 border border-dark-700 rounded-xl p-6">
+      {settingsTab === 'retention' && <div className="bg-dark-900 border border-dark-700 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 bg-lumi-600/20 rounded-lg">
             <Database size={20} className="text-lumi-400" />
@@ -633,7 +657,7 @@ export default function Settings() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Toast */}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}

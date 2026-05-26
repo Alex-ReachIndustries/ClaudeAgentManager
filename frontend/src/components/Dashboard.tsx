@@ -57,9 +57,9 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   // Detect whether any active agents have wt_window set
   const hasWindowGroups = useMemo(() => agents.some((a) => a.wt_window && a.status !== 'archived'), [agents]);
 
-  const handleLaunch = async (folderPath: string, wtWindow?: string) => {
+  const handleLaunch = async (folderPath: string, options: { wtWindow?: string; role?: string; task?: string; effort?: string; model?: string }) => {
     try {
-      await createLaunchRequest('new', folderPath, undefined, wtWindow);
+      await createLaunchRequest('new', folderPath, undefined, options.wtWindow, undefined, options.role, options.task, options.effort, options.model);
       setShowFolderPicker(false);
     } catch (err) {
       console.error('Failed to create launch request:', err);

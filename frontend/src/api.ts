@@ -160,6 +160,10 @@ export async function createLaunchRequest(
   resumeAgentId?: string,
   wtWindow?: string,
   targetPid?: number | null,
+  role?: string,
+  task?: string,
+  effort?: string,
+  model?: string,
 ): Promise<{ ok: boolean; request: unknown }> {
   return request<{ ok: boolean; request: unknown }>('/launch-requests', {
     method: 'POST',
@@ -169,6 +173,10 @@ export async function createLaunchRequest(
       resume_agent_id: resumeAgentId,
       wt_window: wtWindow || undefined,
       target_pid: targetPid || undefined,
+      role: role || undefined,
+      task: task || undefined,
+      effort: effort || undefined,
+      model: model || undefined,
     }),
   });
 }
