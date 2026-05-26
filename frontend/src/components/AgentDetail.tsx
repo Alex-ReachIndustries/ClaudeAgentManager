@@ -2,7 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2 } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles } from '../api';
+import type { Role } from '../api';
 import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
@@ -10,6 +11,7 @@ import MessagePanel from './MessagePanel';
 import ProjectTodoPanel from './ProjectTodoPanel';
 import PollDelayControl from './PollDelayControl';
 import FilesPanel from './FilesPanel';
+import TerminalPanel from './TerminalPanel';
 import type { ProjectStatus, TodoStatus } from '../types';
 
 const statusConfig = {
@@ -23,6 +25,8 @@ const statusConfig = {
 
 const LIVE_STATUSES = new Set(['active', 'working', 'idle', 'waiting-for-input', 'standby']);
 
+type DetailTab = 'conversation' | 'info';
+
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -31,6 +35,7 @@ function AgentDetail() {
   const isArchived = agent?.status === 'archived';
   const isLive = agent ? LIVE_STATUSES.has(agent.status) : false;
 
+  const [tab, setTab] = useState<DetailTab>('conversation');
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [terminating, setTerminating] = useState(false);
@@ -43,6 +48,7 @@ function AgentDetail() {
   const [wtWindowInput, setWtWindowInput] = useState('');
   const [savingWtWindow, setSavingWtWindow] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [roles, setRoles] = useState<Role[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -54,6 +60,11 @@ function AgentDetail() {
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Fetch predefined roles once
+  useEffect(() => {
+    fetchRoles().then(setRoles).catch(() => {});
   }, []);
 
   // Fetch files for inline timeline display
@@ -156,15 +167,12 @@ function AgentDetail() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-5xl mx-auto px-6 py-8">
         <div className="animate-pulse">
           <div className="h-8 w-32 bg-dark-800 rounded mb-6" />
           <div className="h-10 w-64 bg-dark-800 rounded mb-4" />
           <div className="h-4 w-48 bg-dark-800 rounded mb-8" />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 h-96 bg-dark-900 rounded-xl border border-dark-800" />
-            <div className="h-96 bg-dark-900 rounded-xl border border-dark-800" />
-          </div>
+          <div className="h-96 bg-dark-900 rounded-xl border border-dark-800" />
         </div>
       </div>
     );
@@ -172,7 +180,7 @@ function AgentDetail() {
 
   if (error || !agent) {
     return (
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-5xl mx-auto px-6 py-8">
         <button
           onClick={() => navigate('/')}
           className="inline-flex items-center gap-2 text-dark-400 hover:text-dark-200 mb-6 transition-colors"
@@ -201,7 +209,7 @@ function AgentDetail() {
   const todos = parsedTodos;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
       {/* Back button */}
       <button
         onClick={() => navigate('/')}
@@ -212,7 +220,7 @@ function AgentDetail() {
       </button>
 
       {/* Agent header */}
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
         <div className="min-w-0">
           <div className="flex items-center gap-3 mb-2 flex-wrap">
             <h1 className="text-xl sm:text-2xl font-bold text-dark-50 truncate">{agent.title}</h1>
@@ -251,7 +259,6 @@ function AgentDetail() {
 
           {showMenu && (
             <div className="absolute right-0 top-full mt-1 w-52 bg-dark-900 border border-dark-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
-              {/* Resume — always visible */}
               <button
                 onClick={handleResume}
                 disabled={resuming}
@@ -261,7 +268,6 @@ function AgentDetail() {
                 {resuming ? 'Resuming…' : 'Resume'}
               </button>
 
-              {/* Terminate — only if agent has a live PID */}
               {isLive && agent.pid && (
                 <button
                   onClick={handleTerminate}
@@ -273,7 +279,6 @@ function AgentDetail() {
                 </button>
               )}
 
-              {/* Terminate & Resume — only if agent has a PID */}
               {agent.pid && (
                 <button
                   onClick={handleTerminateResume}
@@ -287,7 +292,6 @@ function AgentDetail() {
 
               <div className="border-t border-dark-800 my-1" />
 
-              {/* Archive / Unarchive */}
               <button
                 onClick={handleToggleArchive}
                 className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-dark-300 hover:text-yellow-400 hover:bg-yellow-950/20 transition-colors"
@@ -296,7 +300,6 @@ function AgentDetail() {
                 {isArchived ? 'Unarchive' : 'Archive'}
               </button>
 
-              {/* Export PDF */}
               <button
                 onClick={handleExportPdf}
                 disabled={exporting}
@@ -310,17 +313,61 @@ function AgentDetail() {
         </div>
       </div>
 
-      {/* Layout: on mobile stack messages → projects/todos → timeline; on desktop 3-col */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        {/* Messages — first on mobile, sidebar on desktop */}
-        <div className="order-1 lg:order-2 space-y-4">
-          {/* Role editor */}
+      {/* Tab bar */}
+      <div className="flex border-b border-dark-800 mb-6">
+        {(['conversation', 'info'] as DetailTab[]).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-5 py-2.5 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
+              tab === t
+                ? 'text-lumi-300 border-lumi-500'
+                : 'text-dark-500 border-transparent hover:text-dark-300 hover:border-dark-600'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {/* Conversation tab */}
+      {tab === 'conversation' && (
+        <div className="space-y-4">
+          <UpdateTimeline updates={updates} files={files} />
+          <TerminalPanel updates={updates} />
+          <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
+        </div>
+      )}
+
+      {/* Info tab */}
+      {tab === 'info' && (
+        <div className="space-y-4 max-w-2xl">
+          {/* Role */}
           <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
             <h3 className="text-sm font-semibold text-dark-300 mb-3">Role</h3>
+            {roles.length > 0 && (
+              <div className="mb-3">
+                <label className="text-xs text-dark-500 mb-1 block">Predefined roles</label>
+                <select
+                  defaultValue=""
+                  onChange={e => {
+                    const picked = roles.find(r => r.id === e.target.value);
+                    if (picked) setRoleInput(picked.fullDefinition);
+                  }}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm text-dark-200 focus:outline-none focus:border-dark-600"
+                >
+                  <option value="" disabled>Select a predefined role…</option>
+                  {roles.map(r => (
+                    <option key={r.id} value={r.id}>{r.displayName}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <label className="text-xs text-dark-500 mb-1 block">Custom role / definition</label>
             <textarea
               value={roleInput}
               onChange={e => setRoleInput(e.target.value)}
-              rows={3}
+              rows={4}
               placeholder="Assign a role to this agent..."
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-600 resize-none focus:outline-none focus:border-dark-600"
             />
@@ -344,7 +391,8 @@ function AgentDetail() {
               {savingRole ? 'Updating...' : 'Update Role'}
             </button>
           </div>
-          {/* Effort & Model settings */}
+
+          {/* Launch settings */}
           <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
             <h3 className="text-sm font-semibold text-dark-300 mb-3">Launch Settings</h3>
             <div className="space-y-3">
@@ -392,6 +440,7 @@ function AgentDetail() {
               {savingSettings ? 'Saving...' : 'Save Settings'}
             </button>
           </div>
+
           {/* Terminal Window grouping */}
           <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
             <h3 className="text-sm font-semibold text-dark-300 mb-3">Terminal Window</h3>
@@ -427,19 +476,12 @@ function AgentDetail() {
               {savingWtWindow ? 'Saving...' : 'Save Window'}
             </button>
           </div>
-          <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
+
           <PollDelayControl agentId={agent.id} currentDelay={agent.poll_delay_until} onUpdated={refetch} />
-        </div>
-        {/* Projects & Todos — second on mobile */}
-        <div className="lg:col-span-2 order-2 lg:order-3 space-y-4">
           <ProjectTodoPanel projects={projects} todos={todos} />
           <FilesPanel agentId={agent.id} />
         </div>
-        {/* Timeline — last on mobile, main area on desktop */}
-        <div className="lg:col-span-2 order-3 lg:order-1">
-          <UpdateTimeline updates={updates} files={files} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }

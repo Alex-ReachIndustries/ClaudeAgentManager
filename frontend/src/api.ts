@@ -225,6 +225,15 @@ export async function runRetention() { return request<any>('/retention/run', { m
 // --- Files ---
 export async function fetchAgentFiles(agentId: string) { return request<any[]>(`/agents/${agentId}/files`); }
 
+// --- Roles ---
+export interface Role {
+  id: string;
+  displayName: string;
+  category: string;
+  fullDefinition: string;
+}
+export async function fetchRoles(): Promise<Role[]> { return request<Role[]>('/roles'); }
+
 // --- Projects ---
 export async function fetchProjects() { return request<any[]>('/projects'); }
 export async function createProject(data: {name: string, description: string, folder_path: string, max_concurrent?: number, pm_role?: string, pm_effort?: string, pm_model?: string, agent_effort?: string, agent_model?: string}) { return request('/projects', { method: 'POST', body: JSON.stringify(data) }); }
