@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react';
-import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User, Network } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User, Network, ArrowRightLeft, ChevronDown } from 'lucide-react';
 import type { AgentMessage } from '../types';
-import { sendMessage, uploadFile } from '../api';
+import { sendMessage, uploadFile, fetchAgents, fetchAgentFiles } from '../api';
 import { timeAgo } from '../utils/time';
 
 const messageStatusConfig = {
@@ -10,6 +10,10 @@ const messageStatusConfig = {
   acknowledged: { icon: CheckCheck, color: 'text-purple-400', bg: 'bg-purple-400/10', label: 'Acknowledged' },
   executed: { icon: PlayCircle, color: 'text-green-400', bg: 'bg-green-400/10', label: 'Executed' },
 } as const;
+
+type PendingItem =
+  | { kind: 'file'; id: string; file: File }
+  | { kind: 'relay'; id: string; filename: string; srcAgentId: string; srcAgentTitle: string; fileId: number };
 
 interface MessagePanelProps {
   agentId: string;
@@ -23,16 +27,43 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
+let pendingItemCounter = 0;
+
 function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Relay picker state
+  const [showRelay, setShowRelay] = useState(false);
+  const [relayAgents, setRelayAgents] = useState<{ id: string; title: string }[]>([]);
+  const [relayAgentId, setRelayAgentId] = useState('');
+  const [relayFiles, setRelayFiles] = useState<{ id: number; filename: string; size: number }[]>([]);
+  const [loadingRelayFiles, setLoadingRelayFiles] = useState(false);
+
+  // Load agent list when relay picker opens
+  useEffect(() => {
+    if (!showRelay) return;
+    fetchAgents()
+      .then(all => setRelayAgents(all.filter(a => a.id !== agentId).map(a => ({ id: a.id, title: a.title }))))
+      .catch(() => {});
+  }, [showRelay, agentId]);
+
+  // Load files when a relay agent is selected
+  useEffect(() => {
+    if (!relayAgentId) { setRelayFiles([]); return; }
+    setLoadingRelayFiles(true);
+    fetchAgentFiles(relayAgentId)
+      .then(files => setRelayFiles(Array.isArray(files) ? files : []))
+      .catch(() => setRelayFiles([]))
+      .finally(() => setLoadingRelayFiles(false));
+  }, [relayAgentId]);
 
   const handleSend = async () => {
     const content = input.trim();
-    if ((!content && !attachedFile) || sending) return;
+    if ((!content && pendingItems.length === 0) || sending) return;
 
     try {
       setSending(true);
@@ -40,11 +71,15 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
 
       let messageContent = content;
 
-      // Upload file first if attached
-      if (attachedFile) {
-        const result = await uploadFile(agentId, attachedFile);
-        const fileRef = `[File attached: ${result.file.filename} (id=${result.file.id}, ${result.file.mimetype}, ${formatSize(result.file.size)}). Retrieve via GET /api/agents/${agentId}/files/${result.file.id}]`;
-        messageContent = messageContent ? `${messageContent}\n\n${fileRef}` : fileRef;
+      for (const item of pendingItems) {
+        if (item.kind === 'file') {
+          const result = await uploadFile(agentId, item.file);
+          const ref = `[File attached: ${result.file.filename} (id=${result.file.id}, ${result.file.mimetype}, ${formatSize(result.file.size)}). Retrieve via GET /api/agents/${agentId}/files/${result.file.id}]`;
+          messageContent = messageContent ? `${messageContent}\n\n${ref}` : ref;
+        } else {
+          const ref = `[Relayed file from ${item.srcAgentTitle}: ${item.filename} — retrieve at GET /api/agents/${item.srcAgentId}/files/${item.fileId}]`;
+          messageContent = messageContent ? `${messageContent}\n\n${ref}` : ref;
+        }
       }
 
       if (messageContent) {
@@ -52,7 +87,7 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
       }
 
       setInput('');
-      setAttachedFile(null);
+      setPendingItems([]);
       onSent();
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Failed to send');
@@ -62,10 +97,34 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) setAttachedFile(file);
-    // Reset input so the same file can be re-selected
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setPendingItems(prev => [
+      ...prev,
+      ...files.map(f => ({ kind: 'file' as const, id: `f-${++pendingItemCounter}`, file: f })),
+    ]);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeItem = (id: string) => setPendingItems(prev => prev.filter(i => i.id !== id));
+
+  const addRelayFile = (file: { id: number; filename: string; size: number }) => {
+    const agent = relayAgents.find(a => a.id === relayAgentId);
+    if (!agent) return;
+    setPendingItems(prev => [
+      ...prev,
+      {
+        kind: 'relay',
+        id: `r-${++pendingItemCounter}`,
+        filename: file.filename,
+        srcAgentId: relayAgentId,
+        srcAgentTitle: agent.title,
+        fileId: file.id,
+      },
+    ]);
+    setShowRelay(false);
+    setRelayAgentId('');
+    setRelayFiles([]);
   };
 
   return (
@@ -76,28 +135,37 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
         </h2>
       </div>
 
-      {/* Input */}
-      <div className="p-4 border-b border-dark-800">
+      {/* Input area */}
+      <div className="p-4 border-b border-dark-800 space-y-2">
         <div className="flex gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Send a message to the agent..."
             rows={2}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSend(); }}
             className="flex-1 bg-dark-850 border border-dark-700 rounded-lg px-3 py-2 text-sm text-dark-100 placeholder-dark-600 resize-none focus:outline-none focus:ring-2 focus:ring-lumi-500/30 focus:border-lumi-600/50"
           />
           <div className="flex flex-col gap-1 self-end">
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={sending}
-              className="px-3 py-2 bg-dark-800 hover:bg-dark-700 disabled:bg-dark-800 disabled:text-dark-600 text-dark-300 rounded-lg transition-colors"
+              className="px-3 py-2 bg-dark-800 hover:bg-dark-700 disabled:opacity-50 text-dark-300 rounded-lg transition-colors"
               title="Attach file"
             >
               <Paperclip size={16} />
             </button>
             <button
+              onClick={() => { setShowRelay(r => !r); setRelayAgentId(''); setRelayFiles([]); }}
+              disabled={sending}
+              className={`px-3 py-2 rounded-lg transition-colors disabled:opacity-50 ${showRelay ? 'bg-purple-700/30 text-purple-300' : 'bg-dark-800 hover:bg-dark-700 text-dark-300'}`}
+              title="Relay file from another agent"
+            >
+              <ArrowRightLeft size={16} />
+            </button>
+            <button
               onClick={handleSend}
-              disabled={(!input.trim() && !attachedFile) || sending}
+              disabled={(!input.trim() && pendingItems.length === 0) || sending}
               className="px-3 py-2 bg-lumi-600 hover:bg-lumi-500 disabled:bg-dark-700 disabled:text-dark-500 text-white rounded-lg transition-colors"
             >
               <Send size={16} />
@@ -105,32 +173,80 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
           </div>
         </div>
 
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
+        {/* Hidden file input — multiple */}
+        <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
 
-        {/* Attached file indicator */}
-        {attachedFile && (
-          <div className="mt-2 flex items-center gap-2 px-2 py-1.5 bg-dark-850 border border-dark-700 rounded-lg text-sm">
-            <FileIcon size={14} className="text-lumi-400 shrink-0" />
-            <span className="text-dark-200 truncate flex-1">{attachedFile.name}</span>
-            <span className="text-dark-500 text-xs shrink-0">{formatSize(attachedFile.size)}</span>
-            <button
-              onClick={() => setAttachedFile(null)}
-              className="text-dark-500 hover:text-dark-200 transition-colors shrink-0"
-            >
-              <X size={14} />
-            </button>
+        {/* Pending items */}
+        {pendingItems.length > 0 && (
+          <div className="space-y-1.5">
+            {pendingItems.map(item => (
+              <div key={item.id} className="flex items-center gap-2 px-2 py-1.5 bg-dark-850 border border-dark-700 rounded-lg text-sm">
+                {item.kind === 'file' ? (
+                  <>
+                    <FileIcon size={14} className="text-lumi-400 shrink-0" />
+                    <span className="text-dark-200 truncate flex-1">{item.file.name}</span>
+                    <span className="text-dark-500 text-xs shrink-0">{formatSize(item.file.size)}</span>
+                  </>
+                ) : (
+                  <>
+                    <ArrowRightLeft size={14} className="text-purple-400 shrink-0" />
+                    <span className="text-dark-200 truncate flex-1">{item.filename}</span>
+                    <span className="text-dark-500 text-xs shrink-0 truncate max-w-[80px]">from {item.srcAgentTitle}</span>
+                  </>
+                )}
+                <button onClick={() => removeItem(item.id)} className="text-dark-500 hover:text-dark-200 shrink-0">
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
-        {sendError && (
-          <p className="text-xs text-red-400 mt-2">{sendError}</p>
+        {/* Relay file picker */}
+        {showRelay && (
+          <div className="border border-dark-700 rounded-lg bg-dark-850 p-3 space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-dark-400">Relay file from agent</span>
+              <button onClick={() => setShowRelay(false)} className="text-dark-600 hover:text-dark-300">
+                <X size={13} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={relayAgentId}
+                onChange={e => setRelayAgentId(e.target.value)}
+                className="flex-1 bg-dark-800 border border-dark-700 rounded-lg px-2 py-1.5 text-xs text-dark-200 focus:outline-none"
+              >
+                <option value="">Select agent…</option>
+                {relayAgents.map(a => (
+                  <option key={a.id} value={a.id}>{a.title}</option>
+                ))}
+              </select>
+              {relayAgentId && <ChevronDown size={13} className="text-dark-500 shrink-0" />}
+            </div>
+            {relayAgentId && (
+              <div className="max-h-36 overflow-y-auto space-y-1">
+                {loadingRelayFiles && <p className="text-xs text-dark-500 text-center py-2">Loading…</p>}
+                {!loadingRelayFiles && relayFiles.length === 0 && (
+                  <p className="text-xs text-dark-600 text-center py-2">No files found</p>
+                )}
+                {relayFiles.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => addRelayFile(f)}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-dark-700 text-left transition-colors"
+                  >
+                    <FileIcon size={13} className="text-dark-500 shrink-0" />
+                    <span className="text-xs text-dark-200 truncate flex-1">{f.filename}</span>
+                    <span className="text-xs text-dark-600 shrink-0">{formatSize(f.size)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
+
+        {sendError && <p className="text-xs text-red-400">{sendError}</p>}
       </div>
 
       {/* Message list */}
@@ -168,11 +284,7 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                 : 'You';
 
             return (
-              <div
-                key={msg.id}
-                className={`p-3 rounded-lg border ${containerClass}`}
-              >
-                {/* Source label */}
+              <div key={msg.id} className={`p-3 rounded-lg border ${containerClass}`}>
                 <div className="flex items-center gap-1.5 mb-1.5">
                   {isPeer ? (
                     <Network size={13} className="text-emerald-400" />
@@ -181,9 +293,7 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                   ) : (
                     <User size={13} className="text-purple-400" />
                   )}
-                  <span className={`text-xs font-medium ${labelClass}`}>
-                    {sourceLabel}
-                  </span>
+                  <span className={`text-xs font-medium ${labelClass}`}>{sourceLabel}</span>
                 </div>
                 <p className="text-sm text-dark-200 whitespace-pre-wrap break-words mb-2">
                   {msg.content}
@@ -194,15 +304,11 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                   </div>
                 )}
                 <div className="flex items-center justify-between">
-                  <span
-                    className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}
-                  >
+                  <span className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}>
                     <StatusIcon size={10} />
                     {statusCfg.label}
                   </span>
-                  <span className="text-xs text-dark-600">
-                    {timeAgo(msg.created_at)}
-                  </span>
+                  <span className="text-xs text-dark-600">{timeAgo(msg.created_at)}</span>
                 </div>
               </div>
             );

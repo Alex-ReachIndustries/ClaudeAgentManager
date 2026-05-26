@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import type { Agent } from '../types';
 import AgentCard from './AgentCard';
 import FolderPicker from './FolderPicker';
 import AnalyticsPanel from './AnalyticsPanel';
+import BatchActionsBar from './BatchActionsBar';
 import { createLaunchRequest } from '../api';
 import { RefreshCw, Bot, Archive, Plus, Search, Layers, Monitor } from 'lucide-react';
 
@@ -40,6 +41,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   const [sortOption, setSortOption] = useState<SortOption>('activity');
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
   const [groupByWindow, setGroupByWindow] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Collect unique project names for filter dropdown
   const projectNames = useMemo(() => {
@@ -63,6 +65,15 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
       console.error('Failed to create launch request:', err);
     }
   };
+
+  const handleToggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const { activeAgents, archivedAgents } = useMemo(() => {
     // 1. Search filter
@@ -312,7 +323,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {group.agents.map((agent) => (
-                    <AgentCard key={agent.id} agent={agent} />
+                    <AgentCard key={agent.id} agent={agent} selected={selectedIds.has(agent.id)} onToggleSelect={handleToggleSelect} />
                   ))}
                 </div>
               </div>
@@ -321,7 +332,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeAgents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} />
+              <AgentCard key={agent.id} agent={agent} selected={selectedIds.has(agent.id)} onToggleSelect={handleToggleSelect} />
             ))}
           </div>
         )
@@ -346,11 +357,19 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 opacity-60">
             {archivedAgents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} />
+              <AgentCard key={agent.id} agent={agent} selected={selectedIds.has(agent.id)} onToggleSelect={handleToggleSelect} />
             ))}
           </div>
         </div>
       )}
+
+      {/* Batch actions bar — floats above bottom edge when agents are selected */}
+      <BatchActionsBar
+        selected={selectedIds}
+        agents={agents}
+        onClear={() => setSelectedIds(new Set())}
+        onRefetch={refetch}
+      />
     </div>
   );
 }
