@@ -342,6 +342,52 @@ function AgentDetail() {
       {/* Info tab */}
       {tab === 'info' && (
         <div className="space-y-4 max-w-2xl">
+          {/* Agent Metrics */}
+          {(() => {
+            const createdMs = new Date(agent.created_at).getTime();
+            const lastMs = new Date(agent.last_update_at).getTime();
+            const diffSec = Math.max(0, Math.floor((lastMs - createdMs) / 1000));
+            const durationParts: string[] = [];
+            const dDays = Math.floor(diffSec / 86400);
+            const dHrs = Math.floor((diffSec % 86400) / 3600);
+            const dMins = Math.floor((diffSec % 3600) / 60);
+            if (dDays > 0) durationParts.push(`${dDays}d`);
+            if (dHrs > 0) durationParts.push(`${dHrs}h`);
+            durationParts.push(`${dMins}m`);
+            const sessionDuration = durationParts.join(' ');
+
+            const pendingCount = messages.filter(m => m.status === 'pending').length;
+            const deliveredCount = messages.filter(m => m.status === 'delivered').length;
+            const ackCount = messages.filter(m => m.status === 'acknowledged' || m.status === 'executed').length;
+
+            const MetricRow = ({ label, value }: { label: string; value: string }) => (
+              <div className="flex justify-between items-baseline gap-4 py-1.5 border-b border-dark-800 last:border-0">
+                <span className="text-xs text-dark-500 shrink-0">{label}</span>
+                <span className="text-xs text-dark-300 font-mono text-right truncate">{value}</span>
+              </div>
+            );
+
+            return (
+              <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
+                <h3 className="text-sm font-semibold text-dark-300 mb-3">Agent Metrics</h3>
+                <div>
+                  <MetricRow label="Agent ID" value={agent.id} />
+                  <MetricRow label="Created" value={formatDate(agent.created_at)} />
+                  <MetricRow label="Session Duration" value={sessionDuration} />
+                  <MetricRow label="Total Updates" value={`${agent.update_count}`} />
+                  <MetricRow label="Messages" value={`${messages.length} total (${pendingCount} pending, ${deliveredCount} delivered, ${ackCount} ack'd)`} />
+                  {(agent.workspace || agent.cwd) && (
+                    <MetricRow label="Workspace" value={agent.workspace || agent.cwd || ''} />
+                  )}
+                  {agent.pid != null && (
+                    <MetricRow label="PID" value={`${agent.pid}`} />
+                  )}
+                  <MetricRow label="Status" value={statusConfig[agent.status]?.label ?? agent.status} />
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Role */}
           <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
             <h3 className="text-sm font-semibold text-dark-300 mb-3">Role</h3>
