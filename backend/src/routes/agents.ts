@@ -438,6 +438,67 @@ curl -s -H "Authorization: Bearer $API_KEY" -X POST "$AGENT_URL/api/agents/$SESS
   }
 });
 
+// POST /groups/:window/export/pdf — merged group PDF for all agents in a wt_window
+// MUST be before /:id routes to prevent Express matching "groups" as an agent ID.
+router.post("/groups/:window/export/pdf", async (req: Request, res: Response) => {
+  try {
+    const windowName = req.params.window as string;
+    if (!windowName) {
+      res.status(400).json({ error: "Missing window name" });
+      return;
+    }
+
+    const allAgents = getAllAgents(10000).data;
+    const groupAgents = allAgents.filter(
+      (a: Record<string, unknown>) =>
+        a.wt_window === windowName && a.status !== "archived"
+    );
+    if (groupAgents.length === 0) {
+      res.status(404).json({ error: `No active agents found in group '${windowName}'` });
+      return;
+    }
+
+    const allMessages: unknown[] = [];
+    for (const agent of groupAgents) {
+      const aid = (agent as Record<string, unknown>).id as string;
+      const msgsResult = getMessages(aid, 10000);
+      for (const m of (msgsResult.data || [])) {
+        allMessages.push({ ...m, agent_id: aid });
+      }
+    }
+
+    const payload = {
+      group_name: windowName,
+      agents: groupAgents.map((a: Record<string, unknown>) => ({ id: a.id, title: a.title })),
+      messages: allMessages,
+    };
+
+    const pdfServiceUrl = process.env.PDF_SERVICE_URL || "http://pdf-generator:8090";
+    const pdfRes = await fetch(`${pdfServiceUrl}/generate/group-report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!pdfRes.ok) {
+      const errText = await pdfRes.text();
+      logger.error({ errText }, "Group PDF generation failed");
+      res.status(500).json({ error: "PDF generation failed", detail: errText });
+      return;
+    }
+
+    const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
+    const safeWindow = windowName.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const filename = `${safeWindow}_group_export.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    logger.error({ err }, "Error generating group PDF");
+    res.status(500).json({ error: "Failed to generate group PDF" });
+  }
+});
+
 // GET /:id — get single agent
 router.get("/:id", (req: Request, res: Response) => {
   try {

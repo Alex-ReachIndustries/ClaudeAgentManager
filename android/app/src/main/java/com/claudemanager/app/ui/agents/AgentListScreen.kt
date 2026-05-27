@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.foundation.layout.Column
@@ -128,6 +129,7 @@ fun AgentListScreen(
     viewModel: AgentListViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var showArchived by remember { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
     var selectedFolder by remember { mutableStateOf<String?>(null) }
@@ -318,7 +320,9 @@ fun AgentListScreen(
                                     onToggle = { viewModel.toggleGroupExpanded(groupName) },
                                     onResume = { viewModel.resumeGroup(groupName) },
                                     onTerminate = { viewModel.terminateGroup(groupName) },
-                                    onTerminateAndResume = { viewModel.terminateAndResumeGroup(groupName) }
+                                    onTerminateAndResume = { viewModel.terminateAndResumeGroup(groupName) },
+                                    onExportPdf = { viewModel.exportGroupPdf(groupName, context) },
+                                    isExportingPdf = state.isExportingGroupPdf,
                                 )
                             }
                             if (isExpanded) {
@@ -1229,7 +1233,9 @@ private fun GroupCard(
     onToggle: () -> Unit,
     onResume: () -> Unit,
     onTerminate: () -> Unit,
-    onTerminateAndResume: () -> Unit
+    onTerminateAndResume: () -> Unit,
+    onExportPdf: () -> Unit = {},
+    isExportingPdf: Boolean = false,
 ) {
     val liveCount = agents.count { it.isLive }
     var showActions by remember { mutableStateOf(false) }
@@ -1267,9 +1273,10 @@ private fun GroupCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${agents.size} agent${if (agents.size != 1) "s" else ""}${if (liveCount > 0) " · $liveCount live" else ""}",
+                    text = if (isExportingPdf) "Exporting PDF…"
+                           else "${agents.size} agent${if (agents.size != 1) "s" else ""}${if (liveCount > 0) " · $liveCount live" else ""}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = LumiOnSurfaceSecondary
+                    color = if (isExportingPdf) LumiPurple500 else LumiOnSurfaceSecondary
                 )
             }
             Icon(
@@ -1288,7 +1295,8 @@ private fun GroupCard(
             onDismiss = { showActions = false },
             onResume = { showActions = false; onResume() },
             onTerminate = { showActions = false; onTerminate() },
-            onTerminateAndResume = { showActions = false; onTerminateAndResume() }
+            onTerminateAndResume = { showActions = false; onTerminateAndResume() },
+            onExportPdf = { showActions = false; onExportPdf() },
         )
     }
 }
@@ -1300,7 +1308,8 @@ private fun GroupActionDialog(
     onDismiss: () -> Unit,
     onResume: () -> Unit,
     onTerminate: () -> Unit,
-    onTerminateAndResume: () -> Unit
+    onTerminateAndResume: () -> Unit,
+    onExportPdf: () -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1335,6 +1344,18 @@ private fun GroupActionDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Terminate + Resume")
                     }
+                }
+                Button(
+                    onClick = onExportPdf,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LumiPurple500.copy(alpha = 0.15f),
+                        contentColor = LumiPurple500
+                    )
+                ) {
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Export Group PDF")
                 }
             }
         },

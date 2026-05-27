@@ -49,6 +49,7 @@ data class AgentListUiState(
     val isGrouping: Boolean = false,
     val managers: List<ServerManager> = emptyList(),
     val activeManager: ServerManager? = null,
+    val isExportingGroupPdf: Boolean = false,
 )
 
 /**
@@ -449,4 +450,60 @@ class AgentListViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun archivedAgents(): List<Agent> =
         _uiState.value.agents.filter { it.status == AgentStatus.ARCHIVED }
+
+    /**
+     * Export all agents in a wt_window group as a merged PDF chat log.
+     * Calls POST /api/agents/groups/:window/export/pdf on the backend.
+     */
+    fun exportGroupPdf(windowName: String, context: android.content.Context) {
+        _uiState.update { it.copy(isExportingGroupPdf = true) }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val safeWindow = java.net.URLEncoder.encode(windowName, "UTF-8")
+                val url = "${ApiClient.getBaseUrl()}/api/agents/groups/$safeWindow/export/pdf"
+                val client = ApiClient.getRetrofit().callFactory() as okhttp3.OkHttpClient
+                val request = okhttp3.Request.Builder().url(url)
+                    .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                    .build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body ?: run {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            _uiState.update { it.copy(isExportingGroupPdf = false, error = "Group PDF export returned empty response") }
+                        }
+                        return@launch
+                    }
+                    val cacheDir = java.io.File(context.cacheDir, "downloads")
+                    cacheDir.mkdirs()
+                    val safeName = windowName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                    val filename = "${safeName}_group_export.pdf"
+                    val file = java.io.File(cacheDir, filename)
+                    file.outputStream().use { out -> body.byteStream().use { it.copyTo(out) } }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { it.copy(isExportingGroupPdf = false) }
+                        try {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context, "${context.packageName}.fileprovider", file
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            _uiState.update { it.copy(error = "Group PDF saved but no app available to open it") }
+                        }
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { it.copy(isExportingGroupPdf = false, error = "Group PDF export failed: HTTP ${response.code}") }
+                    }
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { it.copy(isExportingGroupPdf = false, error = "Group PDF export failed: ${e.message}") }
+                }
+            }
+        }
+    }
 }
