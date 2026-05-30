@@ -238,7 +238,7 @@ export function getDb(): Database.Database {
 
   // Effort and model settings on agents
   migrate("ALTER TABLE agents ADD COLUMN effort TEXT DEFAULT 'high'");
-  migrate("ALTER TABLE agents ADD COLUMN model TEXT DEFAULT 'claude-sonnet-4-6'");
+  migrate("ALTER TABLE agents ADD COLUMN model TEXT DEFAULT 'sonnet'");
 
   // Fixed agent name prefix — first title becomes permanent identity prefix
   migrate("ALTER TABLE agents ADD COLUMN base_title TEXT");
@@ -249,9 +249,9 @@ export function getDb(): Database.Database {
   // PM/agent effort and model settings on projects
   migrate("ALTER TABLE projects ADD COLUMN pm_role TEXT");
   migrate("ALTER TABLE projects ADD COLUMN pm_effort TEXT DEFAULT 'high'");
-  migrate("ALTER TABLE projects ADD COLUMN pm_model TEXT DEFAULT 'claude-sonnet-4-6'");
+  migrate("ALTER TABLE projects ADD COLUMN pm_model TEXT DEFAULT 'opus'");
   migrate("ALTER TABLE projects ADD COLUMN agent_effort TEXT DEFAULT 'high'");
-  migrate("ALTER TABLE projects ADD COLUMN agent_model TEXT DEFAULT 'claude-sonnet-4-6'");
+  migrate("ALTER TABLE projects ADD COLUMN agent_model TEXT DEFAULT 'sonnet'");
 
   // Message ack content: agents must explain what they understood when acknowledging
   migrate("ALTER TABLE messages ADD COLUMN ack_content TEXT");
@@ -529,7 +529,7 @@ export function getDb(): Database.Database {
         latest_message TEXT,
         last_message_at TEXT,
         effort TEXT DEFAULT 'high',
-        model TEXT DEFAULT 'claude-sonnet-4-6',
+        model TEXT DEFAULT 'sonnet',
         base_title TEXT,
         progress INTEGER DEFAULT 0,
         pool_slot INTEGER,
@@ -1084,6 +1084,16 @@ export function getFile(agentId: string, fileId: number) {
     | undefined;
 }
 
+export function getFileByIdOnly(fileId: number) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT id, agent_id, filename, mimetype, size, source, description, file_path, created_at FROM files WHERE id = ?
+  `);
+  return stmt.get(fileId) as
+    | { id: number; agent_id: string; filename: string; mimetype: string; size: number; source: string; description: string; file_path: string | null; created_at: string }
+    | undefined;
+}
+
 export function getFilesMeta(agentId: string, limit: number = 50, before?: number): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
   if (before) {
@@ -1223,7 +1233,7 @@ export function createProject(id: string, name: string, description: string, fol
     INSERT INTO projects (id, name, description, folder_path, max_concurrent, pm_role, pm_effort, pm_model, agent_effort, agent_model)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  return stmt.run(id, name, description, folderPath, maxConcurrent, pmRole || null, pmEffort || 'high', pmModel || 'claude-sonnet-4-6', agentEffort || 'high', agentModel || 'claude-sonnet-4-6');
+  return stmt.run(id, name, description, folderPath, maxConcurrent, pmRole || null, pmEffort || 'high', pmModel || 'opus', agentEffort || 'high', agentModel || 'sonnet');
 }
 
 export function updateProject(

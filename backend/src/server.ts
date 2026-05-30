@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -15,7 +17,7 @@ import projectsRouter from "./routes/projects.js";
 import rolesRouter from "./routes/roles.js";
 import totpRouter from "./routes/totp.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
-import { archiveInactiveAgents, getAgent, getDb, touchAgentHeartbeat, updateAgent } from "./db.js";
+import { archiveInactiveAgents, getAgent, getDb, getFileByIdOnly, touchAgentHeartbeat, updateAgent } from "./db.js";
 import { initPush } from "./push.js";
 import { initWebhookDispatcher } from "./webhook-dispatcher.js";
 import { initWorkflowEngine } from "./workflow-engine.js";
@@ -97,6 +99,27 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/retention", retentionRouter);
 app.use("/api/roles", rolesRouter);
 app.use("/api/totp", totpRouter);
+
+// Failsafe: look up a file by ID alone (no agent_id required).
+// Prevents 400 loops when agents call the wrong endpoint path (missing agent segment).
+app.get("/api/files/:fileId", (req, res) => {
+  try {
+    const fileId = parseInt(req.params.fileId, 10);
+    if (isNaN(fileId)) { res.status(400).json({ error: "Invalid file ID" }); return; }
+    const file = getFileByIdOnly(fileId);
+    if (!file) { res.status(404).json({ error: "File not found" }); return; }
+    if (file.file_path && fs.existsSync(file.file_path)) {
+      res.setHeader("Content-Type", file.mimetype);
+      res.setHeader("Content-Disposition", `inline; filename="${file.filename}"`);
+      res.sendFile(path.resolve(file.file_path));
+    } else {
+      res.status(404).json({ error: "File data not found on disk" });
+    }
+  } catch (err) {
+    logger.error({ err }, "Error in failsafe file endpoint");
+    res.status(500).json({ error: "Failed to retrieve file" });
+  }
+});
 
 const server = app.listen(PORT, () => {
   logger.info(`Agent Manager backend listening on port ${PORT}`);

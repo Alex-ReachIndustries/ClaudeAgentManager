@@ -179,9 +179,9 @@ export const projectCreateSchema = z.object({
   max_concurrent: z.number().int().min(1).max(10).default(4),
   pm_role: z.string().max(65_536).optional(),
   pm_effort: z.enum(["low", "medium", "high"]).default("high"),
-  pm_model: z.string().max(100).default("claude-opus-4-6"),
+  pm_model: z.string().max(100).default("opus"),
   agent_effort: z.enum(["low", "medium", "high"]).default("high"),
-  agent_model: z.string().max(100).default("claude-sonnet-4-6"),
+  agent_model: z.string().max(100).default("sonnet"),
 });
 
 // --- Project update (POST /projects/:id/updates) ---

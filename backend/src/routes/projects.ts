@@ -413,29 +413,39 @@ router.post("/:id/start", (req: Request, res: Response) => {
           pm_prompt: pmPrompt,
           user_prompt: userPrompt,
           effort: project.pm_effort as string || "high",
-          model: project.pm_model as string || "claude-opus-4-6",
+          model: project.pm_model as string || "opus",
           wt_window: pmWtWindow,
           base_title: pmTitle,
         }), pmWtWindow, launchRequestId);
 
       // Auto-spawn standby pool: 3 Sonnet agents
       const poolConfig = [
-        { label: `${project.name} - Sonnet A`, model: "claude-sonnet-4-6", slot: 1 },
-        { label: `${project.name} - Sonnet B`, model: "claude-sonnet-4-6", slot: 2 },
-        { label: `${project.name} - Sonnet C`, model: "claude-sonnet-4-6", slot: 3 },
+        { label: `${project.name} - Sonnet A`, model: "sonnet", slot: 1 },
+        { label: `${project.name} - Sonnet B`, model: "sonnet", slot: 2 },
+        { label: `${project.name} - Sonnet C`, model: "sonnet", slot: 3 },
       ];
 
       for (const pool of poolConfig) {
         const poolLaunch = createLaunchRequest("new", folderPath);
+        // Each pool slot gets ONE persistent worktree (e.g. /path/to/Project-wt1).
+        // Agents reset/checkout new branches within it per task instead of git worktree add,
+        // preventing worktree explosion across many PRs.
+        const wtPath = folderPath ? `${folderPath}-wt${pool.slot}` : `./${project.name}-wt${pool.slot}`;
         const poolPrompt = `You are ${pool.label} for project "${project.name}". Run /session-connect, then post status=idle with summary="Standby — awaiting assignment".
 
 Wait for relay messages from the PM. Discover your PM via: GET /api/projects/${id} → pm_agent_id field.
 
-When you receive a task, you will be given a feature branch name (e.g. feat/<task-slug>). Workflow:
-1. Create a worktree for that branch: git worktree add ../<branch> -b <branch>
-2. Do all work on that branch — NEVER commit to dev or main directly
-3. Push and open a PR targeting dev: gh pr create --base dev
-4. Relay to PM: "COMPLETED: branch=<branch> PR=<url> summary=<what changed>"
+**Your persistent worktree** is at: ${wtPath}
+This is your dedicated, reusable workspace. Do NOT use \`git worktree add\` — it causes worktree explosion.
+
+When you receive a task with a branch name (e.g. feat/<task-slug>). Workflow:
+1. Set up your worktree (first task only — skip if path already exists):
+   git worktree add ${wtPath} dev
+2. For every task (including first):
+   cd ${wtPath} && git fetch origin && git checkout -B <branch> origin/dev
+3. Do all work inside ${wtPath} — NEVER commit to dev or main directly
+4. Push and open a PR targeting dev: gh pr create --base dev
+5. Relay to PM: "COMPLETED: branch=<branch> PR=<url> summary=<what changed>"
 
 Your title is EXACTLY "${pool.label}" — the server enforces this.`;
         db.prepare("UPDATE launch_requests SET agent_id = ?, wt_window = ? WHERE id = ?")
@@ -691,7 +701,7 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     // Enforce MAX constraints: PM may request equal or lower effort/model than project max
     const effortOrder = ["low", "medium", "high"];
-    const modelOrder = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"];
+    const modelOrder = ["haiku", "sonnet", "opus"];
 
     const maxEffort = (project.agent_effort as string) || "high";
     const maxModel = (project.agent_model as string) || "claude-sonnet-4-6";

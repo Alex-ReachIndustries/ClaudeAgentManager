@@ -59,6 +59,29 @@ const POLL_INTERVAL = 3000; // 3 seconds
 const fs = require('fs');
 const USER_HOME = os.homedir();
 
+// Model resolver — maps family aliases and legacy versions to the current latest.
+// To upgrade: update the values here. DB records storing old versions auto-upgrade on next spawn.
+const MODEL_DEFAULTS = {
+  // Short family aliases (preferred for new agents stored in DB)
+  'opus':    'claude-opus-4-8',
+  'sonnet':  'claude-sonnet-4-6',
+  'haiku':   'claude-haiku-4-5-20251001',
+  // claude- prefixed family aliases
+  'claude-opus':   'claude-opus-4-8',
+  'claude-sonnet': 'claude-sonnet-4-6',
+  'claude-haiku':  'claude-haiku-4-5-20251001',
+  // Legacy pinned versions — auto-upgrade to latest
+  'claude-opus-4-5':  'claude-opus-4-8',
+  'claude-opus-4-6':  'claude-opus-4-8',
+  'claude-opus-4-7':  'claude-opus-4-8',
+  'claude-sonnet-4-5': 'claude-sonnet-4-6',
+};
+
+function resolveModel(model) {
+  if (!model) return undefined;
+  return MODEL_DEFAULTS[model] || model;
+}
+
 function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);
   console.log(`[${ts}] ${msg}`);
@@ -395,7 +418,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
     deliverPromptWhenRegistered(cwd, spawnMeta.prompt);
   }
 
-  const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${spawnMeta.model}` : '';
+  const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${resolveModel(spawnMeta.model)}` : '';
   const effortFlag = (spawnMeta && spawnMeta.effort) ? ` --effort ${spawnMeta.effort}` : '';
 
   if (IS_LINUX) {
@@ -487,7 +510,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
       if (!resolvedWtWindow && agent.wt_window) {
         resolvedWtWindow = agent.wt_window;
       }
-      if (agent.model) agentModelFlag = ` --model ${agent.model}`;
+      if (agent.model) agentModelFlag = ` --model ${resolveModel(agent.model)}`;
       if (agent.effort) agentEffortFlag = ` --effort ${agent.effort}`;
     }
   } catch (err) {
