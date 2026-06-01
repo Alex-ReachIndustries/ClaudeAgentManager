@@ -47,14 +47,16 @@ data class AttachedFile(
 /**
  * A prior conversation item the user has selected (via swipe-right) to reference
  * in their next outgoing message — a message body, an acknowledgement, an agent
- * update, or a file. Mirrors the file-attachment reference UX: shown as a
- * dismissible chip above the composer and prepended as a text reference on send.
+ * update, or a file. Sent structurally so the bubble renders a WhatsApp-style
+ * ghost quote (tap to jump to the original); the textual reference is injected
+ * server-side at delivery, never stored in the body.
  *
- * [refText] is the exact line prepended to the outgoing message; [label] and
- * [snippet] drive the chip display only.
+ * [kind] is the jump target type ("message" | "update" | "file"); [id] is its id.
+ * [label] / [snippet] are the cached chip + ghost-quote display fields.
  */
 data class PendingReply(
-    val refText: String,
+    val kind: String,
+    val id: Long,
     val label: String,
     val snippet: String
 )
@@ -378,24 +380,21 @@ class AgentDetailViewModel(
      */
     fun setReply(message: AgentMessage) {
         val label = sourceLabelOf(message)
-        val snippet = previewOf(message.content)
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Replying to message #${message.id} from $label: \"$snippet\" — full message via GET /api/agents/$agentId/messages/${message.id}]",
-            label = "Replying to $label",
-            snippet = snippet
+            kind = "message", id = message.id,
+            label = label, snippet = previewOf(message.content)
         )) }
     }
 
     /**
      * Reply to a message's acknowledgement, independently of its body (swipe-right on the ack).
+     * Jumps to the same message; label/snippet reflect the ack.
      */
     fun setReplyToAck(message: AgentMessage) {
         val label = sourceLabelOf(message)
-        val snippet = previewOf(message.ackContent ?: "")
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Replying to the acknowledgement of message #${message.id} from $label: \"$snippet\" — full message via GET /api/agents/$agentId/messages/${message.id}]",
-            label = "Replying to ack from $label",
-            snippet = snippet
+            kind = "message", id = message.id,
+            label = "$label's ack", snippet = previewOf(message.ackContent ?: "")
         )) }
     }
 
@@ -403,11 +402,10 @@ class AgentDetailViewModel(
      * Reply to an agent update/status/progress bubble (swipe-right).
      */
     fun setReplyToUpdate(update: AgentUpdate) {
-        val snippet = previewOf(update.summary?.takeIf { it.isNotBlank() } ?: update.content)
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Replying to ${update.type.name.lowercase()} update #${update.id} from agent: \"$snippet\" — full update via GET /api/agents/$agentId/updates/${update.id}]",
-            label = "Replying to agent update",
-            snippet = snippet
+            kind = "update", id = update.id,
+            label = "Agent ${update.type.name.lowercase()}",
+            snippet = previewOf(update.summary?.takeIf { it.isNotBlank() } ?: update.content)
         )) }
     }
 
@@ -417,8 +415,8 @@ class AgentDetailViewModel(
      */
     fun setReplyToFile(file: FileInfo) {
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Referencing file: ${file.filename} (id=${file.id}, ${file.mimetype}). Retrieve via GET /api/agents/$agentId/files/${file.id}]",
-            label = "Referencing file",
+            kind = "file", id = file.id,
+            label = if (file.source == "user") "File you uploaded" else "Claude-generated file",
             snippet = file.filename
         )) }
     }
@@ -440,15 +438,12 @@ class AgentDetailViewModel(
 
         _uiState.update { it.copy(isSendingMessage = true) }
         viewModelScope.launch {
-            // Build message with attachment references
+            // Build message with attachment references. The reply is sent
+            // structurally (rendered as a ghost quote); the textual reference is
+            // injected server-side at delivery, not stored in the body.
             val attachments = _uiState.value.pendingAttachments
             val reply = _uiState.value.pendingReply
             val fullContent = buildString {
-                // Reply reference is prepended so it reads as context for the message below it.
-                if (reply != null) {
-                    append(reply.refText)
-                    append("\n\n")
-                }
                 append(content)
                 for (att in attachments) {
                     if (isNotEmpty()) append("\n")
@@ -460,7 +455,13 @@ class AgentDetailViewModel(
                 }
             }
 
-            repository.sendMessage(agentId, fullContent)
+            repository.sendMessage(
+                agentId, fullContent,
+                replyToKind = reply?.kind,
+                replyToId = reply?.id,
+                replyToLabel = reply?.label,
+                replyToSnippet = reply?.snippet,
+            )
                 .onSuccess {
                     _uiState.update { it.copy(
                         draftMessage = "",

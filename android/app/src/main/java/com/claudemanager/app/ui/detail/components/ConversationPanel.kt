@@ -70,7 +70,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -205,6 +208,25 @@ fun ConversationPanel(
         merged.toList()
     }
 
+    // Tap-to-jump: scroll to (and briefly highlight) the item a ghost quote references.
+    val scope = rememberCoroutineScope()
+    var highlightedKey by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(highlightedKey) {
+        if (highlightedKey != null) { delay(1500); highlightedKey = null }
+    }
+    val jumpToReply: (String, Long) -> Unit = { kind, refId ->
+        val key = when (kind) {
+            "update" -> "update-$refId"
+            "file" -> "file-$refId"
+            else -> "msg-$refId"
+        }
+        val idx = items.indexOfFirst { it.itemKey == key }
+        if (idx >= 0) {
+            highlightedKey = key
+            scope.launch { listState.animateScrollToItem(idx) }
+        }
+    }
+
     // Scroll to bottom: immediately on first load, then animated on each new message.
     var initialScrollDone by remember { mutableStateOf(false) }
     var prevItemCount by remember { mutableStateOf(0) }
@@ -284,36 +306,46 @@ fun ConversationPanel(
                 item(key = "top-spacer") { Spacer(modifier = Modifier.height(8.dp)) }
 
                 items(items, key = { it.itemKey }) { item ->
-                    when (item) {
-                        is ConversationItem.Update -> UpdateBubble(
-                            update = item.update,
-                            onReply = { onReplyToUpdate(item.update) }
-                        )
-                        is ConversationItem.Message -> {
-                            val msg = item.message
-                            when (msg.source) {
-                                "agent" -> AgentRelayBubble(
-                                    message = msg,
-                                    onReplyBody = { onReplyToMessage(msg) },
-                                    onReplyAck = { onReplyToAck(msg) }
-                                )
-                                "peer" -> PeerMessageBubble(
-                                    message = msg,
-                                    onReplyBody = { onReplyToMessage(msg) },
-                                    onReplyAck = { onReplyToAck(msg) }
-                                )
-                                else -> SentMessageBubble(
-                                    message = msg,
-                                    onReplyBody = { onReplyToMessage(msg) },
-                                    onReplyAck = { onReplyToAck(msg) }
-                                )
+                    val highlightModifier = if (item.itemKey == highlightedKey) {
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(LumiPurple500.copy(alpha = 0.18f))
+                    } else Modifier
+                    Box(modifier = highlightModifier) {
+                        when (item) {
+                            is ConversationItem.Update -> UpdateBubble(
+                                update = item.update,
+                                onReply = { onReplyToUpdate(item.update) }
+                            )
+                            is ConversationItem.Message -> {
+                                val msg = item.message
+                                when (msg.source) {
+                                    "agent" -> AgentRelayBubble(
+                                        message = msg,
+                                        onReplyBody = { onReplyToMessage(msg) },
+                                        onReplyAck = { onReplyToAck(msg) },
+                                        onJumpTo = jumpToReply
+                                    )
+                                    "peer" -> PeerMessageBubble(
+                                        message = msg,
+                                        onReplyBody = { onReplyToMessage(msg) },
+                                        onReplyAck = { onReplyToAck(msg) },
+                                        onJumpTo = jumpToReply
+                                    )
+                                    else -> SentMessageBubble(
+                                        message = msg,
+                                        onReplyBody = { onReplyToMessage(msg) },
+                                        onReplyAck = { onReplyToAck(msg) },
+                                        onJumpTo = jumpToReply
+                                    )
+                                }
                             }
+                            is ConversationItem.File -> FileBubble(
+                                fileInfo = item.fileInfo,
+                                onDownload = onFileDownload,
+                                onReply = { onReplyToFile(item.fileInfo) }
+                            )
                         }
-                        is ConversationItem.File -> FileBubble(
-                            fileInfo = item.fileInfo,
-                            onDownload = onFileDownload,
-                            onReply = { onReplyToFile(item.fileInfo) }
-                        )
                     }
                 }
 
@@ -758,6 +790,50 @@ private fun Modifier.swipeToReply(onReply: () -> Unit): Modifier {
 }
 
 /**
+ * WhatsApp-style ghost quote shown inside a bubble when it replies to a prior
+ * item. Tapping it jumps to the referenced message/update/file in the feed.
+ */
+@Composable
+private fun ReplyQuote(label: String?, snippet: String?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(LumiPurple500.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(start = 6.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(28.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(LumiPurple400)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label ?: "Reply",
+                style = MaterialTheme.typography.labelSmall,
+                color = LumiPurple400,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!snippet.isNullOrBlank()) {
+                Text(
+                    text = snippet,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LumiOnSurfaceSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/**
  * Right-aligned user message bubble (sent to agent).
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -765,7 +841,8 @@ private fun Modifier.swipeToReply(onReply: () -> Unit): Modifier {
 private fun SentMessageBubble(
     message: AgentMessage,
     onReplyBody: () -> Unit = {},
-    onReplyAck: () -> Unit = {}
+    onReplyAck: () -> Unit = {},
+    onJumpTo: (String, Long) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     Column(
@@ -785,11 +862,19 @@ private fun SentMessageBubble(
                 )
                 .padding(10.dp)
         ) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyMedium,
-                color = LumiOnSurface
-            )
+            Column {
+                if (message.replyToId != null) {
+                    ReplyQuote(message.replyToLabel, message.replyToSnippet) {
+                        onJumpTo(message.replyToKind ?: "message", message.replyToId)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LumiOnSurface
+                )
+            }
         }
 
         if (message.status == MessageStatus.ACKNOWLEDGED && !message.ackContent.isNullOrBlank()) {
@@ -849,7 +934,8 @@ private fun SentMessageBubble(
 private fun AgentRelayBubble(
     message: AgentMessage,
     onReplyBody: () -> Unit = {},
-    onReplyAck: () -> Unit = {}
+    onReplyAck: () -> Unit = {},
+    onJumpTo: (String, Long) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     Column(
@@ -897,6 +983,13 @@ private fun AgentRelayBubble(
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
+
+                if (message.replyToId != null) {
+                    ReplyQuote(message.replyToLabel, message.replyToSnippet) {
+                        onJumpTo(message.replyToKind ?: "message", message.replyToId)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
 
                 Text(
                     text = message.content,
@@ -964,7 +1057,8 @@ private fun AgentRelayBubble(
 private fun PeerMessageBubble(
     message: AgentMessage,
     onReplyBody: () -> Unit = {},
-    onReplyAck: () -> Unit = {}
+    onReplyAck: () -> Unit = {},
+    onJumpTo: (String, Long) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     Column(
@@ -1006,6 +1100,13 @@ private fun PeerMessageBubble(
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
+
+                if (message.replyToId != null) {
+                    ReplyQuote(message.replyToLabel, message.replyToSnippet) {
+                        onJumpTo(message.replyToKind ?: "message", message.replyToId)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
 
                 Text(
                     text = message.content,

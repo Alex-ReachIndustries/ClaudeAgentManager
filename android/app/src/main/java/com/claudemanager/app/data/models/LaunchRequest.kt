@@ -117,7 +117,20 @@ data class CloseResponse(
  */
 data class SendMessageBody(
     @SerializedName("content")
-    val content: String
+    val content: String,
+
+    // Reply/reference — set when this message quotes a prior message/update/file.
+    @SerializedName("reply_to_kind")
+    val replyToKind: String? = null,
+
+    @SerializedName("reply_to_id")
+    val replyToId: Long? = null,
+
+    @SerializedName("reply_to_label")
+    val replyToLabel: String? = null,
+
+    @SerializedName("reply_to_snippet")
+    val replyToSnippet: String? = null
 )
 
 /**

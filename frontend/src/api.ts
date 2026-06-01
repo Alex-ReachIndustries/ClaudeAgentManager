@@ -80,10 +80,17 @@ export async function fetchMessages(agentId: string): Promise<AgentMessage[]> {
   return Array.isArray(result) ? result : result.data;
 }
 
-export async function sendMessage(agentId: string, content: string): Promise<AgentMessage> {
+export interface ReplyRef {
+  reply_to_kind: 'message' | 'update' | 'file';
+  reply_to_id: number;
+  reply_to_label?: string;
+  reply_to_snippet?: string;
+}
+
+export async function sendMessage(agentId: string, content: string, reply?: ReplyRef): Promise<AgentMessage> {
   return request<AgentMessage>(`/agents/${agentId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, ...(reply ?? {}) }),
   });
 }
 

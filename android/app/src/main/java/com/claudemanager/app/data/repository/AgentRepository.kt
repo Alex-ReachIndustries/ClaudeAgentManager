@@ -173,8 +173,15 @@ class AgentRepository {
      * Send a message to an agent. The message is queued for delivery on the
      * agent's next poll.
      */
-    suspend fun sendMessage(agentId: String, content: String): Result<Unit> = apiCall {
-        api.sendMessage(agentId, SendMessageBody(content))
+    suspend fun sendMessage(
+        agentId: String,
+        content: String,
+        replyToKind: String? = null,
+        replyToId: Long? = null,
+        replyToLabel: String? = null,
+        replyToSnippet: String? = null,
+    ): Result<Unit> = apiCall {
+        api.sendMessage(agentId, SendMessageBody(content, replyToKind, replyToId, replyToLabel, replyToSnippet))
     }.map { }
 
     // ── Files ────────────────────────────────────────────────────────────

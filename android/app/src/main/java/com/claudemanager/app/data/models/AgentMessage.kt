@@ -40,7 +40,20 @@ data class AgentMessage(
     val ackContent: String? = null,
 
     @SerializedName("type")
-    val type: String? = null
+    val type: String? = null,
+
+    // Reply/reference (WhatsApp-style ghost quote) — set when this message quotes a prior item.
+    @SerializedName("reply_to_kind")
+    val replyToKind: String? = null,
+
+    @SerializedName("reply_to_id")
+    val replyToId: Long? = null,
+
+    @SerializedName("reply_to_label")
+    val replyToLabel: String? = null,
+
+    @SerializedName("reply_to_snippet")
+    val replyToSnippet: String? = null
 )
 
 /**
