@@ -45,6 +45,17 @@ data class AttachedFile(
 )
 
 /**
+ * A prior message the user has selected (via swipe-right) to reference in their
+ * next outgoing message. Mirrors the file-attachment reference UX: shown as a
+ * dismissible chip above the composer and prepended as a text reference on send.
+ */
+data class PendingReply(
+    val msgId: Long,
+    val snippet: String,
+    val sourceLabel: String
+)
+
+/**
  * A file that has been downloaded to the app cache and is awaiting the user's
  * choice of what to do with it (open with an app or save to device storage).
  */
@@ -94,6 +105,7 @@ data class AgentDetailUiState(
     val isExporting: Boolean = false,
     val lastUploadedFileName: String? = null,
     val pendingAttachments: List<AttachedFile> = emptyList(),
+    val pendingReply: PendingReply? = null,
     val terminalLines: List<String> = emptyList(),
     val isSharingFile: Boolean = false,
     val costBreakdown: AgentCostBreakdownResponse? = null,
@@ -347,6 +359,27 @@ class AgentDetailViewModel(
     }
 
     /**
+     * Select a prior message to reference in the next outgoing message (swipe-right).
+     * Replaces any existing pending reply.
+     */
+    fun setReply(message: AgentMessage) {
+        val label = when (message.source) {
+            "agent" -> message.sourceAgentId?.let { "Agent $it" } ?: "Agent"
+            "peer" -> "${message.sourceAgentId?.let { "Agent ${it.take(8)}" } ?: "Peer"} @ ${message.sourcePeerName ?: "unknown"}"
+            else -> "You"
+        }
+        val snippet = message.content.replace(Regex("\\s+"), " ").trim().take(80)
+        _uiState.update { it.copy(pendingReply = PendingReply(message.id, snippet, label)) }
+    }
+
+    /**
+     * Clear the pending reply reference.
+     */
+    fun clearReply() {
+        _uiState.update { it.copy(pendingReply = null) }
+    }
+
+    /**
      * Send a message to the agent.
      * If there are pending attachments, appends "[File attached: name (id=X)]" references.
      * On success, clears the draft and attachments. On failure, keeps the draft so the user can retry.
@@ -358,7 +391,12 @@ class AgentDetailViewModel(
         viewModelScope.launch {
             // Build message with attachment references
             val attachments = _uiState.value.pendingAttachments
+            val reply = _uiState.value.pendingReply
             val fullContent = buildString {
+                // Reply reference is prepended so it reads as context for the message below it.
+                if (reply != null) {
+                    append("[Replying to message #${reply.msgId} from ${reply.sourceLabel}: \"${reply.snippet}\"]\n\n")
+                }
                 append(content)
                 for (att in attachments) {
                     if (isNotEmpty()) append("\n")
@@ -375,7 +413,8 @@ class AgentDetailViewModel(
                     _uiState.update { it.copy(
                         draftMessage = "",
                         lastUploadedFileName = null,
-                        pendingAttachments = emptyList()
+                        pendingAttachments = emptyList(),
+                        pendingReply = null
                     ) }
                     refreshMessages()
                 }

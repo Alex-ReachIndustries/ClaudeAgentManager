@@ -5,12 +5,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.AttachFile
@@ -71,11 +75,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
@@ -83,6 +91,8 @@ import com.claudemanager.app.data.models.MessageStatus
 import com.claudemanager.app.data.models.UpdateContent
 import com.claudemanager.app.data.models.UpdateType
 import com.claudemanager.app.ui.detail.AttachedFile
+import com.claudemanager.app.ui.detail.PendingReply
+import kotlin.math.roundToInt
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
@@ -134,6 +144,9 @@ fun ConversationPanel(
     onClearAttachment: () -> Unit = {},
     pendingAttachments: List<AttachedFile> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
+    pendingReply: PendingReply? = null,
+    onReplyToMessage: (AgentMessage) -> Unit = {},
+    onClearReply: () -> Unit = {},
     hasMore: Boolean = false,
     isLoadingMore: Boolean = false,
     onLoadMore: () -> Unit = {},
@@ -272,10 +285,13 @@ fun ConversationPanel(
                     when (item) {
                         is ConversationItem.Update -> UpdateBubble(update = item.update)
                         is ConversationItem.Message -> {
-                            when (item.message.source) {
-                                "agent" -> AgentRelayBubble(message = item.message)
-                                "peer" -> PeerMessageBubble(message = item.message)
-                                else -> SentMessageBubble(message = item.message)
+                            val msg = item.message
+                            SwipeToReplyBubble(onReply = { onReplyToMessage(msg) }) {
+                                when (msg.source) {
+                                    "agent" -> AgentRelayBubble(message = msg)
+                                    "peer" -> PeerMessageBubble(message = msg)
+                                    else -> SentMessageBubble(message = msg)
+                                }
                             }
                         }
                         is ConversationItem.File -> FileBubble(fileInfo = item.fileInfo, onDownload = onFileDownload)
@@ -376,6 +392,49 @@ fun ConversationPanel(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        // Pending reply chip (single reference for the next message)
+        pendingReply?.let { reply ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(LumiPurple500.copy(alpha = 0.10f))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Reply,
+                    contentDescription = null,
+                    tint = LumiPurple400,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Replying to ${reply.sourceLabel}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiPurple400,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = reply.snippet,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onClearReply, modifier = Modifier.size(20.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Cancel reply",
+                        tint = LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
             }
         }
@@ -641,6 +700,58 @@ private fun UpdateBubble(update: AgentUpdate) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Wraps a chat bubble with a swipe-right-to-reply gesture (WhatsApp-style).
+ * Dragging the bubble to the right past a threshold triggers [onReply]; a reply
+ * icon fades in behind the bubble as it is dragged. Vertical scrolling is
+ * unaffected because only horizontal drags are consumed.
+ */
+@Composable
+private fun SwipeToReplyBubble(
+    onReply: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val threshold = with(LocalDensity.current) { 64.dp.toPx() }
+    var offsetX by remember { mutableStateOf(0f) }
+    val animatedOffset by animateFloatAsState(targetValue = offsetX, label = "swipeReplyOffset")
+    val progress = (animatedOffset / threshold).coerceIn(0f, 1f)
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.Reply,
+            contentDescription = null,
+            tint = LumiPurple400,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 12.dp)
+                .size(20.dp)
+                .graphicsLayer { alpha = progress }
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (offsetX > threshold * 0.75f) onReply()
+                            offsetX = 0f
+                        },
+                        onDragCancel = { offsetX = 0f }
+                    ) { change, dragAmount ->
+                        // Only react to rightward drags (or while already offset right).
+                        if (dragAmount > 0f || offsetX > 0f) {
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(0f, threshold * 1.4f)
+                        }
+                    }
+                }
+        ) {
+            content()
         }
     }
 }

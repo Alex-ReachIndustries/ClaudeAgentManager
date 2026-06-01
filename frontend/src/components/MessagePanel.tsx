@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User, Network, ArrowRightLeft, ChevronDown } from 'lucide-react';
+import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User, Network, ArrowRightLeft, ChevronDown, Reply } from 'lucide-react';
 import type { AgentMessage } from '../types';
 import { sendMessage, uploadFile, fetchAgents, fetchAgentFiles } from '../api';
 import { timeAgo } from '../utils/time';
@@ -13,7 +13,8 @@ const messageStatusConfig = {
 
 type PendingItem =
   | { kind: 'file'; id: string; file: File }
-  | { kind: 'relay'; id: string; filename: string; srcAgentId: string; srcAgentTitle: string; fileId: number };
+  | { kind: 'relay'; id: string; filename: string; srcAgentId: string; srcAgentTitle: string; fileId: number }
+  | { kind: 'reply'; id: string; msgId: number; snippet: string; sourceLabel: string };
 
 interface MessagePanelProps {
   agentId: string;
@@ -76,10 +77,17 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
           const result = await uploadFile(agentId, item.file);
           const ref = `[File attached: ${result.file.filename} (id=${result.file.id}, ${result.file.mimetype}, ${formatSize(result.file.size)}). Retrieve via GET /api/agents/${agentId}/files/${result.file.id}]`;
           messageContent = messageContent ? `${messageContent}\n\n${ref}` : ref;
-        } else {
+        } else if (item.kind === 'relay') {
           const ref = `[Relayed file from ${item.srcAgentTitle}: ${item.filename} — retrieve at GET /api/agents/${item.srcAgentId}/files/${item.fileId}]`;
           messageContent = messageContent ? `${messageContent}\n\n${ref}` : ref;
         }
+      }
+
+      // Reply reference is prepended so it reads as context for the message below it.
+      const reply = pendingItems.find((i): i is Extract<PendingItem, { kind: 'reply' }> => i.kind === 'reply');
+      if (reply) {
+        const ref = `[Replying to message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"]`;
+        messageContent = messageContent ? `${ref}\n\n${messageContent}` : ref;
       }
 
       if (messageContent) {
@@ -107,6 +115,15 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
   };
 
   const removeItem = (id: string) => setPendingItems(prev => prev.filter(i => i.id !== id));
+
+  // Set (or replace) the single pending reply reference for the next outgoing message.
+  const setReply = (msgId: number, content: string, sourceLabel: string) => {
+    const snippet = content.replace(/\s+/g, ' ').trim().slice(0, 80);
+    setPendingItems(prev => [
+      ...prev.filter(i => i.kind !== 'reply'),
+      { kind: 'reply', id: `q-${++pendingItemCounter}`, msgId, snippet, sourceLabel },
+    ]);
+  };
 
   const addRelayFile = (file: { id: number; filename: string; size: number }) => {
     const agent = relayAgents.find(a => a.id === relayAgentId);
@@ -187,11 +204,18 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                     <span className="text-dark-200 truncate flex-1">{item.file.name}</span>
                     <span className="text-dark-500 text-xs shrink-0">{formatSize(item.file.size)}</span>
                   </>
-                ) : (
+                ) : item.kind === 'relay' ? (
                   <>
                     <ArrowRightLeft size={14} className="text-purple-400 shrink-0" />
                     <span className="text-dark-200 truncate flex-1">{item.filename}</span>
                     <span className="text-dark-500 text-xs shrink-0 truncate max-w-[80px]">from {item.srcAgentTitle}</span>
+                  </>
+                ) : (
+                  <>
+                    <Reply size={14} className="text-lumi-400 shrink-0" />
+                    <span className="text-dark-200 truncate flex-1">
+                      <span className="text-dark-500">Replying to {item.sourceLabel}: </span>{item.snippet}
+                    </span>
                   </>
                 )}
                 <button onClick={() => removeItem(item.id)} className="text-dark-500 hover:text-dark-200 shrink-0">
@@ -304,10 +328,19 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                   </div>
                 )}
                 <div className="flex items-center justify-between">
-                  <span className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}>
-                    <StatusIcon size={10} />
-                    {statusCfg.label}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}>
+                      <StatusIcon size={10} />
+                      {statusCfg.label}
+                    </span>
+                    <button
+                      onClick={() => setReply(msg.id, msg.content, sourceLabel)}
+                      className="inline-flex items-center justify-center w-6 h-6 rounded-full text-dark-500 hover:text-lumi-300 hover:bg-lumi-500/10 transition-colors"
+                      title="Reply to this message"
+                    >
+                      <Reply size={13} />
+                    </button>
+                  </div>
                   <span className="text-xs text-dark-600">{timeAgo(msg.created_at)}</span>
                 </div>
               </div>
