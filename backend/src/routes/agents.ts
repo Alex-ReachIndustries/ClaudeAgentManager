@@ -11,12 +11,14 @@ import {
   updateAgent,
   deleteAgent,
   getUpdates,
+  getUpdateById,
   addUpdate,
   getPendingMessages,
   acknowledgeMessages,
   acknowledgeMessagesById,
   addMessage,
   getMessages,
+  getMessageById,
   getMessagesByStatus,
   touchAgentHeartbeat,
   addFile,
@@ -981,11 +983,15 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
       return;
     }
 
-    const { content, priority, source_agent_id, source_peer_name } = req.body;
+    const { content, priority, source_agent_id, source_peer_name, reply_to_kind, reply_to_id, reply_to_label, reply_to_snippet } = req.body;
     // Auto-promote to "agent" source when source_agent_id is present to prevent misattribution
     const source = req.body.source ?? (source_agent_id ? "agent" : "user");
 
-    addMessage(id, content, source, source_agent_id, priority || 0, source_peer_name);
+    const replyTo = reply_to_id
+      ? { kind: reply_to_kind ?? "message", id: reply_to_id, label: reply_to_label, snippet: reply_to_snippet }
+      : undefined;
+
+    addMessage(id, content, source, source_agent_id, priority || 0, source_peer_name, "standard", replyTo);
     broadcast("message-queued", { agentId: id, content, priority: priority || 0, source, source_peer_name });
 
     // Publish to MQTT for instant delivery to agent sidecar
@@ -1134,12 +1140,24 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
       // Model-tiered: haiku gets 7 rules, sonnet 14, opus full 15
       const SESSION_RULES_SECTION = getSessionRules(tier);
 
-      const messages = (rawMessages as Record<string, unknown>[]).map(m => ({
-        ...m,
-        content: typeof m.content === "string"
-          ? m.content + ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION
-          : m.content,
-      }));
+      const messages = (rawMessages as Record<string, unknown>[]).map(m => {
+        // Reply/reference is stored structurally (kept out of the body for clean UI);
+        // inject it as a textual prefix only at delivery so the agent still gets the context.
+        let replyPrefix = "";
+        if (m.reply_to_id) {
+          const kind = (m.reply_to_kind as string) || "message";
+          const pathSeg = kind === "update" ? "updates" : kind === "file" ? "files" : "messages";
+          const label = (m.reply_to_label as string) || kind;
+          const snippet = (m.reply_to_snippet as string) || "";
+          replyPrefix = `[Replying to ${label} #${m.reply_to_id}: "${snippet}" — full via GET /api/agents/${id}/${pathSeg}/${m.reply_to_id}]\n\n`;
+        }
+        return {
+          ...m,
+          content: typeof m.content === "string"
+            ? replyPrefix + m.content + ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION
+            : m.content,
+        };
+      });
 
       // Include poll_delay_until so the agent knows to pause if set
       const agentData = getAgent(id);
@@ -1162,6 +1180,50 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
   } catch (err) {
     logger.error({ err }, "Error getting messages");
     res.status(500).json({ error: "Failed to get messages" });
+  }
+});
+
+// GET /:id/messages/:msgId — fetch a single message's full content by id.
+// Used by the "reply/reference" feature so an agent can retrieve the full text
+// of a message referenced by id (the reply embeds only a short snippet + id).
+router.get("/:id/messages/:msgId", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const msgId = parseInt(param(req, "msgId"), 10);
+    if (!Number.isInteger(msgId)) {
+      res.status(400).json({ error: "Invalid message id" });
+      return;
+    }
+    const message = getMessageById(id, msgId);
+    if (!message) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+    res.json(message);
+  } catch (err) {
+    logger.error({ err }, "Error getting message by id");
+    res.status(500).json({ error: "Failed to get message" });
+  }
+});
+
+// GET /:id/updates/:updateId — fetch a single update's full content by id (reply/reference feature).
+router.get("/:id/updates/:updateId", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const updateId = parseInt(param(req, "updateId"), 10);
+    if (!Number.isInteger(updateId)) {
+      res.status(400).json({ error: "Invalid update id" });
+      return;
+    }
+    const update = getUpdateById(id, updateId);
+    if (!update) {
+      res.status(404).json({ error: "Update not found" });
+      return;
+    }
+    res.json(update);
+  } catch (err) {
+    logger.error({ err }, "Error getting update by id");
+    res.status(500).json({ error: "Failed to get update" });
   }
 });
 

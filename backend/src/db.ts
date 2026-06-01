@@ -268,6 +268,14 @@ export function getDb(): Database.Database {
   // Backfill: give any already-delivered-unacked messages a 60s grace window before first re-ping.
   migrate("UPDATE messages SET next_redeliver_at = datetime('now', '+60 seconds') WHERE status = 'delivered' AND acknowledged_at IS NULL AND next_redeliver_at IS NULL");
 
+  // Reply/reference (WhatsApp-style): a message may quote a prior message/update/file.
+  // Stored structurally so clients render a ghost quote + tap-to-jump; the textual
+  // reference is injected only at delivery time (kept out of the stored body).
+  migrate("ALTER TABLE messages ADD COLUMN reply_to_kind TEXT");   // 'message' | 'update' | 'file'
+  migrate("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER");  // id of the quoted item
+  migrate("ALTER TABLE messages ADD COLUMN reply_to_label TEXT");  // cached chip label (e.g. 'You', 'Agent update')
+  migrate("ALTER TABLE messages ADD COLUMN reply_to_snippet TEXT"); // cached preview snippet
+
   // Feature 5: Triggers for computed field caching
   try {
     db.exec(`
@@ -786,6 +794,13 @@ export function deleteAgent(id: string) {
   return stmt.run(id);
 }
 
+/** Fetch a single update by id, scoped to the owning agent. */
+export function getUpdateById(agentId: string, updateId: number): Record<string, unknown> | undefined {
+  const db = getDb();
+  const stmt = db.prepare(`SELECT * FROM updates WHERE id = ? AND agent_id = ?`);
+  return stmt.get(updateId, agentId) as Record<string, unknown> | undefined;
+}
+
 export function getUpdates(agentId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
   if (before) {
@@ -900,16 +915,27 @@ export function getPendingMessages(agentId: string) {
   return transaction();
 }
 
-export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0, sourcePeerName?: string, type: string = "standard") {
+export interface ReplyRef {
+  kind: string;   // 'message' | 'update' | 'file'
+  id: number;
+  label?: string;
+  snippet?: string;
+}
+
+export function addMessage(agentId: string, content: string, source: string = "user", sourceAgentId?: string, priority: number = 0, sourcePeerName?: string, type: string = "standard", replyTo?: ReplyRef) {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name, type) VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name, type, reply_to_kind, reply_to_id, reply_to_label, reply_to_snippet)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const touchActivity = db.prepare(`
     UPDATE agents SET last_activity_at = datetime('now') WHERE id = ?
   `);
   const transaction = db.transaction(() => {
-    const result = insert.run(agentId, content, source, sourceAgentId ?? null, priority, sourcePeerName ?? null, type);
+    const result = insert.run(
+      agentId, content, source, sourceAgentId ?? null, priority, sourcePeerName ?? null, type,
+      replyTo?.kind ?? null, replyTo?.id ?? null, replyTo?.label ?? null, replyTo?.snippet ?? null,
+    );
     touchActivity.run(agentId);
     return result;
   });
@@ -981,6 +1007,13 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
     return result;
   });
   return transaction();
+}
+
+/** Fetch a single message by id, scoped to the owning agent. */
+export function getMessageById(agentId: string, messageId: number): Record<string, unknown> | undefined {
+  const db = getDb();
+  const stmt = db.prepare(`SELECT * FROM messages WHERE id = ? AND agent_id = ?`);
+  return stmt.get(messageId, agentId) as Record<string, unknown> | undefined;
 }
 
 export function getMessages(agentId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {

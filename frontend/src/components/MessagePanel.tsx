@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User, Network, ArrowRightLeft, ChevronDown } from 'lucide-react';
+import { Send, Paperclip, Clock, CheckCircle, CheckCheck, PlayCircle, File as FileIcon, X, Bot, User, Network, ArrowRightLeft, ChevronDown, Reply } from 'lucide-react';
 import type { AgentMessage } from '../types';
 import { sendMessage, uploadFile, fetchAgents, fetchAgentFiles } from '../api';
+import type { ReplyRef } from '../api';
 import { timeAgo } from '../utils/time';
 
 const messageStatusConfig = {
@@ -13,7 +14,8 @@ const messageStatusConfig = {
 
 type PendingItem =
   | { kind: 'file'; id: string; file: File }
-  | { kind: 'relay'; id: string; filename: string; srcAgentId: string; srcAgentTitle: string; fileId: number };
+  | { kind: 'relay'; id: string; filename: string; srcAgentId: string; srcAgentTitle: string; fileId: number }
+  | { kind: 'reply'; id: string; msgId: number; snippet: string; sourceLabel: string; isAck: boolean };
 
 interface MessagePanelProps {
   agentId: string;
@@ -34,7 +36,17 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Scroll to (and briefly highlight) a referenced message when its ghost quote is tapped.
+  const jumpToMessage = (id: number) => {
+    const el = document.getElementById(`web-msg-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(id);
+    window.setTimeout(() => setHighlightId(curr => (curr === id ? null : curr)), 1500);
+  };
 
   // Relay picker state
   const [showRelay, setShowRelay] = useState(false);
@@ -63,7 +75,9 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
 
   const handleSend = async () => {
     const content = input.trim();
-    if ((!content && pendingItems.length === 0) || sending) return;
+    // A reply alone is not sendable — it's metadata attached to a body (text or file).
+    const nonReplyItems = pendingItems.filter(i => i.kind !== 'reply');
+    if ((!content && nonReplyItems.length === 0) || sending) return;
 
     try {
       setSending(true);
@@ -76,14 +90,26 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
           const result = await uploadFile(agentId, item.file);
           const ref = `[File attached: ${result.file.filename} (id=${result.file.id}, ${result.file.mimetype}, ${formatSize(result.file.size)}). Retrieve via GET /api/agents/${agentId}/files/${result.file.id}]`;
           messageContent = messageContent ? `${messageContent}\n\n${ref}` : ref;
-        } else {
+        } else if (item.kind === 'relay') {
           const ref = `[Relayed file from ${item.srcAgentTitle}: ${item.filename} — retrieve at GET /api/agents/${item.srcAgentId}/files/${item.fileId}]`;
           messageContent = messageContent ? `${messageContent}\n\n${ref}` : ref;
         }
       }
 
+      // Reply is sent structurally (rendered as a ghost quote); the textual
+      // reference is injected server-side at delivery, not stored in the body.
+      const reply = pendingItems.find((i): i is Extract<PendingItem, { kind: 'reply' }> => i.kind === 'reply');
+      const replyRef: ReplyRef | undefined = reply
+        ? {
+            reply_to_kind: 'message',
+            reply_to_id: reply.msgId,
+            reply_to_label: `${reply.sourceLabel}${reply.isAck ? "'s ack" : ''}`,
+            reply_to_snippet: reply.snippet,
+          }
+        : undefined;
+
       if (messageContent) {
-        await sendMessage(agentId, messageContent);
+        await sendMessage(agentId, messageContent, replyRef);
       }
 
       setInput('');
@@ -107,6 +133,16 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
   };
 
   const removeItem = (id: string) => setPendingItems(prev => prev.filter(i => i.id !== id));
+
+  // Set (or replace) the single pending reply reference for the next outgoing message.
+  // isAck=true references a message's acknowledgement independently of its body.
+  const setReply = (msgId: number, content: string, sourceLabel: string, isAck = false) => {
+    const snippet = content.replace(/\s+/g, ' ').trim().slice(0, 80);
+    setPendingItems(prev => [
+      ...prev.filter(i => i.kind !== 'reply'),
+      { kind: 'reply', id: `q-${++pendingItemCounter}`, msgId, snippet, sourceLabel, isAck },
+    ]);
+  };
 
   const addRelayFile = (file: { id: number; filename: string; size: number }) => {
     const agent = relayAgents.find(a => a.id === relayAgentId);
@@ -165,7 +201,7 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
             </button>
             <button
               onClick={handleSend}
-              disabled={(!input.trim() && pendingItems.length === 0) || sending}
+              disabled={(!input.trim() && pendingItems.every(i => i.kind === 'reply')) || sending}
               className="px-3 py-2 bg-lumi-600 hover:bg-lumi-500 disabled:bg-dark-700 disabled:text-dark-500 text-white rounded-lg transition-colors"
             >
               <Send size={16} />
@@ -187,11 +223,18 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                     <span className="text-dark-200 truncate flex-1">{item.file.name}</span>
                     <span className="text-dark-500 text-xs shrink-0">{formatSize(item.file.size)}</span>
                   </>
-                ) : (
+                ) : item.kind === 'relay' ? (
                   <>
                     <ArrowRightLeft size={14} className="text-purple-400 shrink-0" />
                     <span className="text-dark-200 truncate flex-1">{item.filename}</span>
                     <span className="text-dark-500 text-xs shrink-0 truncate max-w-[80px]">from {item.srcAgentTitle}</span>
+                  </>
+                ) : (
+                  <>
+                    <Reply size={14} className="text-lumi-400 shrink-0" />
+                    <span className="text-dark-200 truncate flex-1">
+                      <span className="text-dark-500">Replying to {item.sourceLabel}{item.isAck ? "'s ack" : ''}: </span>{item.snippet}
+                    </span>
                   </>
                 )}
                 <button onClick={() => removeItem(item.id)} className="text-dark-500 hover:text-dark-200 shrink-0">
@@ -284,7 +327,11 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                 : 'You';
 
             return (
-              <div key={msg.id} className={`p-3 rounded-lg border ${containerClass}`}>
+              <div
+                key={msg.id}
+                id={`web-msg-${msg.id}`}
+                className={`p-3 rounded-lg border transition-shadow ${containerClass} ${highlightId === msg.id ? 'ring-2 ring-lumi-400' : ''}`}
+              >
                 <div className="flex items-center gap-1.5 mb-1.5">
                   {isPeer ? (
                     <Network size={13} className="text-emerald-400" />
@@ -295,19 +342,50 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                   )}
                   <span className={`text-xs font-medium ${labelClass}`}>{sourceLabel}</span>
                 </div>
+                {msg.reply_to_id != null && (
+                  <button
+                    onClick={() => jumpToMessage(msg.reply_to_id!)}
+                    className="w-full text-left mb-2 pl-2 pr-2 py-1 border-l-2 border-lumi-500/60 bg-dark-800/40 rounded hover:bg-dark-800/70 transition-colors"
+                    title="Jump to referenced message"
+                  >
+                    <span className="flex items-center gap-1 text-xs text-lumi-400 truncate">
+                      <Reply size={11} className="shrink-0" />
+                      {msg.reply_to_label ?? 'Reply'}
+                    </span>
+                    {msg.reply_to_snippet && (
+                      <span className="block text-xs text-dark-400 truncate">{msg.reply_to_snippet}</span>
+                    )}
+                  </button>
+                )}
                 <p className="text-sm text-dark-200 whitespace-pre-wrap break-words mb-2">
                   {msg.content}
                 </p>
                 {msg.status === 'acknowledged' && msg.ack_content && (
-                  <div className="mb-2 px-2.5 py-1.5 bg-purple-950/20 border border-purple-800/30 rounded text-xs text-purple-300 italic">
-                    <span className="text-purple-500 font-medium not-italic">Ack:</span> {msg.ack_content}
+                  <div className="mb-2 px-2.5 py-1.5 bg-purple-950/20 border border-purple-800/30 rounded text-xs text-purple-300 italic flex items-start gap-1.5">
+                    <span className="flex-1"><span className="text-purple-500 font-medium not-italic">Ack:</span> {msg.ack_content}</span>
+                    <button
+                      onClick={() => setReply(msg.id, msg.ack_content ?? '', sourceLabel, true)}
+                      className="inline-flex items-center justify-center w-5 h-5 rounded-full text-purple-400 hover:text-lumi-300 hover:bg-lumi-500/10 transition-colors shrink-0 not-italic"
+                      title="Reply to this acknowledgement"
+                    >
+                      <Reply size={12} />
+                    </button>
                   </div>
                 )}
                 <div className="flex items-center justify-between">
-                  <span className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}>
-                    <StatusIcon size={10} />
-                    {statusCfg.label}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`inline-flex items-center gap-1 text-xs ${statusCfg.color} ${statusCfg.bg} px-2 py-0.5 rounded-full`}>
+                      <StatusIcon size={10} />
+                      {statusCfg.label}
+                    </span>
+                    <button
+                      onClick={() => setReply(msg.id, msg.content, sourceLabel)}
+                      className="inline-flex items-center justify-center w-6 h-6 rounded-full text-dark-500 hover:text-lumi-300 hover:bg-lumi-500/10 transition-colors"
+                      title="Reply to this message"
+                    >
+                      <Reply size={13} />
+                    </button>
+                  </div>
                   <span className="text-xs text-dark-600">{timeAgo(msg.created_at)}</span>
                 </div>
               </div>

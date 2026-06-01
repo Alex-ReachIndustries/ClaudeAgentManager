@@ -45,6 +45,23 @@ data class AttachedFile(
 )
 
 /**
+ * A prior conversation item the user has selected (via swipe-right) to reference
+ * in their next outgoing message — a message body, an acknowledgement, an agent
+ * update, or a file. Sent structurally so the bubble renders a WhatsApp-style
+ * ghost quote (tap to jump to the original); the textual reference is injected
+ * server-side at delivery, never stored in the body.
+ *
+ * [kind] is the jump target type ("message" | "update" | "file"); [id] is its id.
+ * [label] / [snippet] are the cached chip + ghost-quote display fields.
+ */
+data class PendingReply(
+    val kind: String,
+    val id: Long,
+    val label: String,
+    val snippet: String
+)
+
+/**
  * A file that has been downloaded to the app cache and is awaiting the user's
  * choice of what to do with it (open with an app or save to device storage).
  */
@@ -94,6 +111,7 @@ data class AgentDetailUiState(
     val isExporting: Boolean = false,
     val lastUploadedFileName: String? = null,
     val pendingAttachments: List<AttachedFile> = emptyList(),
+    val pendingReply: PendingReply? = null,
     val terminalLines: List<String> = emptyList(),
     val isSharingFile: Boolean = false,
     val costBreakdown: AgentCostBreakdownResponse? = null,
@@ -346,6 +364,70 @@ class AgentDetailViewModel(
         }
     }
 
+    /** Compress whitespace and clip to a short preview. */
+    private fun previewOf(text: String): String =
+        text.replace(Regex("\\s+"), " ").trim().take(80)
+
+    /** Friendly source label for a message (You / Agent <id> / Agent <id8> @ peer). */
+    private fun sourceLabelOf(message: AgentMessage): String = when (message.source) {
+        "agent" -> message.sourceAgentId?.let { "Agent $it" } ?: "Agent"
+        "peer" -> "${message.sourceAgentId?.let { "Agent ${it.take(8)}" } ?: "Peer"} @ ${message.sourcePeerName ?: "unknown"}"
+        else -> "You"
+    }
+
+    /**
+     * Reply to a message's body (swipe-right on the bubble). Replaces any existing reply.
+     */
+    fun setReply(message: AgentMessage) {
+        val label = sourceLabelOf(message)
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            kind = "message", id = message.id,
+            label = label, snippet = previewOf(message.content)
+        )) }
+    }
+
+    /**
+     * Reply to a message's acknowledgement, independently of its body (swipe-right on the ack).
+     * Jumps to the same message; label/snippet reflect the ack.
+     */
+    fun setReplyToAck(message: AgentMessage) {
+        val label = sourceLabelOf(message)
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            kind = "message", id = message.id,
+            label = "$label's ack", snippet = previewOf(message.ackContent ?: "")
+        )) }
+    }
+
+    /**
+     * Reply to an agent update/status/progress bubble (swipe-right).
+     */
+    fun setReplyToUpdate(update: AgentUpdate) {
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            kind = "update", id = update.id,
+            label = "Agent ${update.type.name.lowercase()}",
+            snippet = previewOf(update.summary?.takeIf { it.isNotBlank() } ?: update.content)
+        )) }
+    }
+
+    /**
+     * Reference a file shown in the conversation (swipe-right) — an existing upload
+     * or a Claude-generated file — so the agent can retrieve it again.
+     */
+    fun setReplyToFile(file: FileInfo) {
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            kind = "file", id = file.id,
+            label = if (file.source == "user") "File you uploaded" else "Claude-generated file",
+            snippet = file.filename
+        )) }
+    }
+
+    /**
+     * Clear the pending reply reference.
+     */
+    fun clearReply() {
+        _uiState.update { it.copy(pendingReply = null) }
+    }
+
     /**
      * Send a message to the agent.
      * If there are pending attachments, appends "[File attached: name (id=X)]" references.
@@ -356,8 +438,11 @@ class AgentDetailViewModel(
 
         _uiState.update { it.copy(isSendingMessage = true) }
         viewModelScope.launch {
-            // Build message with attachment references
+            // Build message with attachment references. The reply is sent
+            // structurally (rendered as a ghost quote); the textual reference is
+            // injected server-side at delivery, not stored in the body.
             val attachments = _uiState.value.pendingAttachments
+            val reply = _uiState.value.pendingReply
             val fullContent = buildString {
                 append(content)
                 for (att in attachments) {
@@ -370,12 +455,19 @@ class AgentDetailViewModel(
                 }
             }
 
-            repository.sendMessage(agentId, fullContent)
+            repository.sendMessage(
+                agentId, fullContent,
+                replyToKind = reply?.kind,
+                replyToId = reply?.id,
+                replyToLabel = reply?.label,
+                replyToSnippet = reply?.snippet,
+            )
                 .onSuccess {
                     _uiState.update { it.copy(
                         draftMessage = "",
                         lastUploadedFileName = null,
-                        pendingAttachments = emptyList()
+                        pendingAttachments = emptyList(),
+                        pendingReply = null
                     ) }
                     refreshMessages()
                 }

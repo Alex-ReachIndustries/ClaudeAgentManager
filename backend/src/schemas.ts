@@ -46,6 +46,11 @@ export const messageSchema = z.object({
   source: z.enum(["user", "agent", "peer", "system"]).default("user"),
   source_agent_id: z.string().max(100).optional(),
   source_peer_name: z.string().max(100).optional(),
+  // Reply/reference: quote a prior message/update/file (rendered as a ghost quote).
+  reply_to_kind: z.enum(["message", "update", "file"]).optional(),
+  reply_to_id: z.number().int().positive().optional(),
+  reply_to_label: z.string().max(200).optional(),
+  reply_to_snippet: z.string().max(500).optional(),
 });
 
 // --- Agent patch (PATCH /agents/:id) ---
