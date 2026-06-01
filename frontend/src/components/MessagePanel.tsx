@@ -14,7 +14,7 @@ const messageStatusConfig = {
 type PendingItem =
   | { kind: 'file'; id: string; file: File }
   | { kind: 'relay'; id: string; filename: string; srcAgentId: string; srcAgentTitle: string; fileId: number }
-  | { kind: 'reply'; id: string; msgId: number; snippet: string; sourceLabel: string };
+  | { kind: 'reply'; id: string; msgId: number; snippet: string; sourceLabel: string; isAck: boolean };
 
 interface MessagePanelProps {
   agentId: string;
@@ -86,7 +86,9 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
       // Reply reference is prepended so it reads as context for the message below it.
       const reply = pendingItems.find((i): i is Extract<PendingItem, { kind: 'reply' }> => i.kind === 'reply');
       if (reply) {
-        const ref = `[Replying to message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"]`;
+        const ref = reply.isAck
+          ? `[Replying to the acknowledgement of message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"]`
+          : `[Replying to message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"]`;
         messageContent = messageContent ? `${ref}\n\n${messageContent}` : ref;
       }
 
@@ -117,11 +119,12 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
   const removeItem = (id: string) => setPendingItems(prev => prev.filter(i => i.id !== id));
 
   // Set (or replace) the single pending reply reference for the next outgoing message.
-  const setReply = (msgId: number, content: string, sourceLabel: string) => {
+  // isAck=true references a message's acknowledgement independently of its body.
+  const setReply = (msgId: number, content: string, sourceLabel: string, isAck = false) => {
     const snippet = content.replace(/\s+/g, ' ').trim().slice(0, 80);
     setPendingItems(prev => [
       ...prev.filter(i => i.kind !== 'reply'),
-      { kind: 'reply', id: `q-${++pendingItemCounter}`, msgId, snippet, sourceLabel },
+      { kind: 'reply', id: `q-${++pendingItemCounter}`, msgId, snippet, sourceLabel, isAck },
     ]);
   };
 
@@ -214,7 +217,7 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                   <>
                     <Reply size={14} className="text-lumi-400 shrink-0" />
                     <span className="text-dark-200 truncate flex-1">
-                      <span className="text-dark-500">Replying to {item.sourceLabel}: </span>{item.snippet}
+                      <span className="text-dark-500">Replying to {item.sourceLabel}{item.isAck ? "'s ack" : ''}: </span>{item.snippet}
                     </span>
                   </>
                 )}
@@ -323,8 +326,15 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
                   {msg.content}
                 </p>
                 {msg.status === 'acknowledged' && msg.ack_content && (
-                  <div className="mb-2 px-2.5 py-1.5 bg-purple-950/20 border border-purple-800/30 rounded text-xs text-purple-300 italic">
-                    <span className="text-purple-500 font-medium not-italic">Ack:</span> {msg.ack_content}
+                  <div className="mb-2 px-2.5 py-1.5 bg-purple-950/20 border border-purple-800/30 rounded text-xs text-purple-300 italic flex items-start gap-1.5">
+                    <span className="flex-1"><span className="text-purple-500 font-medium not-italic">Ack:</span> {msg.ack_content}</span>
+                    <button
+                      onClick={() => setReply(msg.id, msg.ack_content ?? '', sourceLabel, true)}
+                      className="inline-flex items-center justify-center w-5 h-5 rounded-full text-purple-400 hover:text-lumi-300 hover:bg-lumi-500/10 transition-colors shrink-0 not-italic"
+                      title="Reply to this acknowledgement"
+                    >
+                      <Reply size={12} />
+                    </button>
                   </div>
                 )}
                 <div className="flex items-center justify-between">

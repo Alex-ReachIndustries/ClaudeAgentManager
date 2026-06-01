@@ -45,14 +45,18 @@ data class AttachedFile(
 )
 
 /**
- * A prior message the user has selected (via swipe-right) to reference in their
- * next outgoing message. Mirrors the file-attachment reference UX: shown as a
+ * A prior conversation item the user has selected (via swipe-right) to reference
+ * in their next outgoing message — a message body, an acknowledgement, an agent
+ * update, or a file. Mirrors the file-attachment reference UX: shown as a
  * dismissible chip above the composer and prepended as a text reference on send.
+ *
+ * [refText] is the exact line prepended to the outgoing message; [label] and
+ * [snippet] drive the chip display only.
  */
 data class PendingReply(
-    val msgId: Long,
-    val snippet: String,
-    val sourceLabel: String
+    val refText: String,
+    val label: String,
+    val snippet: String
 )
 
 /**
@@ -358,18 +362,65 @@ class AgentDetailViewModel(
         }
     }
 
+    /** Compress whitespace and clip to a short preview. */
+    private fun previewOf(text: String): String =
+        text.replace(Regex("\\s+"), " ").trim().take(80)
+
+    /** Friendly source label for a message (You / Agent <id> / Agent <id8> @ peer). */
+    private fun sourceLabelOf(message: AgentMessage): String = when (message.source) {
+        "agent" -> message.sourceAgentId?.let { "Agent $it" } ?: "Agent"
+        "peer" -> "${message.sourceAgentId?.let { "Agent ${it.take(8)}" } ?: "Peer"} @ ${message.sourcePeerName ?: "unknown"}"
+        else -> "You"
+    }
+
     /**
-     * Select a prior message to reference in the next outgoing message (swipe-right).
-     * Replaces any existing pending reply.
+     * Reply to a message's body (swipe-right on the bubble). Replaces any existing reply.
      */
     fun setReply(message: AgentMessage) {
-        val label = when (message.source) {
-            "agent" -> message.sourceAgentId?.let { "Agent $it" } ?: "Agent"
-            "peer" -> "${message.sourceAgentId?.let { "Agent ${it.take(8)}" } ?: "Peer"} @ ${message.sourcePeerName ?: "unknown"}"
-            else -> "You"
-        }
-        val snippet = message.content.replace(Regex("\\s+"), " ").trim().take(80)
-        _uiState.update { it.copy(pendingReply = PendingReply(message.id, snippet, label)) }
+        val label = sourceLabelOf(message)
+        val snippet = previewOf(message.content)
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            refText = "[Replying to message #${message.id} from $label: \"$snippet\"]",
+            label = "Replying to $label",
+            snippet = snippet
+        )) }
+    }
+
+    /**
+     * Reply to a message's acknowledgement, independently of its body (swipe-right on the ack).
+     */
+    fun setReplyToAck(message: AgentMessage) {
+        val label = sourceLabelOf(message)
+        val snippet = previewOf(message.ackContent ?: "")
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            refText = "[Replying to the acknowledgement of message #${message.id} from $label: \"$snippet\"]",
+            label = "Replying to ack from $label",
+            snippet = snippet
+        )) }
+    }
+
+    /**
+     * Reply to an agent update/status/progress bubble (swipe-right).
+     */
+    fun setReplyToUpdate(update: AgentUpdate) {
+        val snippet = previewOf(update.summary?.takeIf { it.isNotBlank() } ?: update.content)
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            refText = "[Replying to ${update.type.name.lowercase()} update #${update.id} from agent: \"$snippet\"]",
+            label = "Replying to agent update",
+            snippet = snippet
+        )) }
+    }
+
+    /**
+     * Reference a file shown in the conversation (swipe-right) — an existing upload
+     * or a Claude-generated file — so the agent can retrieve it again.
+     */
+    fun setReplyToFile(file: FileInfo) {
+        _uiState.update { it.copy(pendingReply = PendingReply(
+            refText = "[Referencing file: ${file.filename} (id=${file.id}, ${file.mimetype}). Retrieve via GET /api/agents/$agentId/files/${file.id}]",
+            label = "Referencing file",
+            snippet = file.filename
+        )) }
     }
 
     /**
@@ -395,7 +446,8 @@ class AgentDetailViewModel(
             val fullContent = buildString {
                 // Reply reference is prepended so it reads as context for the message below it.
                 if (reply != null) {
-                    append("[Replying to message #${reply.msgId} from ${reply.sourceLabel}: \"${reply.snippet}\"]\n\n")
+                    append(reply.refText)
+                    append("\n\n")
                 }
                 append(content)
                 for (att in attachments) {

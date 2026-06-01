@@ -75,7 +75,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -146,6 +145,9 @@ fun ConversationPanel(
     onRemoveAttachment: (String) -> Unit = {},
     pendingReply: PendingReply? = null,
     onReplyToMessage: (AgentMessage) -> Unit = {},
+    onReplyToAck: (AgentMessage) -> Unit = {},
+    onReplyToUpdate: (AgentUpdate) -> Unit = {},
+    onReplyToFile: (com.claudemanager.app.data.models.FileInfo) -> Unit = {},
     onClearReply: () -> Unit = {},
     hasMore: Boolean = false,
     isLoadingMore: Boolean = false,
@@ -283,18 +285,35 @@ fun ConversationPanel(
 
                 items(items, key = { it.itemKey }) { item ->
                     when (item) {
-                        is ConversationItem.Update -> UpdateBubble(update = item.update)
+                        is ConversationItem.Update -> UpdateBubble(
+                            update = item.update,
+                            onReply = { onReplyToUpdate(item.update) }
+                        )
                         is ConversationItem.Message -> {
                             val msg = item.message
-                            SwipeToReplyBubble(onReply = { onReplyToMessage(msg) }) {
-                                when (msg.source) {
-                                    "agent" -> AgentRelayBubble(message = msg)
-                                    "peer" -> PeerMessageBubble(message = msg)
-                                    else -> SentMessageBubble(message = msg)
-                                }
+                            when (msg.source) {
+                                "agent" -> AgentRelayBubble(
+                                    message = msg,
+                                    onReplyBody = { onReplyToMessage(msg) },
+                                    onReplyAck = { onReplyToAck(msg) }
+                                )
+                                "peer" -> PeerMessageBubble(
+                                    message = msg,
+                                    onReplyBody = { onReplyToMessage(msg) },
+                                    onReplyAck = { onReplyToAck(msg) }
+                                )
+                                else -> SentMessageBubble(
+                                    message = msg,
+                                    onReplyBody = { onReplyToMessage(msg) },
+                                    onReplyAck = { onReplyToAck(msg) }
+                                )
                             }
                         }
-                        is ConversationItem.File -> FileBubble(fileInfo = item.fileInfo, onDownload = onFileDownload)
+                        is ConversationItem.File -> FileBubble(
+                            fileInfo = item.fileInfo,
+                            onDownload = onFileDownload,
+                            onReply = { onReplyToFile(item.fileInfo) }
+                        )
                     }
                 }
 
@@ -414,7 +433,7 @@ fun ConversationPanel(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Replying to ${reply.sourceLabel}",
+                        text = reply.label,
                         style = MaterialTheme.typography.labelSmall,
                         color = LumiPurple400,
                         maxLines = 1,
@@ -529,7 +548,7 @@ fun ConversationPanel(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun UpdateBubble(update: AgentUpdate) {
+private fun UpdateBubble(update: AgentUpdate, onReply: () -> Unit = {}) {
     val content = update.parsedContent()
     val typeInfo = updateTypeInfo(update.type)
     var expanded by remember { mutableStateOf(false) }
@@ -545,6 +564,7 @@ private fun UpdateBubble(update: AgentUpdate) {
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                 .background(LumiCard)
+                .swipeToReply(onReply)
                 .combinedClickable(
                     onClick = { expanded = !expanded },
                     onLongClick = {
@@ -705,55 +725,36 @@ private fun UpdateBubble(update: AgentUpdate) {
 }
 
 /**
- * Wraps a chat bubble with a swipe-right-to-reply gesture (WhatsApp-style).
- * Dragging the bubble to the right past a threshold triggers [onReply]; a reply
- * icon fades in behind the bubble as it is dragged. Vertical scrolling is
- * unaffected because only horizontal drags are consumed.
+ * Adds a swipe-right-to-reply gesture (WhatsApp-style) to any element. Dragging
+ * the element to the right past a threshold triggers [onReply] and the element
+ * shifts to follow the finger as feedback. Vertical scrolling is unaffected
+ * because only rightward horizontal drags are consumed.
+ *
+ * Applied to individual sub-regions (message body, ack block, update, file) so
+ * each can be replied to independently.
  */
 @Composable
-private fun SwipeToReplyBubble(
-    onReply: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    val threshold = with(LocalDensity.current) { 64.dp.toPx() }
+private fun Modifier.swipeToReply(onReply: () -> Unit): Modifier {
+    val threshold = with(LocalDensity.current) { 56.dp.toPx() }
     var offsetX by remember { mutableStateOf(0f) }
     val animatedOffset by animateFloatAsState(targetValue = offsetX, label = "swipeReplyOffset")
-    val progress = (animatedOffset / threshold).coerceIn(0f, 1f)
-
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.Reply,
-            contentDescription = null,
-            tint = LumiPurple400,
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 12.dp)
-                .size(20.dp)
-                .graphicsLayer { alpha = progress }
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset { IntOffset(animatedOffset.roundToInt(), 0) }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            if (offsetX > threshold * 0.75f) onReply()
-                            offsetX = 0f
-                        },
-                        onDragCancel = { offsetX = 0f }
-                    ) { change, dragAmount ->
-                        // Only react to rightward drags (or while already offset right).
-                        if (dragAmount > 0f || offsetX > 0f) {
-                            change.consume()
-                            offsetX = (offsetX + dragAmount).coerceIn(0f, threshold * 1.4f)
-                        }
-                    }
+    return this
+        .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+        .pointerInput(Unit) {
+            detectHorizontalDragGestures(
+                onDragEnd = {
+                    if (offsetX > threshold * 0.75f) onReply()
+                    offsetX = 0f
+                },
+                onDragCancel = { offsetX = 0f }
+            ) { change, dragAmount ->
+                // Only react to rightward drags (or while already offset right).
+                if (dragAmount > 0f || offsetX > 0f) {
+                    change.consume()
+                    offsetX = (offsetX + dragAmount).coerceIn(0f, threshold * 1.4f)
                 }
-        ) {
-            content()
+            }
         }
-    }
 }
 
 /**
@@ -761,7 +762,11 @@ private fun SwipeToReplyBubble(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SentMessageBubble(message: AgentMessage) {
+private fun SentMessageBubble(
+    message: AgentMessage,
+    onReplyBody: () -> Unit = {},
+    onReplyAck: () -> Unit = {}
+) {
     val context = LocalContext.current
     Column(
         modifier = Modifier
@@ -773,6 +778,7 @@ private fun SentMessageBubble(message: AgentMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
                 .background(LumiPurple500.copy(alpha = 0.15f))
+                .swipeToReply(onReplyBody)
                 .combinedClickable(
                     onClick = {},
                     onLongClick = { copyToClipboard(context, message.content) }
@@ -792,6 +798,7 @@ private fun SentMessageBubble(message: AgentMessage) {
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(LumiPurple500.copy(alpha = 0.10f))
+                    .swipeToReply(onReplyAck)
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
@@ -839,7 +846,11 @@ private fun SentMessageBubble(message: AgentMessage) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AgentRelayBubble(message: AgentMessage) {
+private fun AgentRelayBubble(
+    message: AgentMessage,
+    onReplyBody: () -> Unit = {},
+    onReplyAck: () -> Unit = {}
+) {
     val context = LocalContext.current
     Column(
         modifier = Modifier
@@ -851,6 +862,7 @@ private fun AgentRelayBubble(message: AgentMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                 .background(LumiInfo.copy(alpha = 0.12f))
+                .swipeToReply(onReplyBody)
                 .combinedClickable(
                     onClick = {},
                     onLongClick = { copyToClipboard(context, message.content) }
@@ -900,6 +912,7 @@ private fun AgentRelayBubble(message: AgentMessage) {
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(LumiInfo.copy(alpha = 0.10f))
+                    .swipeToReply(onReplyAck)
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
@@ -948,7 +961,11 @@ private fun AgentRelayBubble(message: AgentMessage) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PeerMessageBubble(message: AgentMessage) {
+private fun PeerMessageBubble(
+    message: AgentMessage,
+    onReplyBody: () -> Unit = {},
+    onReplyAck: () -> Unit = {}
+) {
     val context = LocalContext.current
     Column(
         modifier = Modifier
@@ -960,6 +977,7 @@ private fun PeerMessageBubble(message: AgentMessage) {
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                 .background(LumiSuccess.copy(alpha = 0.12f))
+                .swipeToReply(onReplyBody)
                 .combinedClickable(
                     onClick = {},
                     onLongClick = { copyToClipboard(context, message.content) }
@@ -1003,6 +1021,7 @@ private fun PeerMessageBubble(message: AgentMessage) {
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(LumiSuccess.copy(alpha = 0.10f))
+                    .swipeToReply(onReplyAck)
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
@@ -1064,7 +1083,11 @@ private fun updateTypeInfo(type: UpdateType): ConvUpdateTypeInfo = when (type) {
  * User uploads align right (purple tint), Claude-generated files align left (blue tint).
  */
 @Composable
-private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo, onDownload: (Long, String) -> Unit = { _, _ -> }) {
+private fun FileBubble(
+    fileInfo: com.claudemanager.app.data.models.FileInfo,
+    onDownload: (Long, String) -> Unit = { _, _ -> },
+    onReply: () -> Unit = {}
+) {
     val isUser = fileInfo.source == "user"
 
     Column(
@@ -1088,9 +1111,11 @@ private fun FileBubble(fileInfo: com.claudemanager.app.data.models.FileInfo, onD
                 1.dp,
                 if (isUser) LumiPurple500.copy(alpha = 0.25f) else LumiOnSurfaceTertiary.copy(alpha = 0.2f)
             ),
-            modifier = Modifier.clickable {
-                onDownload(fileInfo.id, fileInfo.filename)
-            }
+            modifier = Modifier
+                .swipeToReply(onReply)
+                .clickable {
+                    onDownload(fileInfo.id, fileInfo.filename)
+                }
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 // Header: source label + time
