@@ -86,9 +86,10 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
       // Reply reference is prepended so it reads as context for the message below it.
       const reply = pendingItems.find((i): i is Extract<PendingItem, { kind: 'reply' }> => i.kind === 'reply');
       if (reply) {
+        const fetchHint = ` — full message via GET /api/agents/${agentId}/messages/${reply.msgId}`;
         const ref = reply.isAck
-          ? `[Replying to the acknowledgement of message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"]`
-          : `[Replying to message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"]`;
+          ? `[Replying to the acknowledgement of message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"${fetchHint}]`
+          : `[Replying to message #${reply.msgId} from ${reply.sourceLabel}: "${reply.snippet}"${fetchHint}]`;
         messageContent = messageContent ? `${ref}\n\n${messageContent}` : ref;
       }
 

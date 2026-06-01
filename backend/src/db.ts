@@ -786,6 +786,13 @@ export function deleteAgent(id: string) {
   return stmt.run(id);
 }
 
+/** Fetch a single update by id, scoped to the owning agent. */
+export function getUpdateById(agentId: string, updateId: number): Record<string, unknown> | undefined {
+  const db = getDb();
+  const stmt = db.prepare(`SELECT * FROM updates WHERE id = ? AND agent_id = ?`);
+  return stmt.get(updateId, agentId) as Record<string, unknown> | undefined;
+}
+
 export function getUpdates(agentId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {
   const db = getDb();
   if (before) {
@@ -981,6 +988,13 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
     return result;
   });
   return transaction();
+}
+
+/** Fetch a single message by id, scoped to the owning agent. */
+export function getMessageById(agentId: string, messageId: number): Record<string, unknown> | undefined {
+  const db = getDb();
+  const stmt = db.prepare(`SELECT * FROM messages WHERE id = ? AND agent_id = ?`);
+  return stmt.get(messageId, agentId) as Record<string, unknown> | undefined;
 }
 
 export function getMessages(agentId: string, limit: number = 100, before?: number): PaginatedResult<Record<string, unknown>> {

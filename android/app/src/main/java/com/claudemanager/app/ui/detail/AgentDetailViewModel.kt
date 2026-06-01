@@ -380,7 +380,7 @@ class AgentDetailViewModel(
         val label = sourceLabelOf(message)
         val snippet = previewOf(message.content)
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Replying to message #${message.id} from $label: \"$snippet\"]",
+            refText = "[Replying to message #${message.id} from $label: \"$snippet\" — full message via GET /api/agents/$agentId/messages/${message.id}]",
             label = "Replying to $label",
             snippet = snippet
         )) }
@@ -393,7 +393,7 @@ class AgentDetailViewModel(
         val label = sourceLabelOf(message)
         val snippet = previewOf(message.ackContent ?: "")
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Replying to the acknowledgement of message #${message.id} from $label: \"$snippet\"]",
+            refText = "[Replying to the acknowledgement of message #${message.id} from $label: \"$snippet\" — full message via GET /api/agents/$agentId/messages/${message.id}]",
             label = "Replying to ack from $label",
             snippet = snippet
         )) }
@@ -405,7 +405,7 @@ class AgentDetailViewModel(
     fun setReplyToUpdate(update: AgentUpdate) {
         val snippet = previewOf(update.summary?.takeIf { it.isNotBlank() } ?: update.content)
         _uiState.update { it.copy(pendingReply = PendingReply(
-            refText = "[Replying to ${update.type.name.lowercase()} update #${update.id} from agent: \"$snippet\"]",
+            refText = "[Replying to ${update.type.name.lowercase()} update #${update.id} from agent: \"$snippet\" — full update via GET /api/agents/$agentId/updates/${update.id}]",
             label = "Replying to agent update",
             snippet = snippet
         )) }

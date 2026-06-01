@@ -11,12 +11,14 @@ import {
   updateAgent,
   deleteAgent,
   getUpdates,
+  getUpdateById,
   addUpdate,
   getPendingMessages,
   acknowledgeMessages,
   acknowledgeMessagesById,
   addMessage,
   getMessages,
+  getMessageById,
   getMessagesByStatus,
   touchAgentHeartbeat,
   addFile,
@@ -1162,6 +1164,50 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
   } catch (err) {
     logger.error({ err }, "Error getting messages");
     res.status(500).json({ error: "Failed to get messages" });
+  }
+});
+
+// GET /:id/messages/:msgId — fetch a single message's full content by id.
+// Used by the "reply/reference" feature so an agent can retrieve the full text
+// of a message referenced by id (the reply embeds only a short snippet + id).
+router.get("/:id/messages/:msgId", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const msgId = parseInt(param(req, "msgId"), 10);
+    if (!Number.isInteger(msgId)) {
+      res.status(400).json({ error: "Invalid message id" });
+      return;
+    }
+    const message = getMessageById(id, msgId);
+    if (!message) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+    res.json(message);
+  } catch (err) {
+    logger.error({ err }, "Error getting message by id");
+    res.status(500).json({ error: "Failed to get message" });
+  }
+});
+
+// GET /:id/updates/:updateId — fetch a single update's full content by id (reply/reference feature).
+router.get("/:id/updates/:updateId", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const updateId = parseInt(param(req, "updateId"), 10);
+    if (!Number.isInteger(updateId)) {
+      res.status(400).json({ error: "Invalid update id" });
+      return;
+    }
+    const update = getUpdateById(id, updateId);
+    if (!update) {
+      res.status(404).json({ error: "Update not found" });
+      return;
+    }
+    res.json(update);
+  } catch (err) {
+    logger.error({ err }, "Error getting update by id");
+    res.status(500).json({ error: "Failed to get update" });
   }
 });
 
