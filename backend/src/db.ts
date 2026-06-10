@@ -268,6 +268,14 @@ export function getDb(): Database.Database {
   // Backfill: give any already-delivered-unacked messages a 60s grace window before first re-ping.
   migrate("UPDATE messages SET next_redeliver_at = datetime('now', '+60 seconds') WHERE status = 'delivered' AND acknowledged_at IS NULL AND next_redeliver_at IS NULL");
 
+  // One-time rules delivery: full rules (role + PM rules + session rules) are injected once
+  // per session and re-injected on resume / post-compact / >2h staleness / non-compliance,
+  // instead of riding every message. rules_due_reason != NULL means the next fresh delivery
+  // carries the full block. Default 'new-session' gives existing agents one full re-injection
+  // after this deploys, then they drop to the compact per-message reminder.
+  migrate("ALTER TABLE agents ADD COLUMN rules_injected_at TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN rules_due_reason TEXT DEFAULT 'new-session'");
+
   // Reply/reference (WhatsApp-style): a message may quote a prior message/update/file.
   // Stored structurally so clients render a ghost quote + tap-to-jump; the textual
   // reference is injected only at delivery time (kept out of the stored body).
@@ -353,7 +361,6 @@ export function getDb(): Database.Database {
   const agentTableNow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
   if (agentTableNow && !agentTableNow.sql.includes("'working'")) {
     const cols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
-    const colNames = cols.map((c) => c.name).join(", ");
     db.pragma("foreign_keys = OFF");
     db.exec(`DROP TABLE IF EXISTS agents_new`);
     db.exec(`
@@ -369,7 +376,14 @@ export function getDb(): Database.Database {
         workspace TEXT,
         last_read_at TEXT
       );
-      INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
+    `);
+    // Copy only columns that exist in both tables — the live table may carry
+    // columns added by migrations that run before this rebuild in code order.
+    // Dropped columns are re-added (empty) by their migrate() on next startup.
+    const newColSet = new Set((db.prepare("PRAGMA table_info(agents_new)").all() as { name: string }[]).map((c) => c.name));
+    const copyCols = cols.map((c) => c.name).filter((n) => newColSet.has(n)).join(", ");
+    db.exec(`
+      INSERT INTO agents_new (${copyCols}) SELECT ${copyCols} FROM agents;
       DROP TABLE agents;
       ALTER TABLE agents_new RENAME TO agents;
     `);
@@ -435,6 +449,7 @@ export function getDb(): Database.Database {
   // Migration: add 'acknowledged' to messages status CHECK constraint
   const msgTableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").get() as { sql: string } | undefined;
   if (msgTableInfo && !msgTableInfo.sql.includes("'acknowledged'")) {
+    const cols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
     db.pragma("foreign_keys = OFF");
     db.exec(`DROP TABLE IF EXISTS messages_new`);
     db.exec(`
@@ -445,10 +460,27 @@ export function getDb(): Database.Database {
         delivered_at TEXT,
         acknowledged_at TEXT,
         content TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','acknowledged','executed'))
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','acknowledged','executed')),
+        source TEXT DEFAULT 'user',
+        source_agent_id TEXT,
+        source_peer_name TEXT,
+        priority INTEGER DEFAULT 0,
+        ack_content TEXT,
+        type TEXT DEFAULT 'standard',
+        redeliver_count INTEGER DEFAULT 0,
+        next_redeliver_at TEXT,
+        reply_to_kind TEXT,
+        reply_to_id INTEGER,
+        reply_to_label TEXT,
+        reply_to_snippet TEXT
       );
-      INSERT INTO messages_new (id, agent_id, created_at, delivered_at, content, status)
-        SELECT id, agent_id, created_at, delivered_at, content, status FROM messages;
+    `);
+    // Copy only columns that exist in both tables — the live table may carry
+    // columns added by migrations that run before this rebuild in code order.
+    const newColSet = new Set((db.prepare("PRAGMA table_info(messages_new)").all() as { name: string }[]).map((c) => c.name));
+    const copyCols = cols.map((c) => c.name).filter((n) => newColSet.has(n)).join(", ");
+    db.exec(`
+      INSERT INTO messages_new (${copyCols}) SELECT ${copyCols} FROM messages;
       DROP TABLE messages;
       ALTER TABLE messages_new RENAME TO messages;
       CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
@@ -504,7 +536,6 @@ export function getDb(): Database.Database {
   const agentTableStandby = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
   if (agentTableStandby && !agentTableStandby.sql.includes("'standby'")) {
     const cols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
-    const colNames = cols.map((c) => c.name).join(", ");
     db.pragma("foreign_keys = OFF");
     // Drop triggers that reference agents first — they'd fail validation during RENAME otherwise
     db.exec(`
@@ -541,9 +572,19 @@ export function getDb(): Database.Database {
         base_title TEXT,
         progress INTEGER DEFAULT 0,
         pool_slot INTEGER,
-        wt_window TEXT
+        wt_window TEXT,
+        latest_ack_content TEXT,
+        rules_injected_at TEXT,
+        rules_due_reason TEXT DEFAULT 'new-session'
       );
-      INSERT INTO agents_new (${colNames}) SELECT ${colNames} FROM agents;
+    `);
+    // Copy only columns that exist in both tables — the live table may carry
+    // columns added by migrations that run before this rebuild in code order.
+    // Dropped columns are re-added (empty) by their migrate() on next startup.
+    const newColSet = new Set((db.prepare("PRAGMA table_info(agents_new)").all() as { name: string }[]).map((c) => c.name));
+    const copyCols = cols.map((c) => c.name).filter((n) => newColSet.has(n)).join(", ");
+    db.exec(`
+      INSERT INTO agents_new (${copyCols}) SELECT ${copyCols} FROM agents;
       DROP TABLE agents;
       ALTER TABLE agents_new RENAME TO agents;
       CREATE INDEX IF NOT EXISTS idx_updates_agent_id ON updates(agent_id);
@@ -901,9 +942,11 @@ export function getPendingMessages(agentId: string) {
     markDelivered.run(agentId);
     if (unacked.length > 0) updateRedelivered.run(agentId);
     resetPendingCount.run(agentId);
-    // Combine new pending + previously-delivered-but-unacknowledged, deduped by id
+    // Combine new pending + previously-delivered-but-unacknowledged, deduped by id.
+    // Redeliveries are tagged so the delivery route can skip the rules append for them
+    // (the rules are already in the agent's recent context from the original delivery).
     const seen = new Set<unknown>();
-    const all = [...pending, ...unacked].filter(m => {
+    const all = [...pending, ...(unacked as Record<string, unknown>[]).map(m => ({ ...m, redelivery: true }))].filter(m => {
       const msg = m as Record<string, unknown>;
       if (seen.has(msg.id)) return false;
       seen.add(msg.id);
@@ -913,6 +956,23 @@ export function getPendingMessages(agentId: string) {
   });
 
   return transaction();
+}
+
+// ─── One-time rules delivery state ──────────────────────────────────────────
+// Full rules ride the next fresh message when rules_due_reason is set; the
+// delivery route clears it via markRulesInjected once the block has gone out.
+
+/** Flag the agent for full-rules re-injection on its next fresh message delivery.
+ *  Keeps the earliest pending reason rather than overwriting. */
+export function markRulesDue(agentId: string, reason: string) {
+  const db = getDb();
+  db.prepare("UPDATE agents SET rules_due_reason = ? WHERE id = ? AND rules_due_reason IS NULL").run(reason, agentId);
+}
+
+/** Record that the full rules block was just delivered to the agent. */
+export function markRulesInjected(agentId: string) {
+  const db = getDb();
+  db.prepare("UPDATE agents SET rules_injected_at = datetime('now'), rules_due_reason = NULL WHERE id = ?").run(agentId);
 }
 
 export interface ReplyRef {

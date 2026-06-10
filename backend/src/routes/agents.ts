@@ -31,6 +31,8 @@ import {
   addCostEvent,
   getCostEvents,
   getCostEventsSummary,
+  markRulesDue,
+  markRulesInjected,
 } from "../db.js";
 import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
@@ -40,7 +42,7 @@ import { updateSchema, messageSchema, agentPatchSchema, relaySchema, ackMessageS
 import { logger } from "../logger.js";
 import { dispatchWebhook } from "../webhook-dispatcher.js";
 import { onAgentStatusChange } from "../workflow-engine.js";
-import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition } from "../injections.js";
+import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition, getCompactReminder, getFullRulesHeader, getRetryHeader } from "../injections.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -86,6 +88,145 @@ function normalizeRole(role: string | null | undefined): string | null | undefin
   const match = PREDEFINED_ROLES.find((r) => matchesPredefinedRole(role, r));
   return match ? match.id : role;
 }
+
+// ─── Rules building ─────────────────────────────────────────────────────────
+// Builds the two rules payloads for an agent:
+//   fullRules — role + PM rules + session rules (delivered once per session,
+//               re-injected on resume / post-compact / staleness / non-compliance)
+//   reminder  — compact per-message reminder (haiku gets fuller text)
+// All sections are MODEL-TIERED: opus full detail, sonnet medium, haiku minimal.
+function buildAgentRules(agent: Record<string, unknown>): { fullRules: string; reminder: string; tier: ReturnType<typeof getModelTier> } {
+  const agentRole = agent.role as string | null;
+  const agentProjectId = agent.project_id as string | null;
+  const tier = getModelTier(agent.model as string | null);
+
+  const isPM = agentRole === "pm" || agentRole === "PM" ||
+    (typeof agentRole === "string" && agentRole.trimStart().toLowerCase().startsWith("you are a project manager")) ||
+    resolveRoleDefinition(agentRole)?.trimStart().toLowerCase().startsWith("you are a project manager");
+
+  // Look up the project's PM agent ID (only for non-PM sub-agents with a project)
+  let pmAgentId: string | null = null;
+  if (agentProjectId && !isPM) {
+    const proj = getProject(agentProjectId);
+    pmAgentId = (proj?.pm_agent_id as string | null) ?? null;
+  }
+
+  // Section 1: ROLE (if role set)
+  // Resolve role ID/displayName to full definition before injection.
+  // PM role has its own dedicated injection. Other roles get the definition
+  // wrapped with model-appropriate guidance.
+  let ROLE_SECTION = "";
+  if (agentRole) {
+    const resolved = resolveRoleDefinition(agentRole);
+    const roleDefinition = resolved ?? agentRole;
+    const isPredefined = resolved !== null;
+    if (isPM) {
+      ROLE_SECTION = `
+${getPmPreamble(tier)}
+[ROLE — PROJECT MANAGER]
+You run on ${tier === "opus" ? "Opus (heavyweight)" : tier === "sonnet" ? "Sonnet" : "Haiku"} as Project Manager. Plan, delegate, gate-review, E2E test. Never implement.
+
+⛔ NEVER: write/edit files, run builds, git commit/push, use Agent/Task tools, use blocking terminal prompts.
+⛔ NEVER spawn fresh agents. NEVER kill or archive agents. These actions are reserved for Cam (the system operator). If you think an agent needs replacing, follow the recovery steps below instead.
+✅ ONLY: plan tasks, assign to pool agents via relay, monitor progress, review PRs, E2E test via SIS, report to user.
+
+AGENT RECOVERY — when an agent responds confusedly or doesn't act on a task:
+1. Read their full response carefully — they may have partially understood
+2. Send a follow-up relay re-stating the task clearly (do NOT give up after one confused response)
+3. If still unresponsive after 2 clarifications and >10min: try POST /api/agents/{id}/resume
+4. Only escalate to the user (post a dashboard text update) if the agent is completely stuck after a resume attempt
+NEVER spawn a replacement — you have no authority to create new agents.
+
+PIPELINE — follow for every task:
+1. PLAN: Break into phases. A phase = parallel sub-tasks that all must pass a gate review before the next phase.
+2. DELEGATE: relay each sub-task to an idle agent with a feature branch name (feat/<slug>). Include full context + acceptance criteria. Never implement yourself.
+3. MONITOR: poll via your bash monitoring loop (set up at startup). Nudge if silent >5min.
+4. GATE REVIEW (when all PRs for a phase are open):
+   a. Read each diff: git diff origin/dev...feat/<branch>
+   b. Relay feedback if issues — wait for fixes + re-check
+   c. Merge all approved PRs to dev
+   d. E2E test via SIS: golden path + key edge cases, take screenshots as proof
+   e. PASS → post timeline milestone → start next phase
+   f. FAIL → assign bugfix tasks on new branches → re-test
+5. REPORT: post a timeline milestone at each phase gate.
+A phase is NOT complete until SIS tests pass. You are the quality gate.
+
+POOL: GET /api/projects/{project_id}/agents to discover agents.
+- Sonnet agents: complex tasks (multi-file, architectural, nuanced bugs). 2-5 files.
+- Haiku agents: simple tasks (single-file, config, boilerplate, search-replace). Max 1-2 files.
+- Uncertain? Use Sonnet. Haiku struggling? Reassign to Sonnet.
+
+RELAY: curl -s -X POST "$AGENT_URL/api/agents/<id>/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"content":"..."}'
+
+ASSIGNMENT FORMAT — relay as plain text, NOT JSON (agents parse text, not JSON blobs):
+  [TASK ASSIGNMENT]
+  ROLE: <name>
+  <full role definition>
+  TASK:
+  <full task spec, file locations, acceptance criteria>
+  BRANCH: feat/<slug>
+  WORKTREE: git worktree add ../<branch> -b <branch>
+  Run /session-connect first, then begin immediately.
+
+Also PATCH /api/agents/{id} {"role":"<fullDef>","task":"<summary>"} to update the dashboard.
+
+SIS — E2E testing (MANDATORY — no other browser tool):
+REST API at http://localhost:3002
+- Screenshot: POST /screenshot {"scale":0.5,"format":"jpeg","quality":75}
+- Click: POST /mouse {"action":"click","x":<x>,"y":<y>,"scale":0.5}
+- Type: POST /keyboard {"action":"type","text":"..."}
+- Key combo: POST /keyboard {"action":"key","keys":"ctrl+c"}
+- Launch: POST /launch {"command":"firefox","args":["<url>"]}
+- Health: GET /health
+Coordinates use the scale you passed. Final verification must use SIS — take a screenshot as proof.
+If SIS is down: bash /home/kuroneko2539/Research/ClaudeManager/screen-service/start.sh
+
+BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pending reviews, blockers to claudeadmin/context-summary.md and post to dashboard. After compact: re-read context-summary, re-fetch project agents, then resume.`;
+    } else {
+      const wrappedRole = wrapRoleDefinition(tier, roleDefinition, isPredefined);
+      ROLE_SECTION = `
+
+[ROLE] ${wrappedRole}`;
+    }
+  }
+
+  // Section 2: PM RULES (only if this agent is a sub-agent working under a PM)
+  const PM_RULES_SECTION = pmAgentId ? getPmSubRules(tier, pmAgentId) : "";
+
+  // Section 3: SESSION MANAGER RULES
+  const SESSION_RULES_SECTION = getSessionRules(tier);
+
+  const roleLabel = isPM
+    ? "Project Manager — plan/delegate/review only, NEVER implement"
+    : resolveRoleLabel(agentRole);
+  const reminder = getCompactReminder(tier, { roleLabel, pmAgentId });
+
+  return { fullRules: ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION, reminder, tier };
+}
+
+// Returns the reason the agent's full rules block is due for (re-)delivery,
+// or null if the compact reminder suffices. Staleness threshold: 2 hours —
+// rules delivered >2h ago are likely buried deep in the agent's context.
+function rulesDueReason(agent: Record<string, unknown>): string | null {
+  const dueReason = agent.rules_due_reason as string | null;
+  if (dueReason) return dueReason;
+  const injectedAt = agent.rules_injected_at as string | null;
+  if (!injectedAt) return "new-session";
+  const injectedMs = Date.parse(injectedAt.replace(" ", "T") + "Z");
+  if (!Number.isNaN(injectedMs) && Date.now() - injectedMs > 2 * 60 * 60 * 1000) {
+    return "rules last delivered >2h ago";
+  }
+  return null;
+}
+
+// Middleware onFail hook: a malformed request body is a compliance signal —
+// flag the agent so the next delivery re-carries the full rules.
+const flagNonCompliance = (reason: string) => (req: Request) => {
+  try {
+    const id = param(req, "id");
+    if (id && getAgent(id)) markRulesDue(id, reason);
+  } catch { /* never block the 400 response */ }
+};
 
 // Disk storage for file uploads
 const storage = multer.diskStorage({
@@ -418,6 +559,7 @@ curl -s -H "Authorization: Bearer $API_KEY" -X POST "$AGENT_URL/api/agents/$SESS
         get_updates: { method: "GET", path: "/api/agents/:id/updates", description: "Get all updates for an agent" },
         post_message: { method: "POST", path: "/api/agents/:id/messages", body: "{content}", description: "Queue a message for the agent" },
         get_messages: { method: "GET", path: "/api/agents/:id/messages", query: "?status=pending&deliver=true", description: "Get messages. With deliver=true, atomically marks pending as delivered" },
+        get_rules: { method: "GET", path: "/api/agents/:id/rules", description: "Full session/role/PM rules for this agent (tier-scaled). Delivered in full with the first message of a session and after resume/compact; later messages carry a short reminder pointing here" },
         upload_file: { method: "POST", path: "/api/agents/:id/files", body: "multipart: file (required), source ('user'|'claude'), description (text)", description: "Upload a file attachment or artefact" },
         list_files: { method: "GET", path: "/api/agents/:id/files", description: "List file metadata (without binary data)" },
         get_file: { method: "GET", path: "/api/agents/:id/files/:fileId", description: "Download a file with correct content-type" },
@@ -517,7 +659,7 @@ router.get("/:id", (req: Request, res: Response) => {
 });
 
 // POST /:id/updates — agent posts an update
-router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Request, res: Response) => {
+router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema, flagNonCompliance("non-compliance: malformed update")), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const { type = "text", content, summary, title, status: rawStatus, progress, projects, todos, workspace, cwd, pid, base_title: explicitBaseTitle } = req.body;
@@ -530,6 +672,16 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema), (req: Re
 
     if (!existing) {
       createAgent(id, title || "Untitled Agent");
+    } else if (isArchivedRehijack) {
+      // Re-registering after archive = fresh process, fresh context — full rules due.
+      markRulesDue(id, "reconnected after archive");
+    }
+
+    // Post-compact detection: session-connect compact mode posts updates whose
+    // summary mentions the compact ("Context compacted", "Pre-compact state saved").
+    // A compacted context has lost the full rules — re-deliver with the next message.
+    if (typeof summary === "string" && /compact/i.test(summary)) {
+      markRulesDue(id, "context compacted");
     }
 
     // Apply spawn metadata on first registration (new agent) OR when an archived
@@ -790,6 +942,13 @@ router.patch("/:id", validate(agentPatchSchema), (req: Request, res: Response) =
 
     updateAgent(id, fields);
 
+    // Role or project assignment changes which rules apply (role definition,
+    // PM sub-agent rules) — re-deliver the full block with the next message.
+    if ((role !== undefined && fields.role !== agent.role) ||
+        (project_id !== undefined && project_id !== agent.project_id)) {
+      markRulesDue(id, "role/project assigned");
+    }
+
     // If a PM agent is self-linking to a project, activate the project and set pm_agent_id
     if (project_id) {
       const effectiveRole = normalizeRole(role ?? (agent.role as string | null)) || "";
@@ -909,6 +1068,10 @@ router.post("/:id/resume", (req: Request, res: Response) => {
 
     // Set agent status back to active (will be updated when it reconnects)
     updateAgent(id, { status: "active" });
+
+    // A resumed session starts with a fresh context — re-deliver the full rules
+    // with its first message instead of the compact reminder.
+    markRulesDue(id, "session resumed");
 
     const updatedAgent = getAgent(id);
     broadcast("agent-updated", updatedAgent);
@@ -1031,116 +1194,21 @@ router.get("/:id/messages", (req: Request, res: Response) => {
 
       // Atomic: fetch pending + mark delivered in one transaction
       // Also re-surfaces any delivered-but-unacknowledged messages from previous poll cycles
-      const rawMessages = getPendingMessages(id);
+      const rawMessages = getPendingMessages(id) as Record<string, unknown>[];
 
-      // Append structured reminders to every message at delivery time.
-      // Injected at delivery time only — DB record stays clean for the dashboard.
-      // Three sections: ROLE (if set), PM RULES (if under a PM), SESSION MANAGER RULES (always).
-      // All sections are MODEL-TIERED: opus gets full detail, sonnet medium, haiku minimal.
-      const agentRole = agent.role as string | null;
-      const agentProjectId = agent.project_id as string | null;
-      const agentModel = agent.model as string | null;
-      const tier = getModelTier(agentModel);
+      // Rules are injected at delivery time only — DB record stays clean for the dashboard.
+      // Full rules (role + PM rules + session rules) ride ONCE per session — on the first
+      // delivery, and again after resume / post-compact / >2h staleness / non-compliance.
+      // Every other fresh delivery carries only a compact reminder (haiku: fuller text).
+      // Unacked redeliveries carry NO rules — just a one-line RETRY header; the rules are
+      // already in the agent's recent context from the original delivery.
+      const { fullRules, reminder } = rawMessages.length > 0
+        ? buildAgentRules(agent as Record<string, unknown>)
+        : { fullRules: "", reminder: "" };
+      const fullReason = rawMessages.some(m => !m.redelivery) ? rulesDueReason(agent as Record<string, unknown>) : null;
+      const lastFreshIdx = rawMessages.reduce((acc, m, i) => (m.redelivery ? acc : i), -1);
 
-      const isPM = agentRole === "pm" || agentRole === "PM" ||
-        (typeof agentRole === "string" && agentRole.trimStart().toLowerCase().startsWith("you are a project manager")) ||
-        resolveRoleDefinition(agentRole)?.trimStart().toLowerCase().startsWith("you are a project manager");
-
-      // Look up the project's PM agent ID (only for non-PM sub-agents with a project)
-      let pmAgentId: string | null = null;
-      if (agentProjectId && !isPM) {
-        const proj = getProject(agentProjectId);
-        pmAgentId = (proj?.pm_agent_id as string | null) ?? null;
-      }
-
-      // Section 1: ROLE (if role set)
-      // Resolve role ID/displayName to full definition before injection.
-      // PM role has its own dedicated injection. Other roles get the definition
-      // wrapped with model-appropriate guidance.
-      let ROLE_SECTION = "";
-      if (agentRole) {
-        const resolved = resolveRoleDefinition(agentRole);
-        const roleDefinition = resolved ?? agentRole;
-        const isPredefined = resolved !== null;
-        if (isPM) {
-          ROLE_SECTION = `
-${getPmPreamble(tier)}
-[ROLE — PROJECT MANAGER]
-You run on ${tier === "opus" ? "Opus (heavyweight)" : tier === "sonnet" ? "Sonnet" : "Haiku"} as Project Manager. Plan, delegate, gate-review, E2E test. Never implement.
-
-⛔ NEVER: write/edit files, run builds, git commit/push, use Agent/Task tools, use blocking terminal prompts.
-⛔ NEVER spawn fresh agents. NEVER kill or archive agents. These actions are reserved for Cam (the system operator). If you think an agent needs replacing, follow the recovery steps below instead.
-✅ ONLY: plan tasks, assign to pool agents via relay, monitor progress, review PRs, E2E test via SIS, report to user.
-
-AGENT RECOVERY — when an agent responds confusedly or doesn't act on a task:
-1. Read their full response carefully — they may have partially understood
-2. Send a follow-up relay re-stating the task clearly (do NOT give up after one confused response)
-3. If still unresponsive after 2 clarifications and >10min: try POST /api/agents/{id}/resume
-4. Only escalate to the user (post a dashboard text update) if the agent is completely stuck after a resume attempt
-NEVER spawn a replacement — you have no authority to create new agents.
-
-PIPELINE — follow for every task:
-1. PLAN: Break into phases. A phase = parallel sub-tasks that all must pass a gate review before the next phase.
-2. DELEGATE: relay each sub-task to an idle agent with a feature branch name (feat/<slug>). Include full context + acceptance criteria. Never implement yourself.
-3. MONITOR: poll via your bash monitoring loop (set up at startup). Nudge if silent >5min.
-4. GATE REVIEW (when all PRs for a phase are open):
-   a. Read each diff: git diff origin/dev...feat/<branch>
-   b. Relay feedback if issues — wait for fixes + re-check
-   c. Merge all approved PRs to dev
-   d. E2E test via SIS: golden path + key edge cases, take screenshots as proof
-   e. PASS → post timeline milestone → start next phase
-   f. FAIL → assign bugfix tasks on new branches → re-test
-5. REPORT: post a timeline milestone at each phase gate.
-A phase is NOT complete until SIS tests pass. You are the quality gate.
-
-POOL: GET /api/projects/{project_id}/agents to discover agents.
-- Sonnet agents: complex tasks (multi-file, architectural, nuanced bugs). 2-5 files.
-- Haiku agents: simple tasks (single-file, config, boilerplate, search-replace). Max 1-2 files.
-- Uncertain? Use Sonnet. Haiku struggling? Reassign to Sonnet.
-
-RELAY: curl -s -X POST "$AGENT_URL/api/agents/<id>/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"content":"..."}'
-
-ASSIGNMENT FORMAT — relay as plain text, NOT JSON (agents parse text, not JSON blobs):
-  [TASK ASSIGNMENT]
-  ROLE: <name>
-  <full role definition>
-  TASK:
-  <full task spec, file locations, acceptance criteria>
-  BRANCH: feat/<slug>
-  WORKTREE: git worktree add ../<branch> -b <branch>
-  Run /session-connect first, then begin immediately.
-
-Also PATCH /api/agents/{id} {"role":"<fullDef>","task":"<summary>"} to update the dashboard.
-
-SIS — E2E testing (MANDATORY — no other browser tool):
-REST API at http://localhost:3002
-- Screenshot: POST /screenshot {"scale":0.5,"format":"jpeg","quality":75}
-- Click: POST /mouse {"action":"click","x":<x>,"y":<y>,"scale":0.5}
-- Type: POST /keyboard {"action":"type","text":"..."}
-- Key combo: POST /keyboard {"action":"key","keys":"ctrl+c"}
-- Launch: POST /launch {"command":"firefox","args":["<url>"]}
-- Health: GET /health
-Coordinates use the scale you passed. Final verification must use SIS — take a screenshot as proof.
-If SIS is down: bash /home/kuroneko2539/Research/ClaudeManager/screen-service/start.sh
-
-BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pending reviews, blockers to claudeadmin/context-summary.md and post to dashboard. After compact: re-read context-summary, re-fetch project agents, then resume.`;
-        } else {
-          const wrappedRole = wrapRoleDefinition(tier, roleDefinition, isPredefined);
-          ROLE_SECTION = `
-
-[ROLE] ${wrappedRole}`;
-        }
-      }
-
-      // Section 2: PM RULES (only if this agent is a sub-agent working under a PM)
-      // Model-tiered: haiku gets minimal/concrete, sonnet medium, opus full detail
-      const PM_RULES_SECTION = pmAgentId ? getPmSubRules(tier, pmAgentId) : "";
-
-      // Section 3: SESSION MANAGER RULES (always appended)
-      // Model-tiered: haiku gets 7 rules, sonnet 14, opus full 15
-      const SESSION_RULES_SECTION = getSessionRules(tier);
-
-      const messages = (rawMessages as Record<string, unknown>[]).map(m => {
+      const messages = rawMessages.map((m, i) => {
         // Reply/reference is stored structurally (kept out of the body for clean UI);
         // inject it as a textual prefix only at delivery so the agent still gets the context.
         let replyPrefix = "";
@@ -1151,13 +1219,21 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
           const snippet = (m.reply_to_snippet as string) || "";
           replyPrefix = `[Replying to ${label} #${m.reply_to_id}: "${snippet}" — full via GET /api/agents/${id}/${pathSeg}/${m.reply_to_id}]\n\n`;
         }
-        return {
-          ...m,
-          content: typeof m.content === "string"
-            ? replyPrefix + m.content + ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION
-            : m.content,
-        };
+        if (typeof m.content !== "string") return m;
+        if (m.redelivery) {
+          // redeliver_count in the row predates this re-surface's bump — +1 for display
+          const retryNum = ((m.redeliver_count as number) ?? 0) + 1;
+          return { ...m, content: getRetryHeader(m.id, retryNum) + replyPrefix + m.content };
+        }
+        // One rules-append per batch, on the last fresh message (closest to the
+        // agent's attention). Full block if due, compact reminder otherwise.
+        const rulesSuffix = i === lastFreshIdx
+          ? (fullReason ? getFullRulesHeader(fullReason) + fullRules : reminder)
+          : "";
+        return { ...m, content: replyPrefix + m.content + rulesSuffix };
       });
+
+      if (fullReason) markRulesInjected(id);
 
       // Include poll_delay_until so the agent knows to pause if set
       const agentData = getAgent(id);
@@ -1180,6 +1256,27 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
   } catch (err) {
     logger.error({ err }, "Error getting messages");
     res.status(500).json({ error: "Failed to get messages" });
+  }
+});
+
+// GET /:id/rules — the agent's full rules block (role + PM rules + session rules),
+// tier-scaled to its model. Agents refetch this when unsure — the per-message
+// reminder points here. Counts as a fresh injection (the rules land in the
+// agent's recent context), so it also resets the staleness clock.
+router.get("/:id/rules", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    const { fullRules, tier } = buildAgentRules(agent as Record<string, unknown>);
+    markRulesInjected(id);
+    res.type("text/plain").send(`[FULL RULES — tier: ${tier}]\n${fullRules.trim()}\n`);
+  } catch (err) {
+    logger.error({ err }, "Error getting agent rules");
+    res.status(500).json({ error: "Failed to get rules" });
   }
 });
 
@@ -1228,7 +1325,7 @@ router.get("/:id/updates/:updateId", (req: Request, res: Response) => {
 });
 
 // POST /:id/messages/ack — agent explicitly acknowledges processed messages by ID
-router.post("/:id/messages/ack", validate(ackMessageSchema), (req: Request, res: Response) => {
+router.post("/:id/messages/ack", validate(ackMessageSchema, flagNonCompliance("non-compliance: malformed ack")), (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const agent = getAgent(id);
@@ -1239,6 +1336,8 @@ router.post("/:id/messages/ack", validate(ackMessageSchema), (req: Request, res:
 
     const { ids, content } = req.body as { ids: number[]; content: string };
     if (!content || !content.trim()) {
+      // Ack without content is the canonical compliance failure — re-deliver full rules
+      markRulesDue(id, "non-compliance: ack without content");
       res.status(400).json({ error: "You must include content demonstrating you understood the message" });
       return;
     }
@@ -1746,6 +1845,57 @@ router.get("/:id/costs", (req: Request, res: Response) => {
 });
 
 // GET /analytics/costs — aggregate cost data across all agents
+// GET /analytics/compliance — message-handling compliance per agent + per model tier
+// over the last 7 days: ack rate, ack-content presence, median-ish time-to-ack,
+// redelivery volume. This is the validation metric for the compact-reminder rollout:
+// if ack discipline drops for a tier, fatten that tier's reminder.
+router.get("/analytics/compliance", (req: Request, res: Response) => {
+  try {
+    const days = parseIntQuery(req.query.days, 7, 90);
+    const db = getDb();
+    const rows = db.prepare(`
+      SELECT a.id, a.title, a.model,
+        COUNT(m.id) AS delivered,
+        SUM(CASE WHEN m.acknowledged_at IS NOT NULL THEN 1 ELSE 0 END) AS acked,
+        SUM(CASE WHEN m.ack_content IS NOT NULL AND TRIM(m.ack_content) != '' THEN 1 ELSE 0 END) AS acked_with_content,
+        AVG(CASE WHEN m.acknowledged_at IS NOT NULL
+            THEN (julianday(m.acknowledged_at) - julianday(m.delivered_at)) * 86400 END) AS avg_time_to_ack_seconds,
+        SUM(COALESCE(m.redeliver_count, 0)) AS redeliveries
+      FROM messages m JOIN agents a ON a.id = m.agent_id
+      WHERE m.delivered_at IS NOT NULL AND m.source != 'system'
+        AND m.created_at > datetime('now', '-' || ? || ' days')
+      GROUP BY a.id
+      ORDER BY delivered DESC
+    `).all(days) as Record<string, unknown>[];
+
+    const perTier: Record<string, { delivered: number; acked: number; acked_with_content: number; redeliveries: number; ack_time_sum: number; ack_time_n: number }> = {};
+    for (const r of rows) {
+      const tier = getModelTier(r.model as string | null);
+      const t = perTier[tier] ??= { delivered: 0, acked: 0, acked_with_content: 0, redeliveries: 0, ack_time_sum: 0, ack_time_n: 0 };
+      t.delivered += (r.delivered as number) || 0;
+      t.acked += (r.acked as number) || 0;
+      t.acked_with_content += (r.acked_with_content as number) || 0;
+      t.redeliveries += (r.redeliveries as number) || 0;
+      if (r.avg_time_to_ack_seconds != null) {
+        t.ack_time_sum += (r.avg_time_to_ack_seconds as number) * ((r.acked as number) || 0);
+        t.ack_time_n += (r.acked as number) || 0;
+      }
+    }
+    const tiers = Object.fromEntries(Object.entries(perTier).map(([tier, t]) => [tier, {
+      delivered: t.delivered,
+      ack_rate: t.delivered ? Math.round((t.acked / t.delivered) * 1000) / 1000 : null,
+      ack_content_rate: t.acked ? Math.round((t.acked_with_content / t.acked) * 1000) / 1000 : null,
+      avg_time_to_ack_seconds: t.ack_time_n ? Math.round(t.ack_time_sum / t.ack_time_n) : null,
+      redeliveries: t.redeliveries,
+    }]));
+
+    res.json({ window_days: days, tiers, agents: rows });
+  } catch (err) {
+    logger.error({ err }, "Error fetching compliance analytics");
+    res.status(500).json({ error: "Failed to fetch compliance analytics" });
+  }
+});
+
 router.get("/analytics/costs", (_req: Request, res: Response) => {
   try {
     const db = getDb();

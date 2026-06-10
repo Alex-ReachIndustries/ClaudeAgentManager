@@ -15,8 +15,58 @@ export function getModelTier(model: string | null | undefined): ModelTier {
   return "sonnet";
 }
 
+// ─── COMPACT PER-MESSAGE REMINDER ───────────────────────────────────────────
+// Appended to every fresh message delivery. Keeps the recency signal for the
+// behaviours that actually fail in practice at ~5% of the full-rules cost.
+// Full rules are delivered once per session (and re-injected on resume /
+// post-compact / staleness / non-compliance) — see getSessionRules below.
+// Haiku keeps the fuller per-message text (weak long-range retrieval).
+
+export function getCompactReminder(
+  tier: ModelTier,
+  opts: { roleLabel?: string | null; pmAgentId?: string | null } = {},
+): string {
+  const { roleLabel, pmAgentId } = opts;
+
+  if (tier === "haiku") {
+    // Haiku: full session rules every message, plus a one-line PM pointer with
+    // the relay command inline (haiku should not have to reconstruct it).
+    const pmLine = pmAgentId
+      ? `\n[PM ${pmAgentId}] Relay PLAN/STATUS/COMPLETED/BLOCKED to your PM: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmAgentId}","content":"..."}'`
+      : "";
+    return SESSION_RULES_HAIKU + pmLine;
+  }
+
+  const roleLine = roleLabel ? `\n[role: ${roleLabel}]` : "";
+  const pmLine = pmAgentId
+    ? `\n[PM ${pmAgentId}] Relay PLAN before executing, STATUS if a step passes 10 min, COMPLETED/BLOCKED when done.`
+    : "";
+  return `
+---
+[REMINDER] 1. Ack NOW, before any work: POST $AGENT_URL/api/agents/$SESSION_UUID/messages/ack {"ids":[<id>],"content":"<≤200 char summary of what you understood>"}. 2. Non-trivial task → post plan as type=text, wait for approval. 3. Post milestone updates while working — never go silent >10 min. 4. Post a type=text completion update when done. 5. NEVER write .claude/ — use claudeadmin/.${roleLine}${pmLine}
+Full rules were delivered at session start — refetch if unsure: GET $AGENT_URL/api/agents/$SESSION_UUID/rules
+---`;
+}
+
+// Header prepended to the full rules block when it is (re-)delivered, so the
+// agent understands why it arrived and that it will not ride every message.
+export function getFullRulesHeader(reason: string): string {
+  return `
+
+═══ FULL SESSION RULES (delivered: ${reason}) ═══
+These full rules are delivered once, not on every message — subsequent messages carry only a short reminder. Re-fetch anytime: GET $AGENT_URL/api/agents/$SESSION_UUID/rules`;
+}
+
+// One-line retry header for unacked redeliveries. No rules ride along — they
+// are already in the agent's recent context from the original delivery.
+export function getRetryHeader(messageId: unknown, redeliverCount: unknown): string {
+  return `[RETRY #${redeliverCount ?? "?"} of msg ${messageId} — delivered earlier, not yet acked. If already handled, ack now: POST $AGENT_URL/api/agents/$SESSION_UUID/messages/ack {"ids":[${messageId}],"content":"<what you did>"}]\n\n`;
+}
+
 // ─── SESSION RULES ──────────────────────────────────────────────────────────
-// Always appended to every message. Tiered by model capability.
+// Full tier-scaled rules. Delivered once per session at first message delivery,
+// re-injected on resume / post-compact / >2h staleness / non-compliance.
+// (Haiku additionally gets SESSION_RULES_HAIKU on every message via getCompactReminder.)
 
 export function getSessionRules(tier: ModelTier): string {
   if (tier === "haiku") return SESSION_RULES_HAIKU;
