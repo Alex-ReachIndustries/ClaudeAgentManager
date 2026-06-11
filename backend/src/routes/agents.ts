@@ -197,9 +197,24 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
   const SESSION_RULES_SECTION = getSessionRules(tier);
 
   const roleLabel = isPM
-    ? "Project Manager — plan/delegate/review only, NEVER implement"
+    ? "Project Manager — plan/delegate/review only. NEVER do work yourself, including read-only scoping/investigation — delegate it"
     : resolveRoleLabel(agentRole);
-  const reminder = getCompactReminder(tier, { roleLabel, pmAgentId });
+
+  // PMs get a live pool-status line on every message so idle agents stay in
+  // their working attention even after long single-agent exchanges.
+  let pmPoolStatus: string | null = null;
+  if (isPM && agentProjectId) {
+    try {
+      const pool = getDb().prepare(
+        "SELECT title, status FROM agents WHERE project_id = ? AND id != ? AND status != 'archived' ORDER BY title"
+      ).all(agentProjectId, agent.id as string) as { title: string; status: string }[];
+      if (pool.length > 0) {
+        pmPoolStatus = pool.map(p => `${p.title}=${p.status}`).join(", ");
+      }
+    } catch { /* pool line is best-effort — never block delivery */ }
+  }
+
+  const reminder = getCompactReminder(tier, { roleLabel, pmAgentId, pmPoolStatus });
 
   return { fullRules: ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION, reminder, tier };
 }

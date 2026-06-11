@@ -24,9 +24,16 @@ export function getModelTier(model: string | null | undefined): ModelTier {
 
 export function getCompactReminder(
   tier: ModelTier,
-  opts: { roleLabel?: string | null; pmAgentId?: string | null } = {},
+  opts: { roleLabel?: string | null; pmAgentId?: string | null; pmPoolStatus?: string | null } = {},
 ): string {
-  const { roleLabel, pmAgentId } = opts;
+  const { roleLabel, pmAgentId, pmPoolStatus } = opts;
+
+  // For PM agents: live pool state on every message, so idle agents can never
+  // fall out of the PM's working attention (the #140 failure mode — PM did
+  // scoping work itself while two pool agents sat idle for 15h).
+  const poolLine = pmPoolStatus
+    ? `\n[YOUR POOL: ${pmPoolStatus}] Delegate to idle agents — you NEVER do the work yourself, not even read-only scoping/investigation.`
+    : "";
 
   if (tier === "haiku") {
     // Haiku: full session rules every message, plus a one-line PM pointer with
@@ -34,7 +41,7 @@ export function getCompactReminder(
     const pmLine = pmAgentId
       ? `\n[PM ${pmAgentId}] Relay PLAN/STATUS/COMPLETED/BLOCKED to your PM: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmAgentId}","content":"..."}'`
       : "";
-    return SESSION_RULES_HAIKU + pmLine;
+    return SESSION_RULES_HAIKU + pmLine + poolLine;
   }
 
   const roleLine = roleLabel ? `\n[role: ${roleLabel}]` : "";
@@ -43,7 +50,7 @@ export function getCompactReminder(
     : "";
   return `
 ---
-[REMINDER] 1. Ack NOW, before any work: POST $AGENT_URL/api/agents/$SESSION_UUID/messages/ack {"ids":[<id>],"content":"<≤200 char summary of what you understood>"}. 2. Non-trivial task → post plan as type=text, wait for approval. 3. Post milestone updates while working — never go silent >10 min. 4. Post a type=text completion update when done. 5. NEVER write .claude/ — use claudeadmin/.${roleLine}${pmLine}
+[REMINDER] 1. Ack NOW, before any work: POST $AGENT_URL/api/agents/$SESSION_UUID/messages/ack {"ids":[<id>],"content":"<≤200 char summary of what you understood>"}. 2. Non-trivial task → post plan as type=text, wait for approval. 3. Post milestone updates while working — never go silent >10 min. 4. Post a type=text completion update when done. 5. NEVER write .claude/ — use claudeadmin/.${roleLine}${pmLine}${poolLine}
 Full rules were delivered at session start — refetch if unsure: GET $AGENT_URL/api/agents/$SESSION_UUID/rules
 ---`;
 }
