@@ -454,7 +454,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
     const scriptFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.sh`);
     const promptEscaped = initialPrompt.replace(/'/g, "'\\''");
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\nexport CLAUDE_AGENT_ID="${newUuid}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} --resume ${newUuid} '${promptEscaped}'\n`,
+      `#!/bin/bash\nexport PATH="$HOME/.local/bin:$PATH"\nexport CLAUDE_AGENT_ID="${newUuid}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} --resume ${newUuid} '${promptEscaped}'\n`,
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow, newUuid);
@@ -542,7 +542,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     const shortId = agentId.substring(0, 8);
     const scriptFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.sh`);
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\nexport CLAUDE_AGENT_ID="${agentId}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
+      `#!/bin/bash\nexport PATH="$HOME/.local/bin:$PATH"\nexport CLAUDE_AGENT_ID="${agentId}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow, agentId);
