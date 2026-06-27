@@ -454,7 +454,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
     const scriptFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.sh`);
     const promptEscaped = initialPrompt.replace(/'/g, "'\\''");
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\nexport PATH="$HOME/.local/bin:$PATH"\nexport CLAUDE_AGENT_ID="${newUuid}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${modelFlag}${effortFlag} --resume ${newUuid} '${promptEscaped}'\n`,
+      `#!/bin/bash\nexport PATH="$HOME/.local/bin:$PATH"\nexport CLAUDE_AGENT_ID="${newUuid}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --permission-mode bypassPermissions --dangerously-skip-permissions${modelFlag}${effortFlag} --resume ${newUuid} '${promptEscaped}'\n`,
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, wtWindow, newUuid);
@@ -469,7 +469,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
   // Escape the prompt for batch: double up % signs, wrap in quotes
   const batchPrompt = initialPrompt.replace(/%/g, '%%');
-  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\nclaude --permission-mode bypassPermissions --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
 
   const wtArgs = wtWindow
     ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
@@ -542,7 +542,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     const shortId = agentId.substring(0, 8);
     const scriptFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.sh`);
     fs.writeFileSync(scriptFile,
-      `#!/bin/bash\nexport PATH="$HOME/.local/bin:$PATH"\nexport CLAUDE_AGENT_ID="${agentId}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
+      `#!/bin/bash\nexport PATH="$HOME/.local/bin:$PATH"\nexport CLAUDE_AGENT_ID="${agentId}"\nexport CLAUDE_TMUX_SESSION="${session}"\nexport CLAUDE_TMUX_WINDOW="${shortId}"\ncd "${cwd}"\nexec claude --permission-mode bypassPermissions --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} 'run /session-resume and then await instructions'\n`,
       { mode: 0o755 }
     );
     linuxLaunchTerminal(cwd, scriptFile, tabTitle, resolvedWtWindow, agentId);
@@ -555,7 +555,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
 
   // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues)
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
-  fs.writeFileSync(batchFile, `@echo off\nclaude --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\nclaude --permission-mode bypassPermissions --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
 
   const wtArgs = resolvedWtWindow
     ? ['-w', resolvedWtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
