@@ -42,6 +42,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.BarChart
@@ -938,6 +940,9 @@ private fun AgentRelayBubble(
     onJumpTo: (String, Long) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
+    // Collapsed by default (tap to expand) — agent messages are often long and
+    // clutter PM chats; mirrors the tap-to-expand behaviour of agent updates.
+    var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -950,7 +955,7 @@ private fun AgentRelayBubble(
                 .background(LumiInfo.copy(alpha = 0.12f))
                 .swipeToReply(onReplyBody)
                 .combinedClickable(
-                    onClick = {},
+                    onClick = { expanded = !expanded },
                     onLongClick = { copyToClipboard(context, message.content) }
                 )
                 .padding(10.dp)
@@ -980,6 +985,13 @@ private fun AgentRelayBubble(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        tint = LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -994,7 +1006,9 @@ private fun AgentRelayBubble(
                 Text(
                     text = message.content,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = LumiOnSurface
+                    color = LumiOnSurface,
+                    maxLines = if (expanded) Int.MAX_VALUE else 4,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -1061,6 +1075,8 @@ private fun PeerMessageBubble(
     onJumpTo: (String, Long) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
+    // Collapsed by default (tap to expand) — see AgentRelayBubble.
+    var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1073,7 +1089,7 @@ private fun PeerMessageBubble(
                 .background(LumiSuccess.copy(alpha = 0.12f))
                 .swipeToReply(onReplyBody)
                 .combinedClickable(
-                    onClick = {},
+                    onClick = { expanded = !expanded },
                     onLongClick = { copyToClipboard(context, message.content) }
                 )
                 .padding(10.dp)
@@ -1097,6 +1113,13 @@ private fun PeerMessageBubble(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        tint = LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -1111,7 +1134,9 @@ private fun PeerMessageBubble(
                 Text(
                     text = message.content,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = LumiOnSurface
+                    color = LumiOnSurface,
+                    maxLines = if (expanded) Int.MAX_VALUE else 4,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
