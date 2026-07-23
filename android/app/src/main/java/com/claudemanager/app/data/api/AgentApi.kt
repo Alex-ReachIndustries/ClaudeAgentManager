@@ -15,8 +15,17 @@ import com.claudemanager.app.data.models.CreateWebhookBody
 import com.claudemanager.app.data.models.CreateWorkflowBody
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
+import com.claudemanager.app.data.models.DecideProposalBody
+import com.claudemanager.app.data.models.DecideProposalResponse
 import com.claudemanager.app.data.models.HealthResponse
+import com.claudemanager.app.data.models.KbProfilesResponse
+import com.claudemanager.app.data.models.KbStats
+import com.claudemanager.app.data.models.KnowledgeEntry
+import com.claudemanager.app.data.models.KnowledgeSearchResponse
 import com.claudemanager.app.data.models.OkResponse
+import com.claudemanager.app.data.models.PendingResponse
+import com.claudemanager.app.data.models.ProposeKnowledgeBody
+import com.claudemanager.app.data.models.ProposeKnowledgeResponse
 import com.claudemanager.app.data.models.PredefinedRoleResponse
 import com.claudemanager.app.data.models.Project
 import com.claudemanager.app.data.models.ProjectFile
@@ -434,4 +443,57 @@ interface AgentApi {
         @Path("id") id: String,
         @Body body: ShareFileRequest
     ): Response<OkResponse>
+
+    // ── Knowledge Hub ────────────────────────────────────────────────────
+
+    /**
+     * Hybrid (keyword + vector) search over the shared Knowledge Hub.
+     * @param type "all" | "knowledge" | "profile"
+     */
+    @GET("api/kb/search")
+    suspend fun searchKnowledge(
+        @Query("q") q: String,
+        @Query("type") type: String = "all",
+        @Query("limit") limit: Int? = null
+    ): Response<KnowledgeSearchResponse>
+
+    /**
+     * Fetch a full knowledge entry by id (also bumps its hit_count).
+     */
+    @GET("api/kb/{id}")
+    suspend fun getKnowledgeEntry(@Path("id") id: Long): Response<KnowledgeEntry>
+
+    /**
+     * Propose a new knowledge entry or an edit to an existing one.
+     * Lands in the pending review queue.
+     */
+    @POST("api/kb/propose")
+    suspend fun proposeKnowledge(@Body body: ProposeKnowledgeBody): Response<ProposeKnowledgeResponse>
+
+    /**
+     * List all proposals awaiting human review.
+     */
+    @GET("api/kb/pending")
+    suspend fun getPendingKnowledge(): Response<PendingResponse>
+
+    /**
+     * Decide on a pending proposal: accept / update (with edits) / reject.
+     */
+    @POST("api/kb/pending/{id}/decide")
+    suspend fun decidePending(
+        @Path("id") id: Long,
+        @Body body: DecideProposalBody
+    ): Response<DecideProposalResponse>
+
+    /**
+     * List all people profiles in the Knowledge Hub.
+     */
+    @GET("api/kb/profiles")
+    suspend fun getKbProfiles(): Response<KbProfilesResponse>
+
+    /**
+     * Aggregate Knowledge Hub statistics.
+     */
+    @GET("api/kb/stats")
+    suspend fun getKbStats(): Response<KbStats>
 }

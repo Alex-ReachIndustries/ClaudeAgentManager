@@ -241,6 +241,16 @@ class SSEClient(
                 val timestamp = json.get("timestamp")?.asString ?: ""
                 SSEEvent.TerminalOutput(agentId, output, timestamp)
             }
+            "knowledge-pending" -> {
+                val json = com.google.gson.JsonParser.parseString(data).asJsonObject
+                val pendingId = json.get("pending_id")?.asLong ?: 0L
+                val entryId = if (json.has("entry_id") && !json.get("entry_id").isJsonNull) json.get("entry_id").asLong else null
+                val kind = json.get("kind")?.asString ?: "new"
+                val title = json.get("title")?.asString ?: "New knowledge"
+                val proposingAgent = if (json.has("proposing_agent") && !json.get("proposing_agent").isJsonNull) json.get("proposing_agent").asString else null
+                val conflicts = json.get("conflicts")?.asInt ?: 0
+                SSEEvent.KnowledgePending(pendingId, entryId, kind, title, proposingAgent, conflicts)
+            }
             else -> {
                 Log.d(TAG, "Unknown SSE event type: $type")
                 null
@@ -317,5 +327,17 @@ sealed class SSEEvent {
         val agentId: String,
         val output: String,
         val timestamp: String
+    ) : SSEEvent()
+
+    /**
+     * An agent proposed a knowledge entry/edit that is awaiting human review.
+     */
+    data class KnowledgePending(
+        val pendingId: Long,
+        val entryId: Long?,
+        val kind: String,
+        val title: String,
+        val proposingAgent: String?,
+        val conflicts: Int
     ) : SSEEvent()
 }

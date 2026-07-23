@@ -3,6 +3,7 @@ package com.claudemanager.app.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
@@ -32,6 +33,8 @@ import com.claudemanager.app.ui.admin.AdminScreen
 import com.claudemanager.app.ui.admin.WorkflowDetailScreen
 import com.claudemanager.app.ui.agents.AgentListScreen
 import com.claudemanager.app.ui.detail.AgentDetailScreen
+import com.claudemanager.app.ui.knowledge.KnowledgeListScreen
+import com.claudemanager.app.ui.knowledge.PendingKnowledgeScreen
 import com.claudemanager.app.ui.projects.ProjectDetailScreen
 import com.claudemanager.app.ui.projects.ProjectListScreen
 import com.claudemanager.app.ui.settings.ManagersScreen
@@ -54,6 +57,8 @@ object Routes {
     const val ADMIN = "admin"
     const val WORKFLOW_DETAIL = "workflow/{workflowId}"
     const val MANAGERS = "managers"
+    const val KNOWLEDGE = "knowledge"
+    const val PENDING_KB = "pending-kb"
 
     fun agentDetail(agentId: String): String = "agent/$agentId"
     fun projectDetail(projectId: String): String = "project/$projectId"
@@ -70,13 +75,14 @@ enum class BottomNavItem(
 ) {
     AGENTS(Routes.AGENTS, "Agents", Icons.Default.People),
     PROJECTS(Routes.PROJECTS, "Projects", Icons.Default.Folder),
+    KNOWLEDGE(Routes.KNOWLEDGE, "Knowledge", Icons.Default.MenuBook),
     ADMIN(Routes.ADMIN, "Admin", Icons.Default.Tune)
 }
 
 /**
- * Routes that show the bottom navigation bar (the three tab destinations).
+ * Routes that show the bottom navigation bar (the tab destinations).
  */
-private val bottomNavRoutes = setOf(Routes.AGENTS, Routes.PROJECTS, Routes.ADMIN)
+private val bottomNavRoutes = setOf(Routes.AGENTS, Routes.PROJECTS, Routes.KNOWLEDGE, Routes.ADMIN)
 
 /**
  * Root navigation graph for the ClaudeManager app.
@@ -94,7 +100,9 @@ private val bottomNavRoutes = setOf(Routes.AGENTS, Routes.PROJECTS, Routes.ADMIN
 fun AppNavGraph(
     preferences: AppPreferences,
     startAgentId: String? = null,
-    onStartAgentConsumed: () -> Unit = {}
+    onStartAgentConsumed: () -> Unit = {},
+    startPendingKnowledge: Boolean = false,
+    onStartPendingKnowledgeConsumed: () -> Unit = {}
 ) {
     val navController: NavHostController = rememberNavController()
     val serverUrl by preferences.serverUrlFlow.collectAsState(initial = "")
@@ -136,6 +144,15 @@ fun AppNavGraph(
             onStartAgentConsumed()
             navController.navigate(Routes.agentDetail(startAgentId)) {
                 popUpTo(Routes.AGENTS) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+    // Deep link to the Pending Knowledge queue (from a knowledge-review notification tap).
+    LaunchedEffect(startPendingKnowledge) {
+        if (startPendingKnowledge) {
+            onStartPendingKnowledgeConsumed()
+            navController.navigate(Routes.PENDING_KB) {
                 launchSingleTop = true
             }
         }
@@ -271,6 +288,22 @@ fun AppNavGraph(
                     onNavigateToAgent = { agentId ->
                         navController.navigate(Routes.agentDetail(agentId))
                     }
+                )
+            }
+
+            // ── Knowledge tab ───────────────────────────────────────────
+            composable(Routes.KNOWLEDGE) {
+                KnowledgeListScreen(
+                    onPendingClick = {
+                        navController.navigate(Routes.PENDING_KB)
+                    }
+                )
+            }
+
+            // ── Pending Knowledge (full screen, no bottom nav) ──────────
+            composable(Routes.PENDING_KB) {
+                PendingKnowledgeScreen(
+                    onBack = { navController.popBackStack() }
                 )
             }
 

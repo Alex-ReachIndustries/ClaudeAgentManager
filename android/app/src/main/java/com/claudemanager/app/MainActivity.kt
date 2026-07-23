@@ -32,10 +32,14 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "MainActivity"
         private const val SCHEME = "claudemanager"
         private const val HOST_AGENT = "agent"
+        private const val HOST_KNOWLEDGE = "knowledge"
     }
 
     /** The agent ID extracted from the launch/deep-link intent, if any. */
     private var startAgentId by mutableStateOf<String?>(null)
+
+    /** Whether the launch/deep-link intent targets the Pending Knowledge queue. */
+    private var startPendingKnowledge by mutableStateOf(false)
 
     /** Launcher for the POST_NOTIFICATIONS permission dialog (Android 13+). */
     private val notificationPermissionLauncher =
@@ -48,8 +52,9 @@ class MainActivity : ComponentActivity() {
         // Edge-to-edge disabled — let system manage bar padding
         // enableEdgeToEdge()
 
-        // Extract deep link agent ID from the launching intent
+        // Extract deep link targets from the launching intent
         startAgentId = extractAgentIdFromIntent(intent)
+        startPendingKnowledge = isKnowledgeIntent(intent)
 
         // Request notification permission on Android 13+ if not already granted
         requestNotificationPermissionIfNeeded()
@@ -61,7 +66,9 @@ class MainActivity : ComponentActivity() {
                 AppNavGraph(
                     preferences = app.preferences,
                     startAgentId = startAgentId,
-                    onStartAgentConsumed = { startAgentId = null }
+                    onStartAgentConsumed = { startAgentId = null },
+                    startPendingKnowledge = startPendingKnowledge,
+                    onStartPendingKnowledgeConsumed = { startPendingKnowledge = false }
                 )
             }
         }
@@ -79,6 +86,18 @@ class MainActivity : ComponentActivity() {
             startAgentId = agentId
             Log.d(TAG, "onNewIntent deep link to agent: $agentId")
         }
+        if (isKnowledgeIntent(intent)) {
+            startPendingKnowledge = true
+            Log.d(TAG, "onNewIntent deep link to pending knowledge")
+        }
+    }
+
+    /**
+     * Whether the intent is a `claudemanager://knowledge` deep link (Pending Knowledge queue).
+     */
+    private fun isKnowledgeIntent(intent: Intent?): Boolean {
+        val uri: Uri = intent?.data ?: return false
+        return uri.scheme == SCHEME && uri.host == HOST_KNOWLEDGE
     }
 
     /**

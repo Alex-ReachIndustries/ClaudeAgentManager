@@ -242,6 +242,28 @@ class AgentNotificationService : Service() {
                 }
             }
             is SSEEvent.AgentDeleted -> NotificationHelper.cancelAgentNotification(this, event.agentId)
+            is SSEEvent.KnowledgePending -> {
+                val app = application as? ClaudeManagerApp
+                if (app?.isAppInForeground == true) return
+
+                serviceScope.launch {
+                    val preferences = AppPreferences(this@AgentNotificationService)
+                    if (preferences.getQuietHoursEnabled()) {
+                        val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                        val start = preferences.getQuietHoursStart()
+                        val end = preferences.getQuietHoursEnd()
+                        val inQuiet = if (start < end) now in start until end else now >= start || now < end
+                        if (inQuiet) return@launch
+                    }
+                    NotificationHelper.showKnowledgeNotification(
+                        this@AgentNotificationService,
+                        title = event.title,
+                        agent = event.proposingAgent,
+                        pendingId = event.pendingId,
+                        conflicts = event.conflicts
+                    )
+                }
+            }
             else -> Unit
         }
     }

@@ -19,8 +19,18 @@ import com.claudemanager.app.data.models.CreateWebhookBody
 import com.claudemanager.app.data.models.CreateWorkflowBody
 import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
+import com.claudemanager.app.data.models.DecideProposalBody
+import com.claudemanager.app.data.models.DecideProposalResponse
 import com.claudemanager.app.data.models.HealthResponse
+import com.claudemanager.app.data.models.KbProfile
+import com.claudemanager.app.data.models.KbStats
+import com.claudemanager.app.data.models.KnowledgeEntry
+import com.claudemanager.app.data.models.KnowledgeSearchResponse
 import com.claudemanager.app.data.models.LaunchRequest
+import com.claudemanager.app.data.models.PendingProposal
+import com.claudemanager.app.data.models.ProposalEdits
+import com.claudemanager.app.data.models.ProposeKnowledgeBody
+import com.claudemanager.app.data.models.ProposeKnowledgeResponse
 import com.claudemanager.app.data.models.Project
 import com.claudemanager.app.data.models.ProjectFile
 import com.claudemanager.app.data.models.ProjectUpdate
@@ -586,6 +596,80 @@ class AgentRepository {
     ): Result<Unit> = apiCall {
         api.shareFile(agentId, ShareFileRequest(fileId, targetAgentId))
     }.map { }
+
+    // ── Knowledge Hub ────────────────────────────────────────────────────
+
+    /**
+     * Search the shared Knowledge Hub.
+     * @param type "all" | "knowledge" | "profile"
+     */
+    suspend fun searchKnowledge(
+        query: String,
+        type: String = "all",
+        limit: Int? = null
+    ): Result<KnowledgeSearchResponse> = apiCall {
+        api.searchKnowledge(query, type, limit)
+    }
+
+    /** Fetch a full knowledge entry by id. */
+    suspend fun getKnowledgeEntry(id: Long): Result<KnowledgeEntry> = apiCall {
+        api.getKnowledgeEntry(id)
+    }
+
+    /** Propose a new knowledge entry or an edit to an existing one. */
+    suspend fun proposeKnowledge(
+        kind: String,
+        entryId: Long? = null,
+        title: String? = null,
+        body: String? = null,
+        category: String? = null,
+        tags: List<String>? = null,
+        systems: List<String>? = null,
+        source: String? = null,
+        agent: String? = null,
+        rationale: String? = null
+    ): Result<ProposeKnowledgeResponse> = apiCall {
+        api.proposeKnowledge(
+            ProposeKnowledgeBody(
+                kind = kind,
+                entryId = entryId,
+                title = title,
+                body = body,
+                category = category,
+                tags = tags,
+                systems = systems,
+                source = source,
+                agent = agent,
+                rationale = rationale
+            )
+        )
+    }
+
+    /** List proposals awaiting review. */
+    suspend fun getPendingKnowledge(): Result<List<PendingProposal>> = apiCall {
+        api.getPendingKnowledge()
+    }.map { it.data }
+
+    /** Decide on a pending proposal. */
+    suspend fun decidePending(
+        id: Long,
+        decision: String,
+        edits: ProposalEdits? = null,
+        note: String? = null,
+        decidedBy: String? = null
+    ): Result<DecideProposalResponse> = apiCall {
+        api.decidePending(id, DecideProposalBody(decision, edits, note, decidedBy))
+    }
+
+    /** List all people profiles. */
+    suspend fun getKbProfiles(): Result<List<KbProfile>> = apiCall {
+        api.getKbProfiles()
+    }.map { it.data }
+
+    /** Aggregate Knowledge Hub statistics. */
+    suspend fun getKbStats(): Result<KbStats> = apiCall {
+        api.getKbStats()
+    }
 
     // ── Health Check ─────────────────────────────────────────────────────
 

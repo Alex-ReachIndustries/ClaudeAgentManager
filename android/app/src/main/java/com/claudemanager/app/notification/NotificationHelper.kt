@@ -31,6 +31,10 @@ object NotificationHelper {
 
     const val CHANNEL_AGENTS = "agent_updates"
     const val CHANNEL_SERVICE = "service_status"
+    const val CHANNEL_KNOWLEDGE = "knowledge_review"
+
+    /** Base id for knowledge-review notifications (offset by pending id). */
+    private const val NOTIF_ID_KNOWLEDGE_BASE = 100_000
 
     const val KEY_REPLY_TEXT = "key_reply_text"
     const val ACTION_REPLY = "com.claudemanager.app.ACTION_REPLY"
@@ -77,8 +81,20 @@ object NotificationHelper {
             enableLights(false)
         }
 
+        // Knowledge review channel -- default importance for proposal notifications
+        val knowledgeChannel = NotificationChannel(
+            CHANNEL_KNOWLEDGE,
+            "Knowledge Review",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Notifications when agents propose knowledge for review"
+            enableVibration(true)
+            enableLights(true)
+        }
+
         notificationManager.createNotificationChannel(agentChannel)
         notificationManager.createNotificationChannel(serviceChannel)
+        notificationManager.createNotificationChannel(knowledgeChannel)
     }
 
     /**
@@ -320,5 +336,60 @@ object NotificationHelper {
     fun cancelAgentNotification(context: Context, agentId: String) {
         val notificationManager = NotificationManagerCompat.from(context)
         notificationManager.cancel(agentId.hashCode())
+    }
+
+    /**
+     * Shows a notification when an agent proposes knowledge for human review.
+     * Tapping opens the app to the Pending Knowledge queue via a deep link.
+     *
+     * @param title    The proposed entry's title.
+     * @param agent    The proposing agent's name (nullable).
+     * @param pendingId The pending-queue id, used as the notification id so
+     *   distinct proposals stack rather than overwrite each other.
+     * @param conflicts Number of detected conflicts (surfaced in the text).
+     */
+    fun showKnowledgeNotification(
+        context: Context,
+        title: String,
+        agent: String?,
+        pendingId: Long = 0L,
+        conflicts: Int = 0
+    ) {
+        val notificationManager = NotificationManagerCompat.from(context)
+
+        val who = agent?.takeIf { it.isNotBlank() } ?: "An agent"
+        val conflictSuffix = if (conflicts > 0) " • $conflicts conflict${if (conflicts > 1) "s" else ""}" else ""
+        val contentText = "$who proposed: $title$conflictSuffix"
+
+        // Content intent -- opens app to the Pending Knowledge queue via deep link.
+        val contentIntent = Intent(context, MainActivity::class.java).apply {
+            data = android.net.Uri.parse("claudemanager://knowledge")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val notificationId = NOTIF_ID_KNOWLEDGE_BASE + (pendingId % 1000).toInt()
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_KNOWLEDGE)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(COLOR_LUMI_PURPLE)
+            .setContentTitle("Knowledge to review")
+            .setContentText(contentText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
+            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+            .build()
+
+        try {
+            notificationManager.notify(notificationId, notification)
+        } catch (_: SecurityException) {
+            // POST_NOTIFICATIONS permission not granted -- silently ignore
+        }
     }
 }
