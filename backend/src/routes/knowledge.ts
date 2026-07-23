@@ -7,6 +7,8 @@ import { validate } from "../middleware/validate.js";
 import { logger } from "../logger.js";
 import { hybridSearch } from "../knowledge/search.js";
 import { scanConflicts } from "../knowledge/conflict.js";
+import { broadcast } from "../sse.js";
+import { sendPushToAll } from "../push.js";
 import { seedFromMemories } from "../knowledge/seed.js";
 import { embeddingsReady, embeddingDim } from "../knowledge/embeddings.js";
 import {
@@ -112,6 +114,17 @@ router.post("/propose", validate(proposeSchema), async (req: Request, res: Respo
       rationale: body.rationale,
       conflicts,
     });
+    // Notify the human: SSE (dashboard live badge + Android local notification) + web-push (dashboard background).
+    const kbTitle = body.title || (body.kind === "edit" ? `Edit to entry #${body.entry_id}` : "New knowledge");
+    broadcast("knowledge-pending", {
+      pending_id, entry_id, kind: body.kind, title: kbTitle,
+      proposing_agent: body.agent ?? null, conflicts: conflicts.length,
+    });
+    sendPushToAll(
+      "Knowledge to review",
+      `${body.agent ? body.agent + " proposed: " : ""}${kbTitle}${conflicts.length ? ` (${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""})` : ""}`,
+      "/knowledge/pending",
+    ).catch((err) => logger.warn({ err }, "KB push notify failed"));
     res.json({ entry_id, pending_id, conflicts });
   } catch (err) {
     logger.error({ err }, "KB propose failed");
