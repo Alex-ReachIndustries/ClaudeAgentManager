@@ -1,7 +1,9 @@
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings, GitBranch, FolderKanban } from 'lucide-react';
+import { Settings, GitBranch, FolderKanban, BookOpen, ClipboardCheck } from 'lucide-react';
 import type { Agent } from '../types';
 import type { ConnectionState } from '../api';
+import { fetchKbStats, subscribeKnowledgePending } from '../api';
 import NotificationToggle from './NotificationToggle';
 
 interface HeaderProps {
@@ -19,6 +21,21 @@ function Header({ agents, connectionState }: HeaderProps) {
   const navigate = useNavigate();
   const activeCount = agents.filter((a) => a.status === 'active').length;
   const conn = connectionConfig[connectionState];
+  const [pendingKb, setPendingKb] = useState(0);
+
+  const refreshKbCount = useCallback(async () => {
+    try {
+      const stats = await fetchKbStats();
+      setPendingKb(stats.pending_queue ?? 0);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  useEffect(() => { refreshKbCount(); }, [refreshKbCount]);
+
+  useEffect(() => {
+    const unsub = subscribeKnowledgePending(() => { refreshKbCount(); });
+    return unsub;
+  }, [refreshKbCount]);
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-dark-925 border-b border-dark-800 flex items-center justify-between px-6">
@@ -51,6 +68,27 @@ function Header({ agents, connectionState }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate('/knowledge')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors text-sm"
+          title="Knowledge"
+        >
+          <BookOpen size={16} />
+          <span className="hidden sm:inline">Knowledge</span>
+        </button>
+        <button
+          onClick={() => navigate('/knowledge/pending')}
+          className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors text-sm"
+          title="Pending Knowledge"
+        >
+          <ClipboardCheck size={16} />
+          <span className="hidden sm:inline">Pending</span>
+          {pendingKb > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-lumi-600 text-white text-[10px] font-semibold leading-none">
+              {pendingKb > 99 ? '99+' : pendingKb}
+            </span>
+          )}
+        </button>
         <button
           onClick={() => navigate('/projects')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors text-sm"

@@ -271,6 +271,103 @@ export async function startWorkflow(id: string) { return request(`/workflows/${i
 export async function pauseWorkflow(id: string) { return request(`/workflows/${id}/pause`, { method: 'POST' }); }
 export async function deleteWorkflow(id: string) { return request(`/workflows/${id}`, { method: 'DELETE' }); }
 
+// --- Knowledge Hub (KB) ---
+export interface KbSearchResult {
+  id: string | number;
+  type: 'knowledge' | 'profile';
+  title: string;
+  snippet: string;
+  status: string;
+  score: number;
+  tags: string[];
+  systems: string[];
+}
+export interface KbSearchResponse {
+  query: string;
+  type: string;
+  embeddingsReady: boolean;
+  results: KbSearchResult[];
+}
+export interface KbStats {
+  entries: { total: number; approved: number; pending: number; rejected: number; superseded: number };
+  pending_queue: number;
+  flagged_for_review: number;
+  profiles: number;
+  stale_entries: number;
+  stale_profiles: number;
+  embeddingsReady: boolean;
+  embedDim: number;
+}
+
+export async function searchKnowledge(q: string, type: 'all' | 'knowledge' | 'profile' = 'all', limit = 20): Promise<KbSearchResponse> {
+  const params = new URLSearchParams({ q, type, limit: String(limit) });
+  return request<KbSearchResponse>(`/kb/search?${params.toString()}`);
+}
+
+export async function getKnowledgeEntry(id: string | number): Promise<any> {
+  return request<any>(`/kb/${id}`);
+}
+
+export async function proposeKnowledge(data: {
+  kind: 'new' | 'edit';
+  entry_id?: string | number;
+  title?: string;
+  body?: string;
+  category?: string;
+  tags?: string[];
+  systems?: string[];
+  source?: string;
+  agent?: string;
+  rationale?: string;
+}): Promise<{ entry_id: string | number; pending_id: string | number; conflicts: { entry_id: string | number; title: string; note: string }[] }> {
+  return request(`/kb/propose`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function fetchPendingKnowledge(): Promise<{ data: any[] }> {
+  return request<{ data: any[] }>(`/kb/pending`);
+}
+
+export async function decidePending(
+  id: string | number,
+  body: { decision: 'accept' | 'update' | 'reject'; edits?: any; note?: string; decidedBy?: string },
+): Promise<{ ok: boolean; entry_id: string | number }> {
+  return request(`/kb/pending/${id}/decide`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function fetchKbProfiles(): Promise<{ data: any[] }> {
+  return request<{ data: any[] }>(`/kb/profiles`);
+}
+
+export async function fetchKbProfile(name: string): Promise<any> {
+  return request<any>(`/kb/profiles/${encodeURIComponent(name)}`);
+}
+
+export async function fetchKbStats(): Promise<KbStats> {
+  return request<KbStats>(`/kb/stats`);
+}
+
+/**
+ * Dedicated live subscription for knowledge-pending events. The backend
+ * emits a named SSE event 'knowledge-pending' on /api/events whenever an
+ * agent proposes an entry. This opens its own EventSource so it works
+ * regardless of whether the main event transport chose MQTT (which does
+ * not carry KB topics).
+ */
+export function subscribeKnowledgePending(
+  onPending: (data: { pending_id: string | number; entry_id: string | number; kind: string; title: string; proposing_agent?: string; conflicts?: any[] }) => void,
+): () => void {
+  const tokenParam = apiKey ? `?token=${encodeURIComponent(apiKey)}` : '';
+  const es = new EventSource(`${BASE}/events${tokenParam}`);
+  const handler = (e: MessageEvent) => {
+    try { onPending(JSON.parse(e.data)); } catch { /* ignore */ }
+  };
+  es.addEventListener('knowledge-pending', handler);
+  return () => {
+    es.removeEventListener('knowledge-pending', handler);
+    es.close();
+  };
+}
+
 // --- SSE connection state tracking ---
 export type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 

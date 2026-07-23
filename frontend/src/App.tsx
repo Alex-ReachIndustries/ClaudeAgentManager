@@ -9,6 +9,8 @@ import WorkflowDetail from './components/WorkflowDetail';
 import WorkflowCreate from './components/WorkflowCreate';
 import Projects from './components/Projects';
 import ProjectDetail from './components/ProjectDetail';
+import Knowledge from './components/Knowledge';
+import PendingKnowledge from './components/PendingKnowledge';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -48,6 +50,8 @@ function App() {
               </ErrorBoundary>
             }
           />
+          <Route path="/knowledge" element={<Knowledge />} />
+          <Route path="/knowledge/pending" element={<PendingKnowledge />} />
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/workflows/new" element={<WorkflowCreate />} />
           <Route path="/workflows/:id" element={<WorkflowDetail />} />
