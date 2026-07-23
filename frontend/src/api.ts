@@ -346,6 +346,93 @@ export async function fetchKbStats(): Promise<KbStats> {
   return request<KbStats>(`/kb/stats`);
 }
 
+// --- KB Category Tree / membership ---
+export interface TreeNode {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  description: string | null;
+  sort_order: number;
+  direct_count: number;
+  descendant_count: number;
+  children: TreeNode[];
+}
+export interface CategoryRow {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  description: string | null;
+  sort_order: number;
+}
+export interface EntryCategory {
+  id: number;
+  name: string;
+  path: string;
+  source: 'auto' | 'manual';
+  score: number | null;
+}
+export interface KbEntry {
+  id: string | number;
+  title: string;
+  body?: string;
+  snippet?: string;
+  tags?: string[];
+  systems?: string[];
+  status?: string;
+  categories?: EntryCategory[];
+  [key: string]: any;
+}
+export interface RelatedEntry {
+  id: string | number;
+  title: string;
+  snippet: string;
+  score: number;
+  via: 'semantic' | 'category';
+}
+
+export async function fetchKbTree(): Promise<{ tree: TreeNode[] }> {
+  return request<{ tree: TreeNode[] }>(`/kb/tree`);
+}
+
+export async function fetchKbCategories(): Promise<{ data: CategoryRow[] }> {
+  return request<{ data: CategoryRow[] }>(`/kb/categories`);
+}
+
+export async function createCategory(data: { name: string; parent_id?: number | null; description?: string }): Promise<CategoryRow> {
+  return request<CategoryRow>(`/kb/categories`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateCategory(
+  id: number,
+  fields: { name?: string; parent_id?: number | null; description?: string; sort_order?: number },
+): Promise<CategoryRow> {
+  return request<CategoryRow>(`/kb/categories/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
+}
+
+export async function deleteCategory(id: number): Promise<void> {
+  return request<void>(`/kb/categories/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchEntriesByCategory(
+  catId: number,
+  descendants = true,
+): Promise<{ category_id: number; descendants: boolean; data: KbEntry[] }> {
+  const params = new URLSearchParams({ category: String(catId), descendants: descendants ? '1' : '0' });
+  return request<{ category_id: number; descendants: boolean; data: KbEntry[] }>(`/kb/entries?${params.toString()}`);
+}
+
+export async function fetchRelated(id: string | number): Promise<{ entry_id: string | number; data: RelatedEntry[] }> {
+  return request<{ entry_id: string | number; data: RelatedEntry[] }>(`/kb/${id}/related`);
+}
+
+export async function addEntryCategory(entryId: string | number, categoryId: number): Promise<any> {
+  return request<any>(`/kb/entries/${entryId}/categories`, { method: 'POST', body: JSON.stringify({ category_id: categoryId }) });
+}
+
+export async function removeEntryCategory(entryId: string | number, categoryId: number): Promise<void> {
+  return request<void>(`/kb/entries/${entryId}/categories/${categoryId}`, { method: 'DELETE' });
+}
+
 /**
  * Dedicated live subscription for knowledge-pending events. The backend
  * emits a named SSE event 'knowledge-pending' on /api/events whenever an
