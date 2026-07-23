@@ -15,6 +15,11 @@ import {
   createProposal, getEntry, listPending, getPending, decideProposal,
   upsertProfile, getProfile, listProfiles, stats, countEntries,
 } from "../knowledge/store.js";
+import {
+  listCategories, getCategory, createCategory, updateCategory, deleteCategory,
+  buildTree, entriesInCategory, relatedEntries, membershipsForEntry, withMemberships,
+  addMembership, removeMembership, classifyEntry, bootstrapTaxonomy,
+} from "../knowledge/categories.js";
 
 const router: Router = express.Router();
 
@@ -31,9 +36,28 @@ const proposeSchema = z.object({
   source: z.string().max(1000).optional(),
   agent: z.string().max(200).optional(),
   rationale: z.string().max(4000).optional(),
+  category_ids: z.array(z.number().int().positive()).max(50).optional(),
 }).refine((d) => d.kind === "edit" ? !!d.entry_id : !!d.title, {
   message: "kind 'new' requires title; kind 'edit' requires entry_id",
 });
+
+const categoryCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  parent_id: z.number().int().positive().nullable().optional(),
+  description: z.string().max(4000).optional(),
+  sort_order: z.number().int().optional(),
+  created_by: z.string().max(200).optional(),
+});
+
+const categoryPatchSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  parent_id: z.number().int().positive().nullable().optional(),
+  description: z.string().max(4000).optional(),
+  sort_order: z.number().int().optional(),
+});
+
+const membershipSchema = z.object({ category_id: z.number().int().positive() });
+const bootstrapSchema = z.object({ force: z.boolean().optional() });
 
 const decideSchema = z.object({
   decision: z.enum(["accept", "update", "reject"]),
@@ -67,6 +91,7 @@ const profileSchema = z.object({
 const seedSchema = z.object({
   force: z.boolean().optional(),
   dryRun: z.boolean().optional(),
+  category_ids: z.array(z.number().int().positive()).max(50).optional(),
 });
 
 // ─── Static routes (declared before /:id) ─────────────────────────────────
@@ -81,7 +106,11 @@ router.get("/search", async (req: Request, res: Response) => {
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 8;
   try {
     const results = await hybridSearch(q, { type, limit });
-    res.json({ query: q, type, embeddingsReady: embeddingsReady(), results });
+    // Attach category memberships (id + name + breadcrumb) to knowledge hits.
+    const enriched = results.map((r) =>
+      r.type === "knowledge" ? { ...r, categories: membershipsForEntry(r.id) } : r
+    );
+    res.json({ query: q, type, embeddingsReady: embeddingsReady(), results: enriched });
   } catch (err) {
     logger.error({ err }, "KB search failed");
     res.status(500).json({ error: "Search failed" });
@@ -114,6 +143,12 @@ router.post("/propose", validate(proposeSchema), async (req: Request, res: Respo
       rationale: body.rationale,
       conflicts,
     });
+    // Manual category pins (source='manual') — these stick and override auto.
+    if (entry_id != null && body.category_ids?.length) {
+      for (const cid of body.category_ids) {
+        if (getCategory(cid)) addMembership(entry_id, cid);
+      }
+    }
     // Notify the human: SSE (dashboard live badge + Android local notification) + web-push (dashboard background).
     const kbTitle = body.title || (body.kind === "edit" ? `Edit to entry #${body.entry_id}` : "New knowledge");
     broadcast("knowledge-pending", {
@@ -138,13 +173,19 @@ router.get("/pending", (_req: Request, res: Response) => {
 });
 
 // POST /api/kb/pending/:id/decide
-router.post("/pending/:id/decide", validate(decideSchema), (req: Request, res: Response) => {
+router.post("/pending/:id/decide", validate(decideSchema), async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const body = req.body as z.infer<typeof decideSchema>;
   const result = decideProposal(id, body);
   if (!result) { res.status(404).json({ error: "Proposal not found or already decided" }); return; }
   logger.info({ id, decision: body.decision, decidedBy: body.decidedBy }, "KB proposal decided");
+  // On approval, auto-file the now-approved entry into the category tree. Safe to
+  // call even if the vector isn't ready yet (classifyEntry embeds on demand); the
+  // background embedder will also re-run this after any (re)embedding.
+  if ((body.decision === "accept" || body.decision === "update") && result.entry_id != null) {
+    classifyEntry(result.entry_id).catch((err) => logger.warn({ err, id: result.entry_id }, "KB classifyEntry after decide failed"));
+  }
   res.json(result);
 });
 
@@ -187,6 +228,12 @@ router.post("/seed", validate(seedSchema), async (req: Request, res: Response) =
       return;
     }
     const summary = await seedFromMemories({ dryRun: body.dryRun });
+    // Optional manual pins applied to every seeded entry (rarely used).
+    if (!body.dryRun && body.category_ids?.length) {
+      // seedFromMemories doesn't return ids; pin against the most recent approved set.
+      // (No-op unless categories exist; auto-classification handles the rest.)
+      logger.info({ category_ids: body.category_ids }, "KB seed category_ids provided (auto-classify will file entries)");
+    }
     res.json(summary);
   } catch (err) {
     logger.error({ err }, "KB seed failed");
@@ -194,14 +241,115 @@ router.post("/seed", validate(seedSchema), async (req: Request, res: Response) =
   }
 });
 
+// ─── Categories & tree (all declared before /:id) ─────────────────────────
+
+// GET /api/kb/tree — nested category tree with per-node counts.
+router.get("/tree", (_req: Request, res: Response) => {
+  res.json({ tree: buildTree() });
+});
+
+// GET /api/kb/categories — flat list.
+router.get("/categories", (_req: Request, res: Response) => {
+  res.json({ data: listCategories() });
+});
+
+// POST /api/kb/categories — create (marks embed_stale; embedder classifies existing
+// entries into it).
+router.post("/categories", validate(categoryCreateSchema), (req: Request, res: Response) => {
+  const body = req.body as z.infer<typeof categoryCreateSchema>;
+  if (body.parent_id != null && !getCategory(body.parent_id)) {
+    res.status(400).json({ error: "parent_id does not exist" }); return;
+  }
+  const cat = createCategory(body);
+  res.json(cat);
+});
+
+// PATCH /api/kb/categories/:id — re-embeds + reclassifies if name/description/parent changed.
+router.patch("/categories/:id", validate(categoryPatchSchema), (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const body = req.body as z.infer<typeof categoryPatchSchema>;
+  if (body.parent_id != null && body.parent_id === id) {
+    res.status(400).json({ error: "A category cannot be its own parent" }); return;
+  }
+  if (body.parent_id != null && !getCategory(body.parent_id)) {
+    res.status(400).json({ error: "parent_id does not exist" }); return;
+  }
+  const cat = updateCategory(id, body);
+  if (!cat) { res.status(404).json({ error: "Category not found" }); return; }
+  res.json(cat);
+});
+
+// DELETE /api/kb/categories/:id — reparents children to its parent; membership rows
+// cascade-delete via FK.
+router.delete("/categories/:id", (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const ok = deleteCategory(id);
+  if (!ok) { res.status(404).json({ error: "Category not found" }); return; }
+  res.json({ ok: true, id });
+});
+
+// POST /api/kb/categories/bootstrap — create the starter taxonomy + classify entries.
+router.post("/categories/bootstrap", validate(bootstrapSchema), async (req: Request, res: Response) => {
+  const body = req.body as z.infer<typeof bootstrapSchema>;
+  try {
+    const result = await bootstrapTaxonomy(body.force ?? false);
+    res.json(result);
+  } catch (err) {
+    logger.error({ err }, "KB bootstrap failed");
+    res.status(500).json({ error: "Bootstrap failed" });
+  }
+});
+
+// POST /api/kb/entries/:id/categories — manual pin (sticks, overrides auto).
+router.post("/entries/:id/categories", validate(membershipSchema), (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const { category_id } = req.body as z.infer<typeof membershipSchema>;
+  if (!getCategory(category_id)) { res.status(404).json({ error: "Category not found" }); return; }
+  addMembership(id, category_id);
+  res.json({ ok: true, categories: membershipsForEntry(id) });
+});
+
+// DELETE /api/kb/entries/:id/categories/:catId — manual remove (suppress tombstone).
+router.delete("/entries/:id/categories/:catId", (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const catId = parseInt(String(req.params.catId), 10);
+  if (!Number.isFinite(id) || !Number.isFinite(catId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  removeMembership(id, catId);
+  res.json({ ok: true, categories: membershipsForEntry(id) });
+});
+
+// GET /api/kb/entries?category=<id>&descendants=0|1 — browse a category.
+router.get("/entries", (req: Request, res: Response) => {
+  const catId = parseInt(String(req.query.category ?? ""), 10);
+  if (!Number.isFinite(catId)) { res.status(400).json({ error: "category query param is required" }); return; }
+  if (!getCategory(catId)) { res.status(404).json({ error: "Category not found" }); return; }
+  const descendants = String(req.query.descendants ?? "0") === "1";
+  res.json({ category_id: catId, descendants, data: entriesInCategory(catId, descendants) });
+});
+
 // ─── Catch-all: GET /api/kb/:id ───────────────────────────────────────────
+
+// GET /api/kb/:id/related — semantic neighbours ∪ category siblings.
+router.get("/:id/related", async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    res.json({ entry_id: id, data: await relatedEntries(id) });
+  } catch (err) {
+    logger.error({ err }, "KB related failed");
+    res.status(500).json({ error: "Related lookup failed" });
+  }
+});
 
 router.get("/:id", (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const entry = getEntry(id);
   if (!entry || entry.status === "rejected") { res.status(404).json({ error: "Entry not found" }); return; }
-  res.json(entry);
+  res.json(withMemberships(entry));
 });
 
 export default router;

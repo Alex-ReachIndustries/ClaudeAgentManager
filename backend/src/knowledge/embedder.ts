@@ -6,6 +6,9 @@ import { embed, embeddingsReady, embeddingDim, vectorToBuffer } from "./embeddin
 import {
   staleEntries, staleProfiles, markEntryEmbedding, markProfileEmbedding,
 } from "./store.js";
+import {
+  staleCategories, markCategoryEmbedding, catText, classifyEntry, classifyCategory,
+} from "./categories.js";
 import { logger } from "../logger.js";
 
 const INTERVAL_MS = 5000;
@@ -47,8 +50,23 @@ export async function embedNow(): Promise<number> {
       const vec = await embed(entryText(row), false);
       markEntryEmbedding(Number(row.id), vectorToBuffer(vec));
       count++;
+      // Now that a fresh vector exists, (re)file this entry into the category tree.
+      await classifyEntry(Number(row.id));
     } catch (err) {
       logger.warn({ err: err instanceof Error ? err.message : String(err), id: row.id }, "KB entry embed failed");
+    }
+  }
+
+  // Categories: embed name+ancestors+description, then pull matching entries in.
+  const categories = staleCategories(BATCH);
+  for (const row of categories) {
+    try {
+      const vec = await embed(catText(row as { name: string; parent_id: number | null; description?: string | null }), false);
+      markCategoryEmbedding(Number(row.id), vectorToBuffer(vec));
+      count++;
+      await classifyCategory(Number(row.id));
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err), id: row.id }, "KB category embed failed");
     }
   }
 

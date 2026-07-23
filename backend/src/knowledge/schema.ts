@@ -66,10 +66,41 @@ export function initKnowledgeSchema(db: Database.Database): void {
       embed_stale INTEGER NOT NULL DEFAULT 1
     );
 
+    -- Nested category tree. A category may have a parent (arbitrary depth) and its
+    -- own embedding (from name + ancestor names + description) for semantic matching.
+    CREATE TABLE IF NOT EXISTS kb_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      parent_id INTEGER REFERENCES kb_categories(id) ON DELETE CASCADE,
+      description TEXT DEFAULT '',
+      sort_order INTEGER DEFAULT 0,
+      created_by TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      embedding BLOB,
+      embed_stale INTEGER DEFAULT 1
+    );
+
+    -- MANY-TO-MANY article↔category. source='auto' rows come from semantic
+    -- classification; source='manual' is a human/agent pin. suppressed=1 is a
+    -- tombstone for an auto membership a human removed — auto must never re-add it.
+    CREATE TABLE IF NOT EXISTS kb_entry_categories (
+      entry_id INTEGER REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+      category_id INTEGER REFERENCES kb_categories(id) ON DELETE CASCADE,
+      source TEXT DEFAULT 'auto' CHECK(source IN ('auto','manual')),
+      suppressed INTEGER DEFAULT 0,
+      score REAL,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY(entry_id, category_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge_entries(status);
     CREATE INDEX IF NOT EXISTS idx_knowledge_embed_stale ON knowledge_entries(embed_stale);
     CREATE INDEX IF NOT EXISTS idx_pending_status ON knowledge_pending(status);
     CREATE INDEX IF NOT EXISTS idx_profiles_embed_stale ON people_profiles(embed_stale);
+    CREATE INDEX IF NOT EXISTS idx_kb_categories_parent ON kb_categories(parent_id);
+    CREATE INDEX IF NOT EXISTS idx_kb_categories_embed_stale ON kb_categories(embed_stale);
+    CREATE INDEX IF NOT EXISTS idx_kb_entry_categories_cat ON kb_entry_categories(category_id);
+    CREATE INDEX IF NOT EXISTS idx_kb_entry_categories_entry ON kb_entry_categories(entry_id);
   `);
 
   // FTS5 shadow tables (manually kept in sync by the store layer). Contentless-external
