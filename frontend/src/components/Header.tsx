@@ -64,10 +64,12 @@ function Header({ agents, connectionState }: HeaderProps) {
           />
           <circle cx="22" cy="12" r="3" fill="white" opacity="0.6" />
         </svg>
-        <span className="text-lg font-semibold text-dark-100">Agent Manager</span>
+        <span className="text-base sm:text-lg font-semibold text-dark-100 whitespace-nowrap">Agent Manager</span>
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Desktop nav buttons — hidden on mobile, where BottomNav takes over */}
+        <div className="hidden md:flex items-center gap-3">
         <button
           onClick={() => navigate('/knowledge')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-900 border border-dark-800 text-dark-400 hover:text-dark-200 transition-colors text-sm"
@@ -112,6 +114,7 @@ function Header({ agents, connectionState }: HeaderProps) {
         >
           <Settings size={18} />
         </button>
+        </div>
         <NotificationToggle />
         <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-900 rounded-full border border-dark-800">
           <div className="relative group">

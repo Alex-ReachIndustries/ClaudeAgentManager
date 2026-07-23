@@ -11,6 +11,7 @@ import Projects from './components/Projects';
 import ProjectDetail from './components/ProjectDetail';
 import Knowledge from './components/Knowledge';
 import PendingKnowledge from './components/PendingKnowledge';
+import BottomNav from './components/BottomNav';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -19,7 +20,7 @@ function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <Header agents={agents} connectionState={connectionState} />
-      <main className="flex-1 pt-16">
+      <main className="flex-1 pt-16 pb-20 md:pb-0">
         <Routes>
           <Route
             path="/"
@@ -57,6 +58,7 @@ function App() {
           <Route path="/workflows/:id" element={<WorkflowDetail />} />
         </Routes>
       </main>
+      <BottomNav />
     </div>
   );
 }

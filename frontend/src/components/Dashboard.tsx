@@ -249,7 +249,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
           {projectNames.length > 0 && (
             <select
               value={projectFilter}
