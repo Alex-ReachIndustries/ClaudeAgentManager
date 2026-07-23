@@ -21,7 +21,13 @@ import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.DecideProposalBody
 import com.claudemanager.app.data.models.DecideProposalResponse
+import com.claudemanager.app.data.models.CategoryBody
+import com.claudemanager.app.data.models.CategoryRow
+import com.claudemanager.app.data.models.EntryCategory
 import com.claudemanager.app.data.models.HealthResponse
+import com.claudemanager.app.data.models.MembershipBody
+import com.claudemanager.app.data.models.RelatedEntry
+import com.claudemanager.app.data.models.TreeNode
 import com.claudemanager.app.data.models.KbProfile
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
@@ -670,6 +676,63 @@ class AgentRepository {
     suspend fun getKbStats(): Result<KbStats> = apiCall {
         api.getKbStats()
     }
+
+    /** Fetch the nested category tree with per-node counts. */
+    suspend fun getKbTree(): Result<List<TreeNode>> = apiCall {
+        api.getKbTree()
+    }.map { it.tree }
+
+    /** Fetch the flat list of all categories. */
+    suspend fun getKbCategories(): Result<List<CategoryRow>> = apiCall {
+        api.getKbCategories()
+    }.map { it.data }
+
+    /** Create a new category. */
+    suspend fun createCategory(
+        name: String,
+        parentId: Int? = null,
+        description: String? = null
+    ): Result<CategoryRow> = apiCall {
+        api.createCategory(CategoryBody(name = name, parentId = parentId, description = description))
+    }
+
+    /** Rename / re-parent / re-describe a category (only non-null fields applied). */
+    suspend fun updateCategory(
+        id: Int,
+        name: String? = null,
+        parentId: Int? = null,
+        description: String? = null
+    ): Result<CategoryRow> = apiCall {
+        api.updateCategory(id, CategoryBody(name = name, parentId = parentId, description = description))
+    }
+
+    /** Delete a category (its children re-parent to its parent). */
+    suspend fun deleteCategory(id: Int): Result<Unit> = apiCall {
+        api.deleteCategory(id)
+    }.map { }
+
+    /** Browse the entries filed under a category (optionally including descendants). */
+    suspend fun getEntriesByCategory(
+        categoryId: Int,
+        descendants: Boolean = true
+    ): Result<List<KnowledgeEntry>> = apiCall {
+        api.getEntriesByCategory(categoryId, if (descendants) 1 else 0)
+    }.map { it.data }
+
+    /** Fetch related entries (semantic neighbours plus category siblings). */
+    suspend fun getRelated(id: Long): Result<List<RelatedEntry>> = apiCall {
+        api.getRelated(id)
+    }.map { it.data }
+
+    /** Manually pin a category onto an entry. Returns the updated membership list. */
+    suspend fun addEntryCategory(entryId: Long, categoryId: Int): Result<List<EntryCategory>> = apiCall {
+        api.addEntryCategory(entryId, MembershipBody(categoryId))
+    }.map { it.categories }
+
+    /** Remove a category membership from an entry. Returns the updated membership list. */
+    suspend fun removeEntryCategory(entryId: Long, categoryId: Int): Result<List<EntryCategory>> = apiCall {
+        api.removeEntryCategory(entryId, categoryId)
+    }.map { it.categories }
 
     // ── Health Check ─────────────────────────────────────────────────────
 

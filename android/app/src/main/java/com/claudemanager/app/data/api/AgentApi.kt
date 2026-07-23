@@ -17,7 +17,15 @@ import com.claudemanager.app.data.models.FileInfo
 import com.claudemanager.app.data.models.FolderResponse
 import com.claudemanager.app.data.models.DecideProposalBody
 import com.claudemanager.app.data.models.DecideProposalResponse
+import com.claudemanager.app.data.models.CategoriesResponse
+import com.claudemanager.app.data.models.CategoryBody
+import com.claudemanager.app.data.models.CategoryRow
+import com.claudemanager.app.data.models.EntriesByCategoryResponse
 import com.claudemanager.app.data.models.HealthResponse
+import com.claudemanager.app.data.models.MembershipBody
+import com.claudemanager.app.data.models.MembershipResponse
+import com.claudemanager.app.data.models.RelatedResponse
+import com.claudemanager.app.data.models.TreeResponse
 import com.claudemanager.app.data.models.KbProfilesResponse
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
@@ -496,4 +504,54 @@ interface AgentApi {
      */
     @GET("api/kb/stats")
     suspend fun getKbStats(): Response<KbStats>
+
+    // ── Knowledge Hub: category tree ─────────────────────────────────────
+
+    /** Nested category tree with per-node counts. */
+    @GET("api/kb/tree")
+    suspend fun getKbTree(): Response<TreeResponse>
+
+    /** Flat list of all categories. */
+    @GET("api/kb/categories")
+    suspend fun getKbCategories(): Response<CategoriesResponse>
+
+    /** Create a new category. */
+    @POST("api/kb/categories")
+    suspend fun createCategory(@Body body: CategoryBody): Response<CategoryRow>
+
+    /** Rename / re-parent / re-describe a category. */
+    @PATCH("api/kb/categories/{id}")
+    suspend fun updateCategory(
+        @Path("id") id: Int,
+        @Body body: CategoryBody
+    ): Response<CategoryRow>
+
+    /** Delete a category (children re-parent to its parent). */
+    @DELETE("api/kb/categories/{id}")
+    suspend fun deleteCategory(@Path("id") id: Int): Response<OkResponse>
+
+    /** Browse entries in a category (optionally including descendant categories). */
+    @GET("api/kb/entries")
+    suspend fun getEntriesByCategory(
+        @Query("category") category: Int,
+        @Query("descendants") descendants: Int
+    ): Response<EntriesByCategoryResponse>
+
+    /** Related entries (semantic neighbours plus category siblings). */
+    @GET("api/kb/{id}/related")
+    suspend fun getRelated(@Path("id") id: Long): Response<RelatedResponse>
+
+    /** Manually pin a category onto an entry. */
+    @POST("api/kb/entries/{id}/categories")
+    suspend fun addEntryCategory(
+        @Path("id") id: Long,
+        @Body body: MembershipBody
+    ): Response<MembershipResponse>
+
+    /** Remove a category membership from an entry. */
+    @DELETE("api/kb/entries/{id}/categories/{catId}")
+    suspend fun removeEntryCategory(
+        @Path("id") id: Long,
+        @Path("catId") catId: Int
+    ): Response<MembershipResponse>
 }

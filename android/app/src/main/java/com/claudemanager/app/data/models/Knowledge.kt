@@ -24,7 +24,8 @@ data class KnowledgeResult(
     @SerializedName("status") val status: String = "approved",
     @SerializedName("score") val score: Double = 0.0,
     @SerializedName("tags") val tags: List<String> = emptyList(),
-    @SerializedName("systems") val systems: List<String> = emptyList()
+    @SerializedName("systems") val systems: List<String> = emptyList(),
+    @SerializedName("categories") val categories: List<EntryCategory>? = null
 ) {
     /** Whether this result is verified/approved knowledge. */
     val isApproved: Boolean get() = status.equals("approved", ignoreCase = true)
@@ -59,10 +60,101 @@ data class KnowledgeEntry(
     @SerializedName("created_by_agent") val createdByAgent: String? = null,
     @SerializedName("created_at") val createdAt: String? = null,
     @SerializedName("updated_at") val updatedAt: String? = null,
-    @SerializedName("hit_count") val hitCount: Int = 0
+    @SerializedName("hit_count") val hitCount: Int = 0,
+    @SerializedName("categories") val categories: List<EntryCategory>? = null
 ) {
     val isApproved: Boolean get() = status.equals("approved", ignoreCase = true)
 }
+
+// ── Category tree ─────────────────────────────────────────────────────────
+
+/**
+ * A node in the nested category tree from GET /api/kb/tree.
+ * [children] is recursive; [directCount] counts entries pinned directly at this
+ * node, [descendantCount] includes all descendants.
+ */
+data class TreeNode(
+    @SerializedName("id") val id: Int,
+    @SerializedName("name") val name: String,
+    @SerializedName("parent_id") val parentId: Int? = null,
+    @SerializedName("description") val description: String = "",
+    @SerializedName("sort_order") val sortOrder: Int = 0,
+    @SerializedName("direct_count") val directCount: Int = 0,
+    @SerializedName("descendant_count") val descendantCount: Int = 0,
+    @SerializedName("children") val children: List<TreeNode> = emptyList()
+)
+
+/** Response envelope for GET /api/kb/tree. */
+data class TreeResponse(
+    @SerializedName("tree") val tree: List<TreeNode> = emptyList()
+)
+
+/** A flat category row from GET /api/kb/categories (and create/patch results). */
+data class CategoryRow(
+    @SerializedName("id") val id: Int,
+    @SerializedName("name") val name: String,
+    @SerializedName("parent_id") val parentId: Int? = null,
+    @SerializedName("description") val description: String = "",
+    @SerializedName("sort_order") val sortOrder: Int = 0,
+    @SerializedName("created_by") val createdBy: String? = null,
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+/** Response envelope for GET /api/kb/categories. */
+data class CategoriesResponse(
+    @SerializedName("data") val data: List<CategoryRow> = emptyList()
+)
+
+/** Request body for POST /api/kb/categories and PATCH /api/kb/categories/{id}. */
+data class CategoryBody(
+    @SerializedName("name") val name: String? = null,
+    @SerializedName("parent_id") val parentId: Int? = null,
+    @SerializedName("description") val description: String? = null
+)
+
+/** A category membership attached to a knowledge entry (breadcrumb + provenance). */
+data class EntryCategory(
+    @SerializedName("id") val id: Int,
+    @SerializedName("name") val name: String,
+    @SerializedName("path") val path: String = "",
+    @SerializedName("source") val source: String = "auto",   // "auto" | "manual"
+    @SerializedName("score") val score: Double? = null
+) {
+    val isManual: Boolean get() = source.equals("manual", ignoreCase = true)
+}
+
+/** Response envelope for GET /api/kb/entries?category=…&descendants=… */
+data class EntriesByCategoryResponse(
+    @SerializedName("category_id") val categoryId: Int = 0,
+    @SerializedName("descendants") val descendants: Boolean = false,
+    @SerializedName("data") val data: List<KnowledgeEntry> = emptyList()
+)
+
+/** A related entry from GET /api/kb/{id}/related. */
+data class RelatedEntry(
+    @SerializedName("id") val id: Long,
+    @SerializedName("title") val title: String,
+    @SerializedName("snippet") val snippet: String = "",
+    @SerializedName("score") val score: Double = 0.0,
+    @SerializedName("via") val via: String = "semantic"      // "semantic" | "category"
+)
+
+/** Response envelope for GET /api/kb/{id}/related. */
+data class RelatedResponse(
+    @SerializedName("entry_id") val entryId: Long = 0,
+    @SerializedName("data") val data: List<RelatedEntry> = emptyList()
+)
+
+/** Request body for POST /api/kb/entries/{id}/categories. */
+data class MembershipBody(
+    @SerializedName("category_id") val categoryId: Int
+)
+
+/** Response envelope for membership add/remove endpoints. */
+data class MembershipResponse(
+    @SerializedName("ok") val ok: Boolean = false,
+    @SerializedName("categories") val categories: List<EntryCategory> = emptyList()
+)
 
 // ── Propose ──────────────────────────────────────────────────────────────
 

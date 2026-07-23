@@ -30,7 +30,14 @@ import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Search
@@ -38,8 +45,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -62,8 +72,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.claudemanager.app.data.models.EntryCategory
 import com.claudemanager.app.data.models.KnowledgeEntry
 import com.claudemanager.app.data.models.KnowledgeResult
+import com.claudemanager.app.data.models.RelatedEntry
+import com.claudemanager.app.data.models.TreeNode
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
@@ -134,105 +147,205 @@ fun KnowledgeListScreen(
                     )
                 }
 
-                // Search bar
+                // Search / Browse mode toggle
                 item {
-                    OutlinedTextField(
-                        value = state.searchQuery,
-                        onValueChange = viewModel::setSearchQuery,
-                        placeholder = { Text("Search the hive mind...") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Search, null, tint = LumiOnSurfaceTertiary)
-                        },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = LumiPurple500,
-                            unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.3f),
-                            cursorColor = LumiPurple500,
-                            focusedTextColor = LumiOnSurface,
-                            unfocusedTextColor = LumiOnSurface,
-                            focusedContainerColor = LumiCard,
-                            unfocusedContainerColor = LumiCard
-                        ),
-                        shape = RoundedCornerShape(12.dp)
+                    ModeToggle(
+                        mode = state.mode,
+                        onModeChange = viewModel::setMode
                     )
                 }
 
-                // Type filter chips
-                item {
-                    val types = listOf("all" to "All", "knowledge" to "Knowledge", "profile" to "Profiles")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        types.forEach { (value, label) ->
-                            val isSelected = state.typeFilter == value
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(
-                                        if (isSelected) LumiPurple500.copy(alpha = 0.2f) else LumiCard
+                if (state.mode == KnowledgeMode.SEARCH) {
+                    // ── SEARCH MODE ────────────────────────────────────────
+
+                    // Search bar
+                    item {
+                        OutlinedTextField(
+                            value = state.searchQuery,
+                            onValueChange = viewModel::setSearchQuery,
+                            placeholder = { Text("Search the hive mind...") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Search, null, tint = LumiOnSurfaceTertiary)
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = LumiPurple500,
+                                unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.3f),
+                                cursorColor = LumiPurple500,
+                                focusedTextColor = LumiOnSurface,
+                                unfocusedTextColor = LumiOnSurface,
+                                focusedContainerColor = LumiCard,
+                                unfocusedContainerColor = LumiCard
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+
+                    // Type filter chips
+                    item {
+                        val types = listOf("all" to "All", "knowledge" to "Knowledge", "profile" to "Profiles")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            types.forEach { (value, label) ->
+                                val isSelected = state.typeFilter == value
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(
+                                            if (isSelected) LumiPurple500.copy(alpha = 0.2f) else LumiCard
+                                        )
+                                        .clickable { viewModel.setTypeFilter(value) }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isSelected) LumiPurple500 else LumiOnSurfaceTertiary
                                     )
-                                    .clickable { viewModel.setTypeFilter(value) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) LumiPurple500 else LumiOnSurfaceTertiary
-                                )
+                                }
                             }
                         }
                     }
-                }
 
-                // Error banner
-                if (state.error != null) {
-                    item {
-                        Text(
-                            text = state.error!!,
-                            color = LumiError,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
+                    if (state.error != null) {
+                        item {
+                            Text(
+                                text = state.error!!,
+                                color = LumiError,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
                     }
-                }
 
-                // Empty / results
-                if (state.results.isEmpty() && !state.isSearching) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 48.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    imageVector = Icons.Default.MenuBook,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(48.dp),
-                                    tint = LumiOnSurfaceTertiary
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = if (state.hasSearched) "No matches" else "Search the shared Knowledge Hub",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = LumiOnSurfaceSecondary
-                                )
-                            }
+                    if (state.results.isEmpty() && !state.isSearching) {
+                        item {
+                            EmptyState(
+                                text = if (state.hasSearched) "No matches"
+                                else "Search the shared Knowledge Hub"
+                            )
+                        }
+                    } else {
+                        items(state.results, key = { "${it.type}:${it.id}" }) { result ->
+                            KnowledgeCard(
+                                result = result,
+                                onClick = {
+                                    if (result.type == "knowledge") viewModel.openEntry(result.id)
+                                }
+                            )
                         }
                     }
                 } else {
-                    items(state.results, key = { "${it.type}:${it.id}" }) { result ->
-                        KnowledgeCard(
-                            result = result,
-                            onClick = {
-                                if (result.type == "knowledge") viewModel.openEntry(result.id)
+                    // ── BROWSE MODE ────────────────────────────────────────
+
+                    // Categories header + create button
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Categories",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = LumiOnSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { viewModel.openCreateCategory(null) }) {
+                                Icon(
+                                    Icons.Default.CreateNewFolder,
+                                    contentDescription = null,
+                                    tint = LumiPurple500,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("New", color = LumiPurple500, style = MaterialTheme.typography.labelMedium)
                             }
-                        )
+                        }
+                    }
+
+                    if (state.error != null) {
+                        item {
+                            Text(
+                                text = state.error!!,
+                                color = LumiError,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    if (state.loadingTree && state.tree.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = LumiPurple500)
+                            }
+                        }
+                    } else if (state.tree.isEmpty()) {
+                        item { EmptyState(text = "No categories yet") }
+                    } else {
+                        val flat = flattenTree(state.tree, state.expandedNodeIds)
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = LumiCard),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                    flat.forEach { flatNode ->
+                                        TreeRow(
+                                            flatNode = flatNode,
+                                            isExpanded = state.expandedNodeIds.contains(flatNode.node.id),
+                                            isSelected = state.selectedCategoryId == flatNode.node.id,
+                                            onToggle = { viewModel.toggleNode(flatNode.node.id) },
+                                            onSelect = { viewModel.selectCategory(flatNode.node) },
+                                            onAddChild = { viewModel.openCreateCategory(flatNode.node.id) },
+                                            onRename = { viewModel.openRenameCategory(flatNode.node) },
+                                            onDelete = { viewModel.deleteCategory(flatNode.node.id) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Entries in the selected category
+                    if (state.selectedCategoryId != null) {
+                        item {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "In \"${state.selectedCategoryName}\" (incl. sub-categories)",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = LumiOnSurface
+                            )
+                        }
+                        if (state.loadingBrowse) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(color = LumiPurple500)
+                                }
+                            }
+                        } else if (state.browseEntries.isEmpty()) {
+                            item { EmptyState(text = "No entries in this category") }
+                        } else {
+                            items(state.browseEntries, key = { "browse:${it.id}" }) { entry ->
+                                BrowseEntryCard(entry = entry, onClick = { viewModel.openEntry(entry.id) })
+                            }
+                        }
                     }
                 }
 
@@ -272,7 +385,34 @@ fun KnowledgeListScreen(
         KnowledgeDetailDialog(
             entry = state.selectedEntry,
             loading = state.loadingDetail,
+            categories = state.detailCategories,
+            related = state.relatedEntries,
+            loadingRelated = state.loadingRelated,
+            onRemoveCategory = viewModel::removeCategoryFromEntry,
+            onAddCategoryClick = { viewModel.showCategoryPicker(true) },
+            onRelatedClick = viewModel::openEntry,
             onDismiss = viewModel::closeEntry
+        )
+    }
+
+    // Category picker (add membership to the open entry)
+    if (state.showCategoryPicker) {
+        CategoryPickerDialog(
+            categories = state.allCategories,
+            alreadyLinked = state.detailCategories.map { it.id }.toSet(),
+            onPick = viewModel::addCategoryToEntry,
+            onDismiss = { viewModel.showCategoryPicker(false) }
+        )
+    }
+
+    // Create / rename category dialog
+    state.categoryDialog?.let { dialog ->
+        CategoryEditDialog(
+            dialog = dialog,
+            onNameChange = { viewModel.updateCategoryDialog(name = it) },
+            onDescriptionChange = { viewModel.updateCategoryDialog(description = it) },
+            onSave = viewModel::saveCategory,
+            onDismiss = viewModel::dismissCategoryDialog
         )
     }
 
@@ -286,6 +426,388 @@ fun KnowledgeListScreen(
             }
         )
     }
+}
+
+/** Segmented Search / Browse toggle. */
+@Composable
+private fun ModeToggle(
+    mode: KnowledgeMode,
+    onModeChange: (KnowledgeMode) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(LumiCard)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        val options = listOf(KnowledgeMode.SEARCH to "Search", KnowledgeMode.BROWSE to "Browse")
+        options.forEach { (value, label) ->
+            val selected = mode == value
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (selected) LumiPurple500.copy(alpha = 0.22f) else Color.Transparent)
+                    .clickable { onModeChange(value) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) LumiPurple500 else LumiOnSurfaceSecondary
+                )
+            }
+        }
+    }
+}
+
+/** Shared empty-state block. */
+@Composable
+private fun EmptyState(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 48.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Default.MenuBook,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = LumiOnSurfaceTertiary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyLarge,
+                color = LumiOnSurfaceSecondary
+            )
+        }
+    }
+}
+
+// ── Category tree rendering ─────────────────────────────────────────────────
+
+/** A tree node paired with its indentation depth, for flat LazyColumn rendering. */
+private data class FlatNode(val node: TreeNode, val depth: Int)
+
+/**
+ * Flatten the nested [TreeNode] list into a depth-annotated list, honouring the
+ * set of currently [expanded] node ids. Children of collapsed nodes are omitted.
+ */
+private fun flattenTree(
+    nodes: List<TreeNode>,
+    expanded: Set<Int>,
+    depth: Int = 0,
+    out: MutableList<FlatNode> = mutableListOf()
+): List<FlatNode> {
+    for (n in nodes) {
+        out.add(FlatNode(n, depth))
+        if (expanded.contains(n.id) && n.children.isNotEmpty()) {
+            flattenTree(n.children, expanded, depth + 1, out)
+        }
+    }
+    return out
+}
+
+/**
+ * A single row in the category tree: indented chevron + name + count badge, with
+ * an overflow menu for add-child / rename / delete. Tapping the label selects
+ * the category; tapping the chevron toggles expansion.
+ */
+@Composable
+private fun TreeRow(
+    flatNode: FlatNode,
+    isExpanded: Boolean,
+    isSelected: Boolean,
+    onToggle: () -> Unit,
+    onSelect: () -> Unit,
+    onAddChild: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val node = flatNode.node
+    val hasChildren = node.children.isNotEmpty()
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (isSelected) LumiPurple500.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(onClick = onSelect)
+            .padding(start = (12 + flatNode.depth * 16).dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Chevron / spacer
+        if (hasChildren) {
+            Icon(
+                imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                contentDescription = if (isExpanded) "Collapse" else "Expand",
+                tint = LumiOnSurfaceSecondary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onToggle)
+            )
+        } else {
+            Spacer(modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = node.name,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isSelected) LumiPurple500 else LumiOnSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        // Count badge — descendant_count so a collapsed node still shows totals
+        CountBadge(count = node.descendantCount)
+        // Overflow menu
+        Box {
+            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = "Category actions",
+                    tint = LumiOnSurfaceTertiary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Add sub-category") },
+                    leadingIcon = { Icon(Icons.Default.Add, null) },
+                    onClick = { menuOpen = false; onAddChild() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Default.Edit, null) },
+                    onClick = { menuOpen = false; onRename() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = LumiError) },
+                    onClick = { menuOpen = false; onDelete() }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CountBadge(count: Int) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(LumiOnSurfaceTertiary.copy(alpha = 0.18f))
+            .padding(horizontal = 7.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            color = LumiOnSurfaceSecondary
+        )
+    }
+}
+
+/** A card for a knowledge entry surfaced while browsing a category. */
+@Composable
+private fun BrowseEntryCard(entry: KnowledgeEntry, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = LumiCard),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = entry.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = LumiOnSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (entry.body.isNotBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = entry.body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LumiOnSurfaceSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            val cats = entry.categories ?: emptyList()
+            if (cats.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    cats.take(4).forEach { CategoryChip(category = it, onRemove = null) }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A breadcrumb category chip. Auto (semantic) chips are info-blue; manual pins
+ * are purple. When [onRemove] is provided a small ✕ is shown.
+ */
+@Composable
+private fun CategoryChip(category: EntryCategory, onRemove: (() -> Unit)?) {
+    val color = if (category.isManual) LumiPurple500 else LumiInfo
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = category.path.ifBlank { category.name },
+                style = MaterialTheme.typography.labelSmall,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = if (category.isManual) "manual" else "auto",
+                style = MaterialTheme.typography.labelSmall,
+                color = color.copy(alpha = 0.6f)
+            )
+            if (onRemove != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Remove category",
+                    tint = color,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .clickable(onClick = onRemove)
+                )
+            }
+        }
+    }
+}
+
+/** Dialog to pick a category to pin onto an entry. */
+@Composable
+private fun CategoryPickerDialog(
+    categories: List<com.claudemanager.app.data.models.CategoryRow>,
+    alreadyLinked: Set<Int>,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = LumiCard,
+        titleContentColor = LumiOnSurface,
+        textContentColor = LumiOnSurfaceSecondary,
+        title = { Text("Add category", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            if (categories.isEmpty()) {
+                Text("No categories available.", color = LumiOnSurfaceSecondary)
+            } else {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    categories.forEach { cat ->
+                        val linked = alreadyLinked.contains(cat.id)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = !linked) { onPick(cat.id) }
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = cat.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (linked) LumiOnSurfaceTertiary else LumiOnSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (linked) {
+                                Text("linked", style = MaterialTheme.typography.labelSmall, color = LumiOnSurfaceTertiary)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done", color = LumiPurple500) }
+        }
+    )
+}
+
+/** Create / rename category dialog. */
+@Composable
+private fun CategoryEditDialog(
+    dialog: CategoryDialogState,
+    onNameChange: (String) -> Unit,
+    onDescriptionChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = LumiPurple500,
+        unfocusedBorderColor = LumiOnSurfaceTertiary.copy(alpha = 0.4f),
+        cursorColor = LumiPurple500,
+        focusedTextColor = LumiOnSurface,
+        unfocusedTextColor = LumiOnSurface,
+        focusedContainerColor = LumiCard,
+        unfocusedContainerColor = LumiCard,
+        focusedLabelColor = LumiPurple500,
+        unfocusedLabelColor = LumiOnSurfaceTertiary
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = LumiCard,
+        titleContentColor = LumiOnSurface,
+        textContentColor = LumiOnSurfaceSecondary,
+        title = {
+            Text(
+                text = if (dialog.isEdit) "Rename category" else "New category",
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = dialog.name, onValueChange = onNameChange,
+                    label = { Text("Name") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(), colors = colors
+                )
+                OutlinedTextField(
+                    value = dialog.description, onValueChange = onDescriptionChange,
+                    label = { Text("Description (optional)") }, minLines = 2, maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(), colors = colors
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onSave, enabled = !dialog.busy && dialog.name.isNotBlank()) {
+                Text(if (dialog.busy) "Saving…" else "Save", color = LumiPurple500)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = LumiOnSurfaceTertiary) }
+        }
+    )
 }
 
 /**
@@ -539,6 +1061,12 @@ private fun Chip(label: String, color: Color) {
 private fun KnowledgeDetailDialog(
     entry: KnowledgeEntry?,
     loading: Boolean,
+    categories: List<EntryCategory>,
+    related: List<RelatedEntry>,
+    loadingRelated: Boolean,
+    onRemoveCategory: (Int) -> Unit,
+    onAddCategoryClick: () -> Unit,
+    onRelatedClick: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -565,7 +1093,7 @@ private fun KnowledgeDetailDialog(
             } else {
                 Column(
                     modifier = Modifier
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = 480.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -573,7 +1101,6 @@ private fun KnowledgeDetailDialog(
                         UnverifiedBadge(status = entry.status)
                     }
                     val meta = buildList {
-                        entry.category?.takeIf { it.isNotBlank() }?.let { add(it) }
                         entry.createdByAgent?.takeIf { it.isNotBlank() }?.let { add("by $it") }
                         add("${entry.hitCount} hits")
                     }.joinToString(" · ")
@@ -594,6 +1121,66 @@ private fun KnowledgeDetailDialog(
                     entry.source?.takeIf { it.isNotBlank() }?.let {
                         Text("Source: $it", style = MaterialTheme.typography.labelSmall, color = LumiOnSurfaceTertiary)
                     }
+
+                    // ── Categories (breadcrumb chips) ──────────────────────
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Categories",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LumiOnSurfaceSecondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onAddCategoryClick) {
+                            Icon(Icons.Default.Add, null, tint = LumiPurple500, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add", color = LumiPurple500, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    if (categories.isEmpty()) {
+                        Text(
+                            "Not filed under any category yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                    } else {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            categories.forEach { cat ->
+                                CategoryChip(
+                                    category = cat,
+                                    onRemove = { onRemoveCategory(cat.id) }
+                                )
+                            }
+                        }
+                    }
+
+                    // ── Related entries ────────────────────────────────────
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Related",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = LumiOnSurfaceSecondary
+                    )
+                    when {
+                        loadingRelated -> {
+                            CircularProgressIndicator(
+                                color = LumiPurple500,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        related.isEmpty() -> {
+                            Text(
+                                "No related entries.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LumiOnSurfaceTertiary
+                            )
+                        }
+                        else -> {
+                            related.forEach { rel ->
+                                RelatedRow(rel = rel, onClick = { onRelatedClick(rel.id) })
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -603,6 +1190,52 @@ private fun KnowledgeDetailDialog(
             }
         }
     )
+}
+
+/** A tappable related-entry row inside the detail dialog. */
+@Composable
+private fun RelatedRow(rel: RelatedEntry, onClick: () -> Unit) {
+    val viaColor = if (rel.via == "category") LumiPurple500 else LumiInfo
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = rel.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = LumiOnSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (rel.snippet.isNotBlank()) {
+                Text(
+                    text = rel.snippet,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LumiOnSurfaceTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(viaColor.copy(alpha = 0.14f))
+                .padding(horizontal = 7.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = rel.via,
+                style = MaterialTheme.typography.labelSmall,
+                color = viaColor
+            )
+        }
+    }
 }
 
 /**
