@@ -17,6 +17,8 @@ services:
       - PDF_SERVICE_URL=http://pdf-generator:8090
       - HOST_HOME_MOUNT=/host-home
       - KB_MODEL_CACHE=/app/data/hf-cache
+      - KB_CAT_THRESHOLD=0.52
+      - KB_CAT_MAXPER=3
       - AUTH_ENABLED=true
       - API_KEY=${API_KEY:-}
       - MQTT_URL=mqtt://mqtt:1883

@@ -36,6 +36,7 @@ export interface CategoryRow {
   sort_order: number;
   created_by: string | null;
   created_at: string;
+  auto_min_score: number | null;
 }
 
 export interface Membership {
@@ -138,13 +139,13 @@ function descendantIds(catId: number): number[] {
 
 export function listCategories(): CategoryRow[] {
   return getDb().prepare(
-    "SELECT id, name, parent_id, description, sort_order, created_by, created_at FROM kb_categories ORDER BY sort_order ASC, name ASC"
+    "SELECT id, name, parent_id, description, sort_order, created_by, created_at, auto_min_score FROM kb_categories ORDER BY sort_order ASC, name ASC"
   ).all() as CategoryRow[];
 }
 
 export function getCategory(id: number): CategoryRow | undefined {
   return getDb().prepare(
-    "SELECT id, name, parent_id, description, sort_order, created_by, created_at FROM kb_categories WHERE id = ?"
+    "SELECT id, name, parent_id, description, sort_order, created_by, created_at, auto_min_score FROM kb_categories WHERE id = ?"
   ).get(id) as CategoryRow | undefined;
 }
 
@@ -164,6 +165,7 @@ export function createCategory(input: {
 
 export function updateCategory(id: number, patch: {
   name?: string; parent_id?: number | null; description?: string; sort_order?: number;
+  auto_min_score?: number | null;
 }): CategoryRow | undefined {
   const db = getDb();
   const cur = getCategory(id);
@@ -172,15 +174,16 @@ export function updateCategory(id: number, patch: {
   const parent_id = patch.parent_id !== undefined ? patch.parent_id : cur.parent_id;
   const description = patch.description ?? cur.description;
   const sort_order = patch.sort_order ?? cur.sort_order;
+  const auto_min_score = patch.auto_min_score !== undefined ? patch.auto_min_score : cur.auto_min_score;
   // Re-embed (and thus re-classify) only if the semantic text changed.
   const reembed = (patch.name !== undefined && patch.name !== cur.name)
     || (patch.description !== undefined && patch.description !== cur.description)
     || (patch.parent_id !== undefined && patch.parent_id !== cur.parent_id);
   db.prepare(`
-    UPDATE kb_categories SET name = ?, parent_id = ?, description = ?, sort_order = ?,
+    UPDATE kb_categories SET name = ?, parent_id = ?, description = ?, sort_order = ?, auto_min_score = ?,
       embed_stale = CASE WHEN ? = 1 THEN 1 ELSE embed_stale END
     WHERE id = ?
-  `).run(name, parent_id, description, sort_order, reembed ? 1 : 0, id);
+  `).run(name, parent_id, description, sort_order, auto_min_score, reembed ? 1 : 0, id);
   return getCategory(id);
 }
 
@@ -255,12 +258,13 @@ export async function classifyEntry(entryId: number): Promise<number> {
     try { vec = await embed(entryText(entry), false); } catch { return 0; }
   }
 
-  const cats = db.prepare("SELECT id, embedding FROM kb_categories WHERE embedding IS NOT NULL").all() as
-    { id: number; embedding: Buffer }[];
+  const cats = db.prepare("SELECT id, embedding, auto_min_score FROM kb_categories WHERE embedding IS NOT NULL").all() as
+    { id: number; embedding: Buffer; auto_min_score: number | null }[];
   const th = threshold();
   const scored = cats
-    .map((c) => ({ id: c.id, sim: cosine(vec, bufferToVector(c.embedding)) }))
-    .filter((c) => c.sim >= th)
+    .map((c) => ({ id: c.id, sim: cosine(vec, bufferToVector(c.embedding)), floor: c.auto_min_score ?? th }))
+    // Each category may demand a higher bar than the global threshold (auto_min_score).
+    .filter((c) => c.sim >= c.floor)
     .sort((a, b) => b.sim - a.sim)
     .slice(0, maxPer());
   const topIds = new Set(scored.map((t) => t.id));
@@ -300,11 +304,11 @@ export async function classifyEntry(entryId: number): Promise<number> {
  */
 export async function classifyCategory(categoryId: number): Promise<number> {
   const db = getDb();
-  const cat = db.prepare("SELECT id, embedding FROM kb_categories WHERE id = ?").get(categoryId) as
-    { id: number; embedding: Buffer | null } | undefined;
+  const cat = db.prepare("SELECT id, embedding, auto_min_score FROM kb_categories WHERE id = ?").get(categoryId) as
+    { id: number; embedding: Buffer | null; auto_min_score: number | null } | undefined;
   if (!cat || !cat.embedding) return 0;
   const cvec = bufferToVector(cat.embedding);
-  const th = threshold();
+  const th = cat.auto_min_score ?? threshold();
 
   const entries = db.prepare(
     "SELECT id, embedding FROM knowledge_entries WHERE status='approved' AND embedding IS NOT NULL"
@@ -367,7 +371,7 @@ export function removeMembership(entryId: number, categoryId: number): void {
 export function buildTree(): TreeNode[] {
   const db = getDb();
   const cats = db.prepare(
-    "SELECT id, name, parent_id, description, sort_order, created_by, created_at FROM kb_categories ORDER BY sort_order ASC, name ASC"
+    "SELECT id, name, parent_id, description, sort_order, created_by, created_at, auto_min_score FROM kb_categories ORDER BY sort_order ASC, name ASC"
   ).all() as CategoryRow[];
 
   const countRows = db.prepare(`

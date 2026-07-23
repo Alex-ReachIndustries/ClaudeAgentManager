@@ -54,6 +54,7 @@ const categoryPatchSchema = z.object({
   parent_id: z.number().int().positive().nullable().optional(),
   description: z.string().max(4000).optional(),
   sort_order: z.number().int().optional(),
+  auto_min_score: z.number().min(0).max(1).nullable().optional(),
 });
 
 const membershipSchema = z.object({ category_id: z.number().int().positive() });

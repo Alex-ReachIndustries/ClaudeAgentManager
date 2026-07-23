@@ -103,6 +103,11 @@ export function initKnowledgeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_kb_entry_categories_entry ON kb_entry_categories(entry_id);
   `);
 
+  // Per-category minimum auto-classify score (overrides the global threshold). Lets an
+  // inherently over-matching category (e.g. a broad "meta" topic) demand a higher bar so it
+  // isn't flooded. NULL = use the global KB_CAT_THRESHOLD. Additive migration.
+  try { db.exec("ALTER TABLE kb_categories ADD COLUMN auto_min_score REAL"); } catch { /* column exists */ }
+
   // FTS5 shadow tables (manually kept in sync by the store layer). Contentless-external
   // rowids map 1:1 to entry/profile ids.
   try {
