@@ -26,6 +26,7 @@ import com.claudemanager.app.data.models.MembershipBody
 import com.claudemanager.app.data.models.MembershipResponse
 import com.claudemanager.app.data.models.RelatedResponse
 import com.claudemanager.app.data.models.TreeResponse
+import com.claudemanager.app.data.models.KbProfile
 import com.claudemanager.app.data.models.KbProfilesResponse
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
@@ -498,6 +499,12 @@ interface AgentApi {
      */
     @GET("api/kb/profiles")
     suspend fun getKbProfiles(): Response<KbProfilesResponse>
+
+    /**
+     * Fetch a single people profile by name (case-insensitive; 404 if not found).
+     */
+    @GET("api/kb/profiles/{name}")
+    suspend fun getKbProfile(@Path("name") name: String): Response<KbProfile>
 
     /**
      * Aggregate Knowledge Hub statistics.

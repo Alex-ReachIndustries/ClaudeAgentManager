@@ -73,6 +73,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.claudemanager.app.data.models.EntryCategory
+import com.claudemanager.app.data.models.KbProfile
 import com.claudemanager.app.data.models.KnowledgeEntry
 import com.claudemanager.app.data.models.KnowledgeResult
 import com.claudemanager.app.data.models.RelatedEntry
@@ -236,6 +237,7 @@ fun KnowledgeListScreen(
                                 result = result,
                                 onClick = {
                                     if (result.type == "knowledge") viewModel.openEntry(result.id)
+                                    else if (result.type == "profile") viewModel.openProfile(result.title)
                                 }
                             )
                         }
@@ -392,6 +394,15 @@ fun KnowledgeListScreen(
             onAddCategoryClick = { viewModel.showCategoryPicker(true) },
             onRelatedClick = viewModel::openEntry,
             onDismiss = viewModel::closeEntry
+        )
+    }
+
+    // Profile detail dialog
+    if (state.loadingProfile || state.profileDetail != null) {
+        ProfileDetailDialog(
+            profile = state.profileDetail,
+            loading = state.loadingProfile,
+            onDismiss = viewModel::closeProfile
         )
     }
 
@@ -1178,6 +1189,133 @@ private fun KnowledgeDetailDialog(
                         else -> {
                             related.forEach { rel ->
                                 RelatedRow(rel = rel, onClick = { onRelatedClick(rel.id) })
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = LumiPurple500)
+            }
+        }
+    )
+}
+
+/**
+ * Detail dialog showing a people profile: name, role @ org, summary, and facts.
+ */
+@Composable
+private fun ProfileDetailDialog(
+    profile: KbProfile?,
+    loading: Boolean,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = LumiCard,
+        titleContentColor = LumiOnSurface,
+        textContentColor = LumiOnSurfaceSecondary,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Person,
+                    contentDescription = null,
+                    tint = LumiPurple500,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = profile?.name ?: "Loading…",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        },
+        text = {
+            if (loading || profile == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = LumiPurple500)
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // role @ org line (omit gracefully if blank)
+                    val roleOrg = buildString {
+                        profile.role?.takeIf { it.isNotBlank() }?.let { append(it) }
+                        profile.org?.takeIf { it.isNotBlank() }?.let {
+                            if (isNotEmpty()) append(" @ ")
+                            append(it)
+                        }
+                    }
+                    if (roleOrg.isNotBlank()) {
+                        Text(
+                            text = roleOrg,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LumiOnSurfaceSecondary
+                        )
+                    }
+
+                    if (profile.aliases.isNotEmpty()) {
+                        Text(
+                            text = "aka ${profile.aliases.joinToString(", ")}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                    }
+
+                    if (profile.summary.isNotBlank()) {
+                        Text(
+                            text = profile.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LumiOnSurface
+                        )
+                    }
+
+                    profile.relationships?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = "Relationships: $it",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LumiOnSurfaceSecondary
+                        )
+                    }
+
+                    // ── Facts ──────────────────────────────────────────────
+                    if (profile.facts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Facts",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LumiOnSurfaceSecondary
+                        )
+                        profile.facts.forEach { fact ->
+                            Column {
+                                Text(
+                                    text = "• ${fact.fact}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = LumiOnSurface
+                                )
+                                val src = buildList {
+                                    fact.source?.takeIf { it.isNotBlank() }?.let { add(it) }
+                                    fact.by?.takeIf { it.isNotBlank() }?.let { add("by $it") }
+                                    fact.at?.takeIf { it.isNotBlank() }?.let { add(it) }
+                                }.joinToString(" · ")
+                                if (src.isNotBlank()) {
+                                    Text(
+                                        text = src,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = LumiOnSurfaceTertiary
+                                    )
+                                }
                             }
                         }
                     }

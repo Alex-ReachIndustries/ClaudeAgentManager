@@ -672,6 +672,11 @@ class AgentRepository {
         api.getKbProfiles()
     }.map { it.data }
 
+    /** Fetch a single people profile by name. */
+    suspend fun getKbProfile(name: String): Result<KbProfile> = apiCall {
+        api.getKbProfile(name)
+    }
+
     /** Aggregate Knowledge Hub statistics. */
     suspend fun getKbStats(): Result<KbStats> = apiCall {
         api.getKbStats()

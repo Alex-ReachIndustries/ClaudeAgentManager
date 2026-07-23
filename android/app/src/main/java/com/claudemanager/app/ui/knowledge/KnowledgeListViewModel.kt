@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.models.CategoryRow
 import com.claudemanager.app.data.models.EntryCategory
+import com.claudemanager.app.data.models.KbProfile
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
 import com.claudemanager.app.data.models.KnowledgeResult
@@ -53,6 +54,9 @@ data class KnowledgeListUiState(
     val loadingRelated: Boolean = false,
     val detailCategories: List<EntryCategory> = emptyList(),
     val showCategoryPicker: Boolean = false,
+    // Profile detail dialog
+    val profileDetail: KbProfile? = null,
+    val loadingProfile: Boolean = false,
     // Category management dialog (create / rename / delete)
     val categoryDialog: CategoryDialogState? = null,
     // Propose dialog
@@ -401,6 +405,29 @@ class KnowledgeListViewModel(application: Application) : AndroidViewModel(applic
                 showCategoryPicker = false
             )
         }
+    }
+
+    /** Open the profile detail dialog for a person by name. */
+    fun openProfile(name: String) {
+        _uiState.update { it.copy(loadingProfile = true, profileDetail = null) }
+        viewModelScope.launch {
+            repository.getKbProfile(name)
+                .onSuccess { profile ->
+                    _uiState.update { it.copy(profileDetail = profile, loadingProfile = false) }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(
+                            loadingProfile = false,
+                            snackbarMessage = e.message ?: "Failed to load profile"
+                        )
+                    }
+                }
+        }
+    }
+
+    fun closeProfile() {
+        _uiState.update { it.copy(profileDetail = null, loadingProfile = false) }
     }
 
     fun showCategoryPicker(show: Boolean) {
