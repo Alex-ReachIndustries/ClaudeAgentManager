@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { logger } from "./logger.js";
+import { initKnowledgeSchema } from "./knowledge/schema.js";
 
 let db: Database.Database | null = null;
 
@@ -645,6 +646,9 @@ export function getDb(): Database.Database {
 
   // Feature 6: Migrate existing BLOBs to filesystem
   migrateFilesToDisk(db);
+
+  // Knowledge Hub schema (entries, pending queue, profiles + FTS5 shadow tables)
+  initKnowledgeSchema(db);
 
   return db;
 }

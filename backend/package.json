@@ -8,6 +8,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
     "better-sqlite3": "^11.7.0",
     "compression": "^1.7.5",
     "cors": "^2.8.5",

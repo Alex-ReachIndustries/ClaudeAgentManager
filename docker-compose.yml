@@ -16,6 +16,7 @@ services:
       - DB_PATH=/app/data/agents.db
       - PDF_SERVICE_URL=http://pdf-generator:8090
       - HOST_HOME_MOUNT=/host-home
+      - KB_MODEL_CACHE=/app/data/hf-cache
       - AUTH_ENABLED=true
       - API_KEY=${API_KEY:-}
       - MQTT_URL=mqtt://mqtt:1883

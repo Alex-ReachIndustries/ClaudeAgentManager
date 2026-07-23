@@ -16,6 +16,9 @@ import retentionRouter from "./routes/retention.js";
 import projectsRouter from "./routes/projects.js";
 import rolesRouter from "./routes/roles.js";
 import totpRouter from "./routes/totp.js";
+import knowledgeRouter from "./routes/knowledge.js";
+import { warmEmbeddings } from "./knowledge/embeddings.js";
+import { startEmbedder } from "./knowledge/embedder.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
 import { archiveInactiveAgents, getAgent, getDb, getFileByIdOnly, touchAgentHeartbeat, updateAgent } from "./db.js";
 import { initPush } from "./push.js";
@@ -99,6 +102,7 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/retention", retentionRouter);
 app.use("/api/roles", rolesRouter);
 app.use("/api/totp", totpRouter);
+app.use("/api/kb", knowledgeRouter);
 
 // Failsafe: look up a file by ID alone (no agent_id required).
 // Prevents 400 loops when agents call the wrong endpoint path (missing agent segment).
@@ -144,6 +148,11 @@ const server = app.listen(PORT, () => {
 
   // Initialize MQTT bridge (non-blocking — continues if broker unavailable)
   initMqtt();
+
+  // Knowledge Hub: warm the embedding model in the background and start the
+  // background embedder that vectorizes stale entries/profiles.
+  warmEmbeddings();
+  startEmbedder();
 
   // Set MQTT handlers for agent updates received via MQTT
   setMqttHandlers({
