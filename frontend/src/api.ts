@@ -303,8 +303,9 @@ export interface KbStats {
 export interface KbAnalytics {
   days: number;
   logging_since: string | null;
-  window_totals: { search: number; view: number; related: number; propose: number };
-  all_time_totals: { search: number; view: number; related: number; propose: number };
+  surfacing?: { surfaces: number; entries_surfaced: number; entries_opened: number; open_rate: number | null };
+  window_totals: { search: number; view: number; related: number; propose: number; surface?: number };
+  all_time_totals: { search: number; view: number; related: number; propose: number; surface?: number };
   timeseries: { date: string; search: number; view: number; related: number; propose: number }[];
   search: { total: number; hits: number; misses: number; hit_rate: number | null; avg_latency_ms: number | null };
   gaps: { query: string; times: number; last_at: string }[];

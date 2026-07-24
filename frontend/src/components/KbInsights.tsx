@@ -146,6 +146,14 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
                 <StatCard icon={<Eye size={12} />} label="Entry reads" value={data.window_totals.view + data.window_totals.related} />
                 <StatCard icon={<Plus size={12} />} label="Contributions" value={data.window_totals.propose} />
                 <StatCard icon={<Users size={12} />} label="Active agents" value={activeAgents} />
+                {data.surfacing && (
+                  <StatCard
+                    icon={<TrendingUp size={12} />}
+                    label="Auto-surfaced"
+                    value={data.surfacing.surfaces}
+                    sub={data.surfacing.open_rate != null ? `${Math.round(data.surfacing.open_rate * 100)}% opened` : 'push→read'}
+                  />
+                )}
               </div>
 
               {/* Usage over time */}
