@@ -50,7 +50,7 @@ export function getCompactReminder(
     : "";
   return `
 ---
-[REMINDER] 1. Ack NOW, before any work: POST $AGENT_URL/api/agents/$SESSION_UUID/messages/ack {"ids":[<id>],"content":"<≤200 char summary of what you understood>"}. 2. Non-trivial task → post plan as type=text, wait for approval. 3. Post milestone updates while working — never go silent >10 min. 4. Post a type=text completion update when done. 5. NEVER write .claude/ — use claudeadmin/.${roleLine}${pmLine}${poolLine}
+[REMINDER] 1. Ack NOW, before any work: POST $AGENT_URL/api/agents/$SESSION_UUID/messages/ack {"ids":[<id>],"content":"<≤200 char summary of what you understood>"}. 2. Non-trivial task → post plan as type=text, wait for approval. 3. Post milestone updates while working — never go silent >10 min. 4. Post a type=text completion update when done. 5. NEVER write .claude/ — use claudeadmin/. 6. KNOWLEDGE HUB: before non-trivial work, /kb <topic> for our practices/gotchas (any auto-surfaced "RELEVANT KNOWLEDGE" above is from the hub); when you learn or hit something reusable, contribute it — POST $AGENT_URL/api/kb/propose.${roleLine}${pmLine}${poolLine}
 Full rules were delivered at session start — refetch if unsure: GET $AGENT_URL/api/agents/$SESSION_UUID/rules
 ---`;
 }

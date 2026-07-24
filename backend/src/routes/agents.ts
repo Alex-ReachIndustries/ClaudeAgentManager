@@ -43,6 +43,8 @@ import { logger } from "../logger.js";
 import { dispatchWebhook } from "../webhook-dispatcher.js";
 import { onAgentStatusChange } from "../workflow-engine.js";
 import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition, getCompactReminder, getFullRulesHeader, getRetryHeader } from "../injections.js";
+import { hybridSearch } from "../knowledge/search.js";
+import { embeddingsReady } from "../knowledge/embeddings.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -217,6 +219,34 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
   const reminder = getCompactReminder(tier, { roleLabel, pmAgentId, pmPoolStatus });
 
   return { fullRules: ROLE_SECTION + PM_RULES_SECTION + SESSION_RULES_SECTION, reminder, tier };
+}
+
+// ── Proactive retrieval ─────────────────────────────────────────────────────
+// Auto-surface relevant hub knowledge into a task delivery so agents don't have
+// to remember to search. Best-effort: any failure yields "" and never blocks a
+// message. We do NOT log these as searches — the analytics "searches" metric
+// stays a measure of genuine agent-initiated pulls; engagement shows up when an
+// agent then opens a surfaced entry (a logged view).
+const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.55");
+const KB_SURFACE_MAX = 3;
+
+async function buildKnowledgeHint(query: string): Promise<string> {
+  try {
+    // Only meaningful once the embedding model is ready — otherwise skip to avoid noise.
+    if (!embeddingsReady()) return "";
+    const results = await hybridSearch(query, { type: "knowledge", limit: 6 });
+    const hits = results
+      .filter((r) => r.status === "approved" && r.sim >= KB_SURFACE_MIN_SIM)
+      .slice(0, KB_SURFACE_MAX);
+    if (hits.length === 0) return "";
+    const lines = hits.map((h) => {
+      const snip = (h.snippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
+      return `- [${h.id}] ${h.title}${snip ? ` — ${snip}` : ""}`;
+    });
+    return `\n\n📚 RELEVANT KNOWLEDGE (auto-surfaced from the hub — verify before relying):\n${lines.join("\n")}\nOpen full via GET $AGENT_URL/api/kb/<id>. Not what you need? /kb <question>, and propose what's missing.`;
+  } catch {
+    return "";
+  }
 }
 
 // Returns the reason the agent's full rules block is due for (re-)delivery,
@@ -1191,7 +1221,7 @@ router.post("/:id/messages", validate(messageSchema), (req: Request, res: Respon
 // GET /:id/messages — get messages for agent
 // ?status=pending — filter by status (useful for lightweight polling without POST)
 // ?deliver=true  — mark pending messages as delivered in the same call
-router.get("/:id/messages", (req: Request, res: Response) => {
+router.get("/:id/messages", async (req: Request, res: Response) => {
   try {
     const id = param(req, "id");
     const agent = getAgent(id);
@@ -1223,6 +1253,16 @@ router.get("/:id/messages", (req: Request, res: Response) => {
       const fullReason = rawMessages.some(m => !m.redelivery) ? rulesDueReason(agent as Record<string, unknown>) : null;
       const lastFreshIdx = rawMessages.reduce((acc, m, i) => (m.redelivery ? acc : i), -1);
 
+      // Proactive retrieval: surface relevant hub knowledge on the last fresh
+      // message (closest to the agent's attention). Only for substantive tasks.
+      let kbHint = "";
+      if (lastFreshIdx >= 0) {
+        const lf = rawMessages[lastFreshIdx];
+        if (typeof lf.content === "string" && lf.content.trim().length >= 40) {
+          kbHint = await buildKnowledgeHint(lf.content);
+        }
+      }
+
       const messages = rawMessages.map((m, i) => {
         // Reply/reference is stored structurally (kept out of the body for clean UI);
         // inject it as a textual prefix only at delivery so the agent still gets the context.
@@ -1245,7 +1285,8 @@ router.get("/:id/messages", (req: Request, res: Response) => {
         const rulesSuffix = i === lastFreshIdx
           ? (fullReason ? getFullRulesHeader(fullReason) + fullRules : reminder)
           : "";
-        return { ...m, content: replyPrefix + m.content + rulesSuffix };
+        const knowledgeSuffix = i === lastFreshIdx ? kbHint : "";
+        return { ...m, content: replyPrefix + m.content + knowledgeSuffix + rulesSuffix };
       });
 
       if (fullReason) markRulesInjected(id);
