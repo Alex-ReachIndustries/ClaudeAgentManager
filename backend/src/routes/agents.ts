@@ -227,7 +227,7 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
 // message. We do NOT log these as searches — the analytics "searches" metric
 // stays a measure of genuine agent-initiated pulls; engagement shows up when an
 // agent then opens a surfaced entry (a logged view).
-const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.55");
+const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.62");
 const KB_SURFACE_MAX = 3;
 
 async function buildKnowledgeHint(query: string): Promise<string> {
