@@ -430,7 +430,11 @@ export function searchFTS(query: string, opts: { type?: "all" | "knowledge" | "p
 }
 
 export function makeSnippet(text: string, max = 240): string {
-  const clean = text.replace(/\s+/g, " ").trim();
+  // Strip a leading YAML frontmatter block — entries seeded from memory files begin
+  // with `---\n…\n---`, which otherwise fills the snippet (and surfaced hints) with
+  // "name:/description:/type:" noise instead of the actual knowledge.
+  const stripped = text.replace(/^﻿?\s*---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const clean = (stripped.trim() ? stripped : text).replace(/\s+/g, " ").trim();
   return clean.length > max ? clean.slice(0, max) + "…" : clean;
 }
 
