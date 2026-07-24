@@ -45,6 +45,7 @@ import { onAgentStatusChange } from "../workflow-engine.js";
 import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition, getCompactReminder, getFullRulesHeader, getRetryHeader } from "../injections.js";
 import { hybridSearch } from "../knowledge/search.js";
 import { embeddingsReady } from "../knowledge/embeddings.js";
+import { logAccess } from "../knowledge/store.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -230,7 +231,7 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
 const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.62");
 const KB_SURFACE_MAX = 3;
 
-async function buildKnowledgeHint(query: string): Promise<string> {
+async function buildKnowledgeHint(query: string, agentId: string): Promise<string> {
   try {
     // Only meaningful once the embedding model is ready — otherwise skip to avoid noise.
     if (!embeddingsReady()) return "";
@@ -239,6 +240,16 @@ async function buildKnowledgeHint(query: string): Promise<string> {
       .filter((r) => r.status === "approved" && r.sim >= KB_SURFACE_MIN_SIM)
       .slice(0, KB_SURFACE_MAX);
     if (hits.length === 0) return "";
+    // Instrument the push: record what we surfaced to whom (distinct 'surface' action,
+    // kept out of the 'search' metric) so we can measure surface→open conversion.
+    logAccess({
+      action: "surface",
+      agent: agentId,
+      query: query.slice(0, 500),
+      result_count: hits.length,
+      top_score: Number(hits[0].sim.toFixed(4)),
+      result_ids: hits.map((h) => h.id),
+    });
     const lines = hits.map((h) => {
       const snip = (h.snippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
       return `- [${h.id}] ${h.title}${snip ? ` — ${snip}` : ""}`;
@@ -1259,7 +1270,10 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
       if (lastFreshIdx >= 0) {
         const lf = rawMessages[lastFreshIdx];
         if (typeof lf.content === "string" && lf.content.trim().length >= 40) {
-          kbHint = await buildKnowledgeHint(lf.content);
+          // Attribute with the friendly title so surface rows match view rows
+          // (GET /kb/:id resolves the caller's session id to the same title).
+          const agentName = (agent.base_title as string) || (agent.title as string) || id;
+          kbHint = await buildKnowledgeHint(lf.content, agentName);
         }
       }
 
