@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.claudemanager.app.ClaudeManagerApp
 import com.claudemanager.app.data.models.CategoryRow
 import com.claudemanager.app.data.models.EntryCategory
+import com.claudemanager.app.data.models.KbAnalytics
 import com.claudemanager.app.data.models.KbProfile
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
@@ -62,6 +63,11 @@ data class KnowledgeListUiState(
     // Propose dialog
     val showProposeDialog: Boolean = false,
     val isProposing: Boolean = false,
+    // Insights (analytics) dialog
+    val showInsights: Boolean = false,
+    val analytics: KbAnalytics? = null,
+    val loadingAnalytics: Boolean = false,
+    val analyticsDays: Int = 30,
     // Snackbar
     val snackbarMessage: String? = null
 )
@@ -101,7 +107,39 @@ class KnowledgeListViewModel(application: Application) : AndroidViewModel(applic
             while (isActive) {
                 delay(15_000)
                 loadStats()
+                // Keep the Insights view live while it's open.
+                if (_uiState.value.showInsights) loadAnalytics()
             }
+        }
+    }
+
+    // ── Insights (analytics) ────────────────────────────────────────────
+
+    fun openInsights() {
+        _uiState.update { it.copy(showInsights = true) }
+        loadAnalytics()
+    }
+
+    fun closeInsights() {
+        _uiState.update { it.copy(showInsights = false) }
+    }
+
+    fun setAnalyticsDays(days: Int) {
+        if (_uiState.value.analyticsDays == days) return
+        _uiState.update { it.copy(analyticsDays = days) }
+        loadAnalytics()
+    }
+
+    fun loadAnalytics() {
+        _uiState.update { it.copy(loadingAnalytics = true) }
+        viewModelScope.launch {
+            repository.getKbAnalytics(_uiState.value.analyticsDays)
+                .onSuccess { a -> _uiState.update { it.copy(analytics = a, loadingAnalytics = false) } }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(loadingAnalytics = false, snackbarMessage = e.message ?: "Failed to load insights")
+                    }
+                }
         }
     }
 

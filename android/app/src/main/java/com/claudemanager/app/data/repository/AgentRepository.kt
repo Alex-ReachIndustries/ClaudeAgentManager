@@ -29,6 +29,7 @@ import com.claudemanager.app.data.models.MembershipBody
 import com.claudemanager.app.data.models.RelatedEntry
 import com.claudemanager.app.data.models.TreeNode
 import com.claudemanager.app.data.models.KbProfile
+import com.claudemanager.app.data.models.KbAnalytics
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
 import com.claudemanager.app.data.models.KnowledgeSearchResponse
@@ -680,6 +681,10 @@ class AgentRepository {
     /** Aggregate Knowledge Hub statistics. */
     suspend fun getKbStats(): Result<KbStats> = apiCall {
         api.getKbStats()
+    }
+
+    suspend fun getKbAnalytics(days: Int): Result<KbAnalytics> = apiCall {
+        api.getKbAnalytics(days)
     }
 
     /** Fetch the nested category tree with per-node counts. */
