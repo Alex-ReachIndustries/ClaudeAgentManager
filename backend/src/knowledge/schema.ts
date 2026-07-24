@@ -101,6 +101,30 @@ export function initKnowledgeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_kb_categories_embed_stale ON kb_categories(embed_stale);
     CREATE INDEX IF NOT EXISTS idx_kb_entry_categories_cat ON kb_entry_categories(category_id);
     CREATE INDEX IF NOT EXISTS idx_kb_entry_categories_entry ON kb_entry_categories(entry_id);
+
+    -- Audit trail of every KB access, so we can measure usage and effectiveness over
+    -- time (who searches for what, hit/miss rate, which entries actually get read).
+    -- Writes are best-effort and must never block or fail a KB request.
+    CREATE TABLE IF NOT EXISTS kb_access_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL DEFAULT (datetime('now')),
+      action TEXT NOT NULL,                    -- 'search' | 'view' | 'related' | 'propose'
+      agent TEXT,                              -- calling agent (NULL = unattributed)
+      query TEXT,                              -- search term (action='search')
+      type_filter TEXT,                        -- 'all'|'knowledge'|'profile' (search)
+      result_count INTEGER,                    -- results returned (search)
+      top_score REAL,                          -- best relevance score (search)
+      hit INTEGER,                             -- 1 if result_count>0 (search)
+      result_ids TEXT,                         -- JSON array of surfaced entry ids (search)
+      entry_id INTEGER,                        -- target entry (view/related/propose)
+      latency_ms INTEGER,                      -- server-side handling time (search)
+      embeddings_ready INTEGER                 -- 1 if vector search was active (search)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_kb_access_ts ON kb_access_log(ts);
+    CREATE INDEX IF NOT EXISTS idx_kb_access_action ON kb_access_log(action);
+    CREATE INDEX IF NOT EXISTS idx_kb_access_agent ON kb_access_log(agent);
+    CREATE INDEX IF NOT EXISTS idx_kb_access_entry ON kb_access_log(entry_id);
   `);
 
   // Per-category minimum auto-classify score (overrides the global threshold). Lets an

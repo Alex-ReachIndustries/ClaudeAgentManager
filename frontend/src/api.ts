@@ -295,8 +295,24 @@ export interface KbStats {
   profiles: number;
   stale_entries: number;
   stale_profiles: number;
+  usage_7d?: { accesses: number; searches: number; hit_rate: number | null };
   embeddingsReady: boolean;
   embedDim: number;
+}
+
+export interface KbAnalytics {
+  days: number;
+  logging_since: string | null;
+  window_totals: { search: number; view: number; related: number; propose: number };
+  all_time_totals: { search: number; view: number; related: number; propose: number };
+  timeseries: { date: string; search: number; view: number; related: number; propose: number }[];
+  search: { total: number; hits: number; misses: number; hit_rate: number | null; avg_latency_ms: number | null };
+  gaps: { query: string; times: number; last_at: string }[];
+  weak: { query: string; times: number; avg_top_score: number; last_at: string }[];
+  top_queries: { query: string; times: number; hits: number; last_at: string }[];
+  top_entries: { entry_id: number; title: string | null; status: string | null; views: number; last_at: string }[];
+  by_agent: { agent: string; searches: number; views: number; related: number; proposals: number; total: number; last_at: string }[];
+  never_accessed: { count: number; sample: { id: number; title: string; created_at: string }[] };
 }
 
 export async function searchKnowledge(q: string, type: 'all' | 'knowledge' | 'profile' = 'all', limit = 20): Promise<KbSearchResponse> {
@@ -344,6 +360,10 @@ export async function fetchKbProfile(name: string): Promise<any> {
 
 export async function fetchKbStats(): Promise<KbStats> {
   return request<KbStats>(`/kb/stats`);
+}
+
+export async function fetchKbAnalytics(days = 30): Promise<KbAnalytics> {
+  return request<KbAnalytics>(`/kb/analytics?days=${encodeURIComponent(String(days))}`);
 }
 
 // --- KB Category Tree / membership ---
