@@ -229,12 +229,43 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
 // stays a measure of genuine agent-initiated pulls; engagement shows up when an
 // agent then opens a surfaced entry (a logged view).
 const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.62");
-const KB_SURFACE_MAX = 3;
+const KB_SURFACE_MAX = Number.parseInt(process.env.KB_SURFACE_MAX || "2", 10);
 
-async function buildKnowledgeHint(query: string, agentId: string): Promise<string> {
+// Extract the substantive task text from a delivered message before using it as the
+// retrieval query. Task assignments / spawn prompts are dominated by boilerplate
+// (role definitions, session-connect, reminders, relay markers) which drags in
+// off-topic entries by semantic similarity — the "cross-domain bleed" the lab exposed.
+// Stripping it sharply improves what we surface.
+function extractSurfaceQuery(content: string): string {
+  let text = content;
+  // Drop everything from the injected rules/reminder blocks onward.
+  for (const marker of ["═══ FULL SESSION RULES", "[REMINDER]", "📚 RELEVANT KNOWLEDGE", "Full rules were delivered"]) {
+    const i = text.indexOf(marker);
+    if (i >= 0) text = text.slice(0, i);
+  }
+  const boilerplate = [
+    /^\s*\[[^\]]+\]\s*$/,                 // bracket tag lines: [TASK ASSIGNMENT — ...], [ACK ...], [RETRY ...]
+    /^\s*(FIRST:|ROLE:|You are (a|the|Cam)\b)/i,
+    /\/session-connect/i,
+    /^\s*[←→]/,                           // relay direction markers
+    /^\s*(PLAN|STATUS|COMPLETED|BLOCKED|ACK)\b[:\-]/i,
+    /session[_ -]?uuid|AGENT_URL|api\/agents/i,
+  ];
+  const kept = text
+    .split(/\r?\n/)
+    .filter((ln) => ln.trim() && !boilerplate.some((re) => re.test(ln)))
+    .join(" ");
+  const cleaned = (kept.trim() ? kept : text).replace(/\s+/g, " ").trim();
+  // A focused query beats a wall of text; cap it.
+  return cleaned.slice(0, 400);
+}
+
+async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<string> {
   try {
     // Only meaningful once the embedding model is ready — otherwise skip to avoid noise.
     if (!embeddingsReady()) return "";
+    const query = extractSurfaceQuery(rawContent);
+    if (query.length < 12) return "";
     const results = await hybridSearch(query, { type: "knowledge", limit: 6 });
     const hits = results
       .filter((r) => r.status === "approved" && r.sim >= KB_SURFACE_MIN_SIM)
