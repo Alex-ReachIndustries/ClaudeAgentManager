@@ -254,7 +254,7 @@ async function buildKnowledgeHint(query: string, agentId: string): Promise<strin
       const snip = (h.snippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
       return `- [${h.id}] ${h.title}${snip ? ` — ${snip}` : ""}`;
     });
-    return `\n\n📚 RELEVANT KNOWLEDGE (auto-surfaced from the hub — verify before relying):\n${lines.join("\n")}\nOpen full via GET $AGENT_URL/api/kb/<id>. Not what you need? /kb <question>, and propose what's missing.`;
+    return `\n\n📚 RELEVANT KNOWLEDGE (auto-surfaced from the hub — verify before relying):\n${lines.join("\n")}\nOpen full via GET $AGENT_URL/api/kb/<id>?agent=$CLAUDE_AGENT_ID (pass agent= so we can learn which surfaced items actually help). Not what you need? /kb <question>, and propose what's missing.`;
   } catch {
     return "";
   }
