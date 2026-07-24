@@ -28,6 +28,7 @@ import com.claudemanager.app.data.models.RelatedResponse
 import com.claudemanager.app.data.models.TreeResponse
 import com.claudemanager.app.data.models.KbProfile
 import com.claudemanager.app.data.models.KbProfilesResponse
+import com.claudemanager.app.data.models.KbAnalytics
 import com.claudemanager.app.data.models.KbStats
 import com.claudemanager.app.data.models.KnowledgeEntry
 import com.claudemanager.app.data.models.KnowledgeSearchResponse
@@ -511,6 +512,13 @@ interface AgentApi {
      */
     @GET("api/kb/stats")
     suspend fun getKbStats(): Response<KbStats>
+
+    /**
+     * Usage + effectiveness analytics from the KB access log.
+     * @param days window size (1-365).
+     */
+    @GET("api/kb/analytics")
+    suspend fun getKbAnalytics(@Query("days") days: Int): Response<KbAnalytics>
 
     // ── Knowledge Hub: category tree ─────────────────────────────────────
 

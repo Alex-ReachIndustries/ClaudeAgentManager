@@ -281,6 +281,13 @@ data class KbEntryStats(
     @SerializedName("superseded") val superseded: Int = 0
 )
 
+/** Compact 7-day usage pulse embedded in GET /api/kb/stats. */
+data class KbUsage7d(
+    @SerializedName("accesses") val accesses: Int = 0,
+    @SerializedName("searches") val searches: Int = 0,
+    @SerializedName("hit_rate") val hitRate: Double? = null
+)
+
 /** Aggregate Knowledge Hub stats (GET /api/kb/stats). */
 data class KbStats(
     @SerializedName("entries") val entries: KbEntryStats = KbEntryStats(),
@@ -289,6 +296,96 @@ data class KbStats(
     @SerializedName("profiles") val profiles: Int = 0,
     @SerializedName("stale_entries") val staleEntries: Int = 0,
     @SerializedName("stale_profiles") val staleProfiles: Int = 0,
+    @SerializedName("usage_7d") val usage7d: KbUsage7d? = null,
     @SerializedName("embeddingsReady") val embeddingsReady: Boolean = false,
     @SerializedName("embedDim") val embedDim: Int = 0
+)
+
+// ── Analytics (GET /api/kb/analytics) ──────────────────────────────────────
+
+/** Access counts by action, over a window. */
+data class KbActionTotals(
+    @SerializedName("search") val search: Int = 0,
+    @SerializedName("view") val view: Int = 0,
+    @SerializedName("related") val related: Int = 0,
+    @SerializedName("propose") val propose: Int = 0
+)
+
+/** One day of the usage time series. */
+data class KbTimePoint(
+    @SerializedName("date") val date: String = "",
+    @SerializedName("search") val search: Int = 0,
+    @SerializedName("view") val view: Int = 0,
+    @SerializedName("related") val related: Int = 0,
+    @SerializedName("propose") val propose: Int = 0
+) {
+    val total: Int get() = search + view + related + propose
+}
+
+/** Aggregate search effectiveness over the window. */
+data class KbSearchAgg(
+    @SerializedName("total") val total: Int = 0,
+    @SerializedName("hits") val hits: Int = 0,
+    @SerializedName("misses") val misses: Int = 0,
+    @SerializedName("hit_rate") val hitRate: Double? = null,
+    @SerializedName("avg_latency_ms") val avgLatencyMs: Double? = null
+)
+
+/** A grouped search term (gaps / weak / top queries). */
+data class KbQueryStat(
+    @SerializedName("query") val query: String = "",
+    @SerializedName("times") val times: Int = 0,
+    @SerializedName("hits") val hits: Int = 0,
+    @SerializedName("avg_top_score") val avgTopScore: Double? = null,
+    @SerializedName("last_at") val lastAt: String? = null
+)
+
+/** A most-used entry row. */
+data class KbEntryUsage(
+    @SerializedName("entry_id") val entryId: Long = 0,
+    @SerializedName("title") val title: String? = null,
+    @SerializedName("status") val status: String? = null,
+    @SerializedName("views") val views: Int = 0,
+    @SerializedName("last_at") val lastAt: String? = null
+)
+
+/** Per-agent activity row. */
+data class KbAgentUsage(
+    @SerializedName("agent") val agent: String = "",
+    @SerializedName("searches") val searches: Int = 0,
+    @SerializedName("views") val views: Int = 0,
+    @SerializedName("related") val related: Int = 0,
+    @SerializedName("proposals") val proposals: Int = 0,
+    @SerializedName("total") val total: Int = 0,
+    @SerializedName("last_at") val lastAt: String? = null
+) {
+    val reads: Int get() = views + related
+}
+
+/** An approved-but-never-opened entry (dead weight). */
+data class KbNeverAccessedEntry(
+    @SerializedName("id") val id: Long = 0,
+    @SerializedName("title") val title: String = "",
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+data class KbNeverAccessed(
+    @SerializedName("count") val count: Int = 0,
+    @SerializedName("sample") val sample: List<KbNeverAccessedEntry> = emptyList()
+)
+
+/** Full analytics payload from GET /api/kb/analytics?days=N. */
+data class KbAnalytics(
+    @SerializedName("days") val days: Int = 30,
+    @SerializedName("logging_since") val loggingSince: String? = null,
+    @SerializedName("window_totals") val windowTotals: KbActionTotals = KbActionTotals(),
+    @SerializedName("all_time_totals") val allTimeTotals: KbActionTotals = KbActionTotals(),
+    @SerializedName("timeseries") val timeseries: List<KbTimePoint> = emptyList(),
+    @SerializedName("search") val search: KbSearchAgg = KbSearchAgg(),
+    @SerializedName("gaps") val gaps: List<KbQueryStat> = emptyList(),
+    @SerializedName("weak") val weak: List<KbQueryStat> = emptyList(),
+    @SerializedName("top_queries") val topQueries: List<KbQueryStat> = emptyList(),
+    @SerializedName("top_entries") val topEntries: List<KbEntryUsage> = emptyList(),
+    @SerializedName("by_agent") val byAgent: List<KbAgentUsage> = emptyList(),
+    @SerializedName("never_accessed") val neverAccessed: KbNeverAccessed = KbNeverAccessed()
 )

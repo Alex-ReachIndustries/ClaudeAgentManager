@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MenuBook
@@ -88,6 +89,7 @@ import com.claudemanager.app.ui.theme.LumiOnSurfaceTertiary
 import com.claudemanager.app.ui.theme.LumiPurple500
 import com.claudemanager.app.ui.theme.LumiSuccess
 import com.claudemanager.app.ui.theme.LumiWarning
+import kotlin.math.roundToInt
 
 /**
  * Knowledge Hub browse/search screen.
@@ -144,7 +146,8 @@ fun KnowledgeListScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     StatsHeader(
                         state = state,
-                        onPendingClick = onPendingClick
+                        onPendingClick = onPendingClick,
+                        onInsightsClick = viewModel::openInsights
                     )
                 }
 
@@ -435,6 +438,18 @@ fun KnowledgeListScreen(
             onSubmit = { title, body, category, tags, systems, source, rationale ->
                 viewModel.proposeNew(title, body, category, tags, systems, source, rationale)
             }
+        )
+    }
+
+    // Insights (analytics) dialog — full screen
+    if (state.showInsights) {
+        KnowledgeInsightsDialog(
+            analytics = state.analytics,
+            loading = state.loadingAnalytics,
+            days = state.analyticsDays,
+            onDaysChange = viewModel::setAnalyticsDays,
+            onRefresh = viewModel::loadAnalytics,
+            onDismiss = viewModel::closeInsights
         )
     }
 }
@@ -828,7 +843,8 @@ private fun CategoryEditDialog(
 @Composable
 private fun StatsHeader(
     state: KnowledgeListUiState,
-    onPendingClick: () -> Unit
+    onPendingClick: () -> Unit,
+    onInsightsClick: () -> Unit
 ) {
     val stats = state.stats
     Card(
@@ -924,6 +940,50 @@ private fun StatsHeader(
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Insights bar — opens the full analytics view; doubles as a 7-day pulse.
+            val usage = stats?.usage7d
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(LumiPurple500.copy(alpha = 0.12f))
+                    .clickable(onClick = onInsightsClick)
+                    .padding(horizontal = 10.dp, vertical = 9.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Insights,
+                        contentDescription = null,
+                        tint = LumiPurple500,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Insights",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = LumiPurple500,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = if (usage != null) {
+                            val hr = usage.hitRate?.let { " · ${(it * 100).roundToInt()}% hit" } ?: ""
+                            "${usage.searches} searches/7d$hr"
+                        } else "usage & effectiveness",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = LumiOnSurfaceTertiary,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
         }
