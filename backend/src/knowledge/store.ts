@@ -606,7 +606,7 @@ export function stats(): Record<string, unknown> {
 // ─── Access audit ────────────────────────────────────────────────────────────
 
 export interface AccessLogInput {
-  action: "search" | "view" | "related" | "propose";
+  action: "search" | "view" | "related" | "propose" | "surface";
   agent?: string | null;
   query?: string | null;
   type_filter?: string | null;
@@ -655,11 +655,11 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   const byAction = db.prepare(
     "SELECT action, COUNT(*) c FROM kb_access_log WHERE ts >= datetime('now', ?) GROUP BY action"
   ).all(since) as { action: string; c: number }[];
-  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0 };
+  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0 };
   for (const r of byAction) windowTotals[r.action] = r.c;
 
   const allTime = db.prepare("SELECT action, COUNT(*) c FROM kb_access_log GROUP BY action").all() as { action: string; c: number }[];
-  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0 };
+  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0 };
   for (const r of allTime) allTimeTotals[r.action] = r.c;
 
   // Daily time series (one row per day, counts per action).
@@ -740,11 +740,41 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
      ORDER BY e.created_at ASC LIMIT 20`
   ).all() as unknown[];
 
+  // Surface→open conversion: for each (agent, entry) we auto-surfaced in the window,
+  // did that agent then open it (view/related) at or after it was surfaced? This is the
+  // real proof that proactive retrieval is landing. result_ids is a JSON array → json_each.
+  const surfacing = db.prepare(
+    `WITH surfaced AS (
+       SELECT a.agent AS agent, CAST(j.value AS INTEGER) AS entry_id, MIN(a.ts) AS first_ts
+       FROM kb_access_log a, json_each(a.result_ids) j
+       WHERE a.action='surface' AND a.result_ids IS NOT NULL AND a.ts >= datetime('now', ?)
+       GROUP BY a.agent, entry_id
+     )
+     SELECT
+       (SELECT COUNT(*) FROM kb_access_log WHERE action='surface' AND ts >= datetime('now', ?)) AS surfaces,
+       (SELECT COUNT(*) FROM surfaced) AS entries_surfaced,
+       (SELECT COUNT(*) FROM surfaced s
+          WHERE EXISTS (
+            SELECT 1 FROM kb_access_log v
+            WHERE v.action IN ('view','related') AND v.agent = s.agent
+              AND v.entry_id = s.entry_id AND v.ts >= s.first_ts
+          )) AS entries_opened`
+  ).get(since, since) as { surfaces: number; entries_surfaced: number; entries_opened: number };
+  const openRate = surfacing.entries_surfaced
+    ? Number((surfacing.entries_opened / surfacing.entries_surfaced).toFixed(3))
+    : null;
+
   const first = db.prepare("SELECT MIN(ts) t FROM kb_access_log").get() as { t: string | null };
 
   return {
     days: win,
     logging_since: first.t,
+    surfacing: {
+      surfaces: surfacing.surfaces || 0,
+      entries_surfaced: surfacing.entries_surfaced || 0,
+      entries_opened: surfacing.entries_opened || 0,
+      open_rate: openRate,
+    },
     window_totals: windowTotals,
     all_time_totals: allTimeTotals,
     timeseries,
