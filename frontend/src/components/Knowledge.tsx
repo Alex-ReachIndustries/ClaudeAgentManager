@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Search, Loader2, BookOpen, Plus, X, AlertTriangle,
   Tag, Server, Hash, Sparkles, ChevronRight, FolderTree, Folder,
-  Pencil, Trash2, Link2, Layers,
+  Pencil, Trash2, Link2, Layers, TrendingUp,
 } from 'lucide-react';
+import KbInsights from './KbInsights';
 import {
   searchKnowledge, getKnowledgeEntry, proposeKnowledge, fetchKbStats,
   fetchKbTree, createCategory, updateCategory, deleteCategory,
@@ -172,6 +173,7 @@ export default function Knowledge() {
   const [stats, setStats] = useState<KbStats | null>(null);
   const [detailId, setDetailId] = useState<string | number | null>(null);
   const [showPropose, setShowPropose] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // --- category tree / browse state ---
@@ -281,13 +283,22 @@ export default function Knowledge() {
             <BookOpen size={22} className="text-lumi-400" /> Knowledge
           </h1>
         </div>
-        <button
-          onClick={() => setShowPropose(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-lumi-600 hover:bg-lumi-500 text-white text-sm rounded-lg transition-colors"
-        >
-          <Plus size={16} />
-          Propose Knowledge
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowInsights(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-dark-800 hover:bg-dark-700 text-dark-200 text-sm rounded-lg border border-dark-700 transition-colors"
+          >
+            <TrendingUp size={16} />
+            Insights
+          </button>
+          <button
+            onClick={() => setShowPropose(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-lumi-600 hover:bg-lumi-500 text-white text-sm rounded-lg transition-colors"
+          >
+            <Plus size={16} />
+            Propose Knowledge
+          </button>
+        </div>
       </div>
 
       {/* Stats line */}
@@ -296,6 +307,13 @@ export default function Knowledge() {
           <span><span className="text-dark-300 font-medium">{stats.entries.total}</span> entries ({stats.entries.approved} approved)</span>
           <span><span className="text-dark-300 font-medium">{stats.pending_queue}</span> pending</span>
           <span><span className="text-dark-300 font-medium">{stats.profiles}</span> profiles</span>
+          {stats.usage_7d && (
+            <button onClick={() => setShowInsights(true)} className="flex items-center gap-1 hover:text-dark-300 transition-colors">
+              <TrendingUp size={11} className="text-lumi-400" />
+              <span className="text-dark-300 font-medium">{stats.usage_7d.searches}</span> searches / 7d
+              {stats.usage_7d.hit_rate != null && <span>· {Math.round(stats.usage_7d.hit_rate * 100)}% hit</span>}
+            </button>
+          )}
           <span className="flex items-center gap-1">
             <Sparkles size={11} className={stats.embeddingsReady ? 'text-green-400' : 'text-dark-600'} />
             embeddings {stats.embeddingsReady ? 'ready' : 'building'}
@@ -444,6 +462,7 @@ export default function Knowledge() {
           }}
         />
       )}
+      {showInsights && <KbInsights onClose={() => setShowInsights(false)} />}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );

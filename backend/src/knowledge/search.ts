@@ -12,7 +12,9 @@ export interface SearchResult {
   title: string;
   snippet: string;
   status: string;
-  score: number;
+  score: number;      // normalized 0-1 blend, for ranking/display (relative to this result set)
+  sim: number;        // RAW vector cosine (absolute, comparable across queries); 0 if vector not used
+  kw: boolean;        // true if this result matched the keyword (FTS) index
   tags: string[];
   systems: string[];
 }
@@ -107,7 +109,9 @@ export async function hybridSearch(
     const score = vecUsed ? 0.5 * fN + 0.5 * vN : fN;
     return {
       id: a.id, type: a.type, title: a.title, snippet: a.snippet, status: a.status,
-      score: Number(score.toFixed(4)), tags: a.tags, systems: a.systems,
+      score: Number(score.toFixed(4)),
+      sim: Number(a.vec.toFixed(4)), kw: a.fts > 0,
+      tags: a.tags, systems: a.systems,
     };
   });
 

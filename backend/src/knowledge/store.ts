@@ -4,6 +4,7 @@
 // are (re)computed by the background embedder whenever embed_stale = 1.
 import { getDb } from "../db.js";
 import { bufferToVector } from "./embeddings.js";
+import { logger } from "../logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -568,6 +569,15 @@ export function stats(): Record<string, unknown> {
   const profiles = Number((db.prepare("SELECT COUNT(*) AS c FROM people_profiles").get() as { c: number }).c);
   const staleE = Number((db.prepare("SELECT COUNT(*) AS c FROM knowledge_entries WHERE embed_stale = 1").get() as { c: number }).c);
   const staleP = Number((db.prepare("SELECT COUNT(*) AS c FROM people_profiles WHERE embed_stale = 1").get() as { c: number }).c);
+  // Compact 7-day usage pulse for the stats header (full breakdown lives in accessAnalytics).
+  const pulse = db.prepare(`
+    SELECT
+      SUM(CASE WHEN action='search' THEN 1 ELSE 0 END) AS searches,
+      SUM(CASE WHEN action='search' AND hit=1 THEN 1 ELSE 0 END) AS hits,
+      COUNT(*) AS accesses
+    FROM kb_access_log WHERE ts >= datetime('now','-7 days')
+  `).get() as { searches: number | null; hits: number | null; accesses: number | null };
+  const searches7d = Number(pulse.searches ?? 0);
   return {
     entries: {
       total,
@@ -581,5 +591,171 @@ export function stats(): Record<string, unknown> {
     profiles,
     stale_entries: staleE,
     stale_profiles: staleP,
+    usage_7d: {
+      accesses: Number(pulse.accesses ?? 0),
+      searches: searches7d,
+      hit_rate: searches7d ? Number((Number(pulse.hits ?? 0) / searches7d).toFixed(3)) : null,
+    },
+  };
+}
+
+// ─── Access audit ────────────────────────────────────────────────────────────
+
+export interface AccessLogInput {
+  action: "search" | "view" | "related" | "propose";
+  agent?: string | null;
+  query?: string | null;
+  type_filter?: string | null;
+  result_count?: number | null;
+  top_score?: number | null;
+  hit?: boolean | null;
+  result_ids?: number[] | null;
+  entry_id?: number | null;
+  latency_ms?: number | null;
+  embeddings_ready?: boolean | null;
+}
+
+/** Record one KB access. Best-effort: any failure is swallowed so it never breaks a request. */
+export function logAccess(a: AccessLogInput): void {
+  try {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO kb_access_log
+        (action, agent, query, type_filter, result_count, top_score, hit, result_ids, entry_id, latency_ms, embeddings_ready)
+      VALUES
+        (@action, @agent, @query, @type_filter, @result_count, @top_score, @hit, @result_ids, @entry_id, @latency_ms, @embeddings_ready)
+    `).run({
+      action: a.action,
+      agent: a.agent ?? null,
+      query: a.query ?? null,
+      type_filter: a.type_filter ?? null,
+      result_count: a.result_count ?? null,
+      top_score: a.top_score ?? null,
+      hit: a.hit == null ? null : a.hit ? 1 : 0,
+      result_ids: a.result_ids && a.result_ids.length ? JSON.stringify(a.result_ids) : null,
+      entry_id: a.entry_id ?? null,
+      latency_ms: a.latency_ms ?? null,
+      embeddings_ready: a.embeddings_ready == null ? null : a.embeddings_ready ? 1 : 0,
+    });
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "KB access log insert failed");
+  }
+}
+
+/** Aggregate usage + effectiveness metrics over the last `days` days. */
+export function accessAnalytics(days = 30): Record<string, unknown> {
+  const db = getDb();
+  const win = Math.max(1, Math.min(days, 365));
+  const since = `-${win} days`;
+
+  const byAction = db.prepare(
+    "SELECT action, COUNT(*) c FROM kb_access_log WHERE ts >= datetime('now', ?) GROUP BY action"
+  ).all(since) as { action: string; c: number }[];
+  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0 };
+  for (const r of byAction) windowTotals[r.action] = r.c;
+
+  const allTime = db.prepare("SELECT action, COUNT(*) c FROM kb_access_log GROUP BY action").all() as { action: string; c: number }[];
+  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0 };
+  for (const r of allTime) allTimeTotals[r.action] = r.c;
+
+  // Daily time series (one row per day, counts per action).
+  const rawSeries = db.prepare(
+    "SELECT date(ts) d, action, COUNT(*) c FROM kb_access_log WHERE ts >= datetime('now', ?) GROUP BY date(ts), action ORDER BY d"
+  ).all(since) as { d: string; action: string; c: number }[];
+  const seriesMap = new Map<string, { date: string; search: number; view: number; related: number; propose: number }>();
+  for (const r of rawSeries) {
+    let day = seriesMap.get(r.d);
+    if (!day) { day = { date: r.d, search: 0, view: 0, related: 0, propose: 0 }; seriesMap.set(r.d, day); }
+    if (r.action in day) (day as Record<string, number | string>)[r.action] = r.c;
+  }
+  const timeseries = [...seriesMap.values()];
+
+  const searchAgg = db.prepare(
+    `SELECT COUNT(*) total,
+            SUM(CASE WHEN hit=1 THEN 1 ELSE 0 END) hits,
+            SUM(CASE WHEN hit=0 THEN 1 ELSE 0 END) misses,
+            ROUND(AVG(latency_ms),1) avg_latency_ms
+     FROM kb_access_log WHERE action='search' AND ts >= datetime('now', ?)`
+  ).get(since) as { total: number; hits: number | null; misses: number | null; avg_latency_ms: number | null };
+  const total = searchAgg.total || 0;
+
+  // GAPS — search terms that returned nothing (grouped, case-insensitive). The primary "what to write next" signal.
+  const gaps = db.prepare(
+    `SELECT query, COUNT(*) times, MAX(ts) last_at
+     FROM kb_access_log
+     WHERE action='search' AND hit=0 AND query IS NOT NULL AND ts >= datetime('now', ?)
+     GROUP BY lower(trim(query)) ORDER BY times DESC, last_at DESC LIMIT 30`
+  ).all(since) as unknown[];
+
+  // WEAK — searches that "hit" but only marginally (top raw cosine below a good-match bar):
+  // the topic is under-served and worth strengthening. top_score here is the raw cosine.
+  const weakBar = Number.parseFloat(process.env.KB_WEAK_MAX_SIM || "0.68");
+  const weak = db.prepare(
+    `SELECT query, COUNT(*) times, ROUND(AVG(top_score),3) avg_top_score, MAX(ts) last_at
+     FROM kb_access_log
+     WHERE action='search' AND hit=1 AND top_score IS NOT NULL AND top_score < ? AND ts >= datetime('now', ?)
+     GROUP BY lower(trim(query)) ORDER BY times DESC, last_at DESC LIMIT 30`
+  ).all(weakBar, since) as unknown[];
+
+  const topQueries = db.prepare(
+    `SELECT query, COUNT(*) times,
+            SUM(CASE WHEN hit=1 THEN 1 ELSE 0 END) hits, MAX(ts) last_at
+     FROM kb_access_log
+     WHERE action='search' AND query IS NOT NULL AND ts >= datetime('now', ?)
+     GROUP BY lower(trim(query)) ORDER BY times DESC, last_at DESC LIMIT 30`
+  ).all(since) as unknown[];
+
+  const topEntries = db.prepare(
+    `SELECT a.entry_id, e.title, e.status, COUNT(*) views, MAX(a.ts) last_at
+     FROM kb_access_log a LEFT JOIN knowledge_entries e ON e.id = a.entry_id
+     WHERE a.action IN ('view','related') AND a.entry_id IS NOT NULL AND a.ts >= datetime('now', ?)
+     GROUP BY a.entry_id ORDER BY views DESC, last_at DESC LIMIT 25`
+  ).all(since) as unknown[];
+
+  const byAgent = db.prepare(
+    `SELECT COALESCE(agent,'(unknown)') agent,
+            SUM(CASE WHEN action='search' THEN 1 ELSE 0 END) searches,
+            SUM(CASE WHEN action='view' THEN 1 ELSE 0 END) views,
+            SUM(CASE WHEN action='related' THEN 1 ELSE 0 END) related,
+            SUM(CASE WHEN action='propose' THEN 1 ELSE 0 END) proposals,
+            COUNT(*) total, MAX(ts) last_at
+     FROM kb_access_log WHERE ts >= datetime('now', ?)
+     GROUP BY COALESCE(agent,'(unknown)') ORDER BY total DESC LIMIT 50`
+  ).all(since) as unknown[];
+
+  // Dead weight — approved entries never opened (all-time), candidates to improve or retire.
+  const neverAccessed = db.prepare(
+    `SELECT COUNT(*) c FROM knowledge_entries e
+     WHERE e.status='approved' AND e.hit_count = 0
+       AND NOT EXISTS (SELECT 1 FROM kb_access_log a WHERE a.entry_id = e.id AND a.action IN ('view','related'))`
+  ).get() as { c: number };
+  const neverAccessedSample = db.prepare(
+    `SELECT e.id, e.title, e.created_at FROM knowledge_entries e
+     WHERE e.status='approved' AND e.hit_count = 0
+       AND NOT EXISTS (SELECT 1 FROM kb_access_log a WHERE a.entry_id = e.id AND a.action IN ('view','related'))
+     ORDER BY e.created_at ASC LIMIT 20`
+  ).all() as unknown[];
+
+  const first = db.prepare("SELECT MIN(ts) t FROM kb_access_log").get() as { t: string | null };
+
+  return {
+    days: win,
+    logging_since: first.t,
+    window_totals: windowTotals,
+    all_time_totals: allTimeTotals,
+    timeseries,
+    search: {
+      total,
+      hits: Number(searchAgg.hits ?? 0),
+      misses: Number(searchAgg.misses ?? 0),
+      hit_rate: total ? Number((Number(searchAgg.hits ?? 0) / total).toFixed(3)) : null,
+      avg_latency_ms: searchAgg.avg_latency_ms ?? null,
+    },
+    gaps,
+    weak,
+    top_queries: topQueries,
+    top_entries: topEntries,
+    by_agent: byAgent,
+    never_accessed: { count: neverAccessed.c, sample: neverAccessedSample },
   };
 }

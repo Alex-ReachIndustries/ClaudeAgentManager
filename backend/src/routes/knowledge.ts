@@ -5,6 +5,7 @@ import express, { Request, Response, Router } from "express";
 import { z } from "zod";
 import { validate } from "../middleware/validate.js";
 import { logger } from "../logger.js";
+import { getDb } from "../db.js";
 import { hybridSearch } from "../knowledge/search.js";
 import { scanConflicts } from "../knowledge/conflict.js";
 import { broadcast } from "../sse.js";
@@ -14,6 +15,7 @@ import { embeddingsReady, embeddingDim } from "../knowledge/embeddings.js";
 import {
   createProposal, getEntry, listPending, getPending, decideProposal,
   upsertProfile, getProfile, listProfiles, stats, countEntries,
+  logAccess, accessAnalytics,
 } from "../knowledge/store.js";
 import {
   listCategories, getCategory, createCategory, updateCategory, deleteCategory,
@@ -22,6 +24,27 @@ import {
 } from "../knowledge/categories.js";
 
 const router: Router = express.Router();
+
+// Absolute relevance floor: a search counts as a "hit" if it keyword-matched OR its top
+// raw vector cosine reached this. Tuned for bge-small-en-v1.5 (related ~0.6-0.8, unrelated
+// ~0.3-0.5); override via env if the embedding model changes.
+const KB_HIT_MIN_SIM = Number.parseFloat(process.env.KB_HIT_MIN_SIM || "0.55");
+
+// Best-effort attribution of the calling agent for the audit log. Agents pass their
+// identity via ?agent= (the /kb command sends $CLAUDE_AGENT_ID) or an X-Agent-Id
+// header; unattributed callers (e.g. the dashboard) are logged as NULL / "(unknown)".
+// If the value is a known agent session id, resolve it to the friendly title so the
+// analytics read as names, not UUIDs.
+function callerAgent(req: Request): string | null {
+  const raw = String(req.query.agent ?? req.header("x-agent-id") ?? req.header("x-agent") ?? "").trim();
+  if (!raw) return null;
+  try {
+    const row = getDb().prepare("SELECT base_title, title FROM agents WHERE id = ?").get(raw) as
+      { base_title?: string; title?: string } | undefined;
+    if (row) return (row.base_title || row.title || raw).trim() || raw;
+  } catch { /* fall through to raw value */ }
+  return raw;
+}
 
 // ─── Schemas ───────────────────────────────────────────────────────────────
 
@@ -105,12 +128,37 @@ router.get("/search", async (req: Request, res: Response) => {
   const type = (["all", "knowledge", "profile"].includes(typeParam) ? typeParam : "all") as "all" | "knowledge" | "profile";
   const limitRaw = parseInt(String(req.query.limit ?? "8"), 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 8;
+  const started = Date.now();
   try {
     const results = await hybridSearch(q, { type, limit });
     // Attach category memberships (id + name + breadcrumb) to knowledge hits.
     const enriched = results.map((r) =>
       r.type === "knowledge" ? { ...r, categories: membershipsForEntry(r.id) } : r
     );
+    // Hybrid search always returns the top-N by a *normalized* score, so a raw count
+    // is a useless hit signal (even gibberish returns something). Judge relevance by an
+    // ABSOLUTE measure: a keyword (FTS) match, or a raw vector cosine above a floor.
+    const vecReady = embeddingsReady();
+    const topSim = results.length ? Math.max(...results.map((r) => r.sim)) : 0;
+    const kwMatched = results.some((r) => r.kw);
+    // Semantic cosine is the honest relevance measure. When embeddings are ready (the
+    // normal case) judge purely on it — FTS matches on common words ("how", "to") would
+    // otherwise mark off-topic queries as hits. Fall back to keyword-match only during
+    // the brief warmup before the embedding model is loaded.
+    const hit = vecReady ? topSim >= KB_HIT_MIN_SIM : kwMatched;
+    logAccess({
+      action: "search",
+      agent: callerAgent(req),
+      query: q,
+      type_filter: type,
+      result_count: results.length,
+      // Log the raw top cosine (absolute, comparable across queries) — null when FTS-only.
+      top_score: vecReady && results.length ? Number(topSim.toFixed(4)) : null,
+      hit,
+      result_ids: results.filter((r) => r.type === "knowledge").map((r) => r.id).slice(0, 10),
+      latency_ms: Date.now() - started,
+      embeddings_ready: vecReady,
+    });
     res.json({ query: q, type, embeddingsReady: embeddingsReady(), results: enriched });
   } catch (err) {
     logger.error({ err }, "KB search failed");
@@ -161,6 +209,7 @@ router.post("/propose", validate(proposeSchema), async (req: Request, res: Respo
       `${body.agent ? body.agent + " proposed: " : ""}${kbTitle}${conflicts.length ? ` (${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""})` : ""}`,
       "/knowledge/pending",
     ).catch((err) => logger.warn({ err }, "KB push notify failed"));
+    logAccess({ action: "propose", agent: body.agent ?? callerAgent(req), entry_id });
     res.json({ entry_id, pending_id, conflicts });
   } catch (err) {
     logger.error({ err }, "KB propose failed");
@@ -217,6 +266,18 @@ router.post("/profiles", validate(profileSchema), (req: Request, res: Response) 
 // GET /api/kb/stats
 router.get("/stats", (_req: Request, res: Response) => {
   res.json({ ...stats(), embeddingsReady: embeddingsReady(), embedDim: embeddingDim() });
+});
+
+// GET /api/kb/analytics?days=30 — usage + effectiveness metrics from the access log.
+router.get("/analytics", (req: Request, res: Response) => {
+  const daysRaw = parseInt(String(req.query.days ?? "30"), 10);
+  const days = Number.isFinite(daysRaw) ? Math.min(Math.max(daysRaw, 1), 365) : 30;
+  try {
+    res.json(accessAnalytics(days));
+  } catch (err) {
+    logger.error({ err }, "KB analytics failed");
+    res.status(500).json({ error: "Analytics failed" });
+  }
 });
 
 // POST /api/kb/seed — import operator markdown. Guarded: only runs on an empty
@@ -338,7 +399,9 @@ router.get("/:id/related", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
-    res.json({ entry_id: id, data: await relatedEntries(id) });
+    const data = await relatedEntries(id);
+    logAccess({ action: "related", agent: callerAgent(req), entry_id: id });
+    res.json({ entry_id: id, data });
   } catch (err) {
     logger.error({ err }, "KB related failed");
     res.status(500).json({ error: "Related lookup failed" });
@@ -350,6 +413,7 @@ router.get("/:id", (req: Request, res: Response) => {
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const entry = getEntry(id);
   if (!entry || entry.status === "rejected") { res.status(404).json({ error: "Entry not found" }); return; }
+  logAccess({ action: "view", agent: callerAgent(req), entry_id: id });
   res.json(withMemberships(entry));
 });
 
