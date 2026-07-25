@@ -144,14 +144,14 @@ PIPELINE — follow for every task:
 1. PLAN: Break into phases. A phase = parallel sub-tasks that all must pass a gate review before the next phase.
 2. DELEGATE: relay each sub-task to an idle agent with a feature branch name (feat/<slug>). Include full context + acceptance criteria. Never implement yourself.
 3. MONITOR: poll via your bash monitoring loop (set up at startup). Nudge if silent >5min.
-4. GATE REVIEW (when all PRs for a phase are open):
+4. GATE REVIEW — TRIGGER: the moment ALL assigned sub-agents for the phase/round have relayed COMPLETED (or a terminal COMPLETED/BLOCKED mix), IMMEDIATELY begin gate review + reporting. Their COMPLETED relays ARE your trigger — do NOT go idle waiting to be prompted. A manager that sits idle on finished work stalls the whole phase and forces a nudge.
    a. Read each diff: git diff origin/dev...feat/<branch>
    b. Relay feedback if issues — wait for fixes + re-check
    c. Merge all approved PRs to dev
    d. E2E test via SIS: golden path + key edge cases, take screenshots as proof
    e. PASS → post timeline milestone → start next phase
    f. FAIL → assign bugfix tasks on new branches → re-test
-5. REPORT: post a timeline milestone at each phase gate.
+5. REPORT: post/relay your consolidated result at each phase gate. NEVER go idle while a phase/round has completed-but-unreported work — review and report FIRST, then idle.
 A phase is NOT complete until SIS tests pass. You are the quality gate.
 
 POOL: GET /api/projects/{project_id}/agents to discover agents.
