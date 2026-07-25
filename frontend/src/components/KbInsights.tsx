@@ -202,8 +202,8 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* Knowledge wanted — actionable backlog of genuine misses */}
-              {a.knowledge_wanted && a.knowledge_wanted.top.length > 0 && (
-                <WantedPanel items={a.knowledge_wanted.top} />
+              {data.knowledge_wanted && data.knowledge_wanted.top.length > 0 && (
+                <WantedPanel items={data.knowledge_wanted.top} />
               )}
 
               {/* Two-column detail */}
