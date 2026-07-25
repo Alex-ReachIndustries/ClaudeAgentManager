@@ -20,7 +20,7 @@ import knowledgeRouter from "./routes/knowledge.js";
 import { warmEmbeddings } from "./knowledge/embeddings.js";
 import { startEmbedder } from "./knowledge/embedder.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
-import { archiveInactiveAgents, getAgent, getDb, getFileByIdOnly, touchAgentHeartbeat, updateAgent } from "./db.js";
+import { archiveInactiveAgents, getAgent, getDb, getFileByIdOnly, touchAgentHeartbeat, updateAgent, nudgeStalledAgents } from "./db.js";
 import { initPush } from "./push.js";
 import { initWebhookDispatcher } from "./webhook-dispatcher.js";
 import { initWorkflowEngine } from "./workflow-engine.js";
@@ -183,6 +183,17 @@ const server = app.listen(PORT, () => {
     }
 
   }, 5 * 60 * 1000);
+
+  // Re-engagement sweep: nudge idle agents that acked a task but never reported
+  // (completed-but-unreported / stalled after a self-compact). One nudge per idle spell.
+  setInterval(() => {
+    try {
+      const nudged = nudgeStalledAgents(10);
+      if (nudged.length) logger.info({ nudged }, `Re-engagement nudged ${nudged.length} stalled agent(s)`);
+    } catch (err) {
+      logger.error({ err }, "Error in re-engagement sweep");
+    }
+  }, 3 * 60 * 1000);
 });
 
 // Feature 7: Graceful shutdown
