@@ -646,6 +646,55 @@ export function logAccess(a: AccessLogInput): void {
   }
 }
 
+// ─── Knowledge wanted (misses → actionable backlog) ─────────────────────────
+
+/** Record a genuine search miss as a deduped "knowledge wanted" item. Best-effort. */
+export function recordWanted(query: string, agent: string | null): void {
+  const q = (query || "").trim();
+  const norm = q.toLowerCase();
+  // Skip trivial/gibberish: need a real word and some length.
+  if (norm.length < 8 || !/[a-z]{3,}/.test(norm)) return;
+  try {
+    const db = getDb();
+    const existing = db.prepare("SELECT id, agents FROM kb_wanted WHERE norm_query = ?").get(norm) as
+      { id: number; agents: string } | undefined;
+    if (existing) {
+      let agents: string[] = [];
+      try { agents = JSON.parse(existing.agents) as string[]; } catch { agents = []; }
+      if (agent && !agents.includes(agent)) agents.push(agent);
+      db.prepare(
+        "UPDATE kb_wanted SET times = times + 1, query = ?, agents = ?, last_seen = datetime('now'), " +
+        "status = CASE WHEN status = 'dismissed' THEN 'dismissed' ELSE 'open' END WHERE id = ?"
+      ).run(q, JSON.stringify(agents.slice(0, 20)), existing.id);
+    } else {
+      db.prepare("INSERT INTO kb_wanted (norm_query, query, agents) VALUES (?, ?, ?)")
+        .run(norm, q, JSON.stringify(agent ? [agent] : []));
+    }
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "KB recordWanted failed");
+  }
+}
+
+export function listWanted(status = "open"): Record<string, unknown>[] {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT * FROM kb_wanted WHERE status = ? ORDER BY times DESC, last_seen DESC LIMIT 100"
+  ).all(status) as Record<string, unknown>[];
+  return rows.map((r) => ({ ...r, agents: JSON.parse((r.agents as string) || "[]") }));
+}
+
+export function decideWanted(id: number, status: "filled" | "dismissed" | "open", by?: string, filledEntryId?: number | null): boolean {
+  try {
+    const db = getDb();
+    const res = db.prepare(
+      "UPDATE kb_wanted SET status = ?, decided_at = datetime('now'), decided_by = ?, filled_entry_id = ? WHERE id = ?"
+    ).run(status, by ?? null, filledEntryId ?? null, id);
+    return res.changes > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Aggregate usage + effectiveness metrics over the last `days` days. */
 export function accessAnalytics(days = 30): Record<string, unknown> {
   const db = getDb();
@@ -766,9 +815,15 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
 
   const first = db.prepare("SELECT MIN(ts) t FROM kb_access_log").get() as { t: string | null };
 
+  const wantedOpen = Number((db.prepare("SELECT COUNT(*) c FROM kb_wanted WHERE status='open'").get() as { c: number }).c);
+  const wantedTop = db.prepare(
+    "SELECT id, query, times, last_seen FROM kb_wanted WHERE status='open' ORDER BY times DESC, last_seen DESC LIMIT 10"
+  ).all() as unknown[];
+
   return {
     days: win,
     logging_since: first.t,
+    knowledge_wanted: { open: wantedOpen, top: wantedTop },
     surfacing: {
       surfaces: surfacing.surfaces || 0,
       entries_surfaced: surfacing.entries_surfaced || 0,
