@@ -26,8 +26,10 @@ export const updateSchema = z.object({
   content: z
     .union([z.string().max(1_048_576), z.record(z.unknown())])
     .transform((v) => (typeof v === "string" ? v : JSON.stringify(v))),
-  summary: z.string().max(500).optional(),
-  title: z.string().max(200).optional(),
+  // Truncate over-long summaries gracefully (to 500) instead of rejecting the whole
+  // update with a 400 — a long summary was a common silent papercut for agents.
+  summary: z.string().max(8_000).transform((s) => (s.length > 500 ? s.slice(0, 499) + "…" : s)).optional(),
+  title: z.string().max(400).transform((s) => (s.length > 200 ? s.slice(0, 199) + "…" : s)).optional(),
   status: z.enum(agentStatuses).optional(),
   progress: z.number().int().min(0).max(100).optional(),
   projects: z.array(z.unknown()).optional(),

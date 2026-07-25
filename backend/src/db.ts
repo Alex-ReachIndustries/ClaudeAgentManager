@@ -277,6 +277,12 @@ export function getDb(): Database.Database {
   migrate("ALTER TABLE agents ADD COLUMN rules_injected_at TEXT");
   migrate("ALTER TABLE agents ADD COLUMN rules_due_reason TEXT DEFAULT 'new-session'");
 
+  // Re-engagement nudge: agents act on messages, so an agent that acked a task but then
+  // went idle without reporting (completed-but-unreported, or unfinished after a self-compact)
+  // can sit dormant with nothing to prompt it. last_nudged_at tracks the one nudge we send
+  // per idle spell (see nudgeStalledAgents).
+  migrate("ALTER TABLE agents ADD COLUMN last_nudged_at TEXT");
+
   // Reply/reference (WhatsApp-style): a message may quote a prior message/update/file.
   // Stored structurally so clients render a ghost quote + tap-to-jump; the textual
   // reference is injected only at delivery time (kept out of the stored body).
@@ -1004,6 +1010,51 @@ export function addMessage(agentId: string, content: string, source: string = "u
     return result;
   });
   return transaction();
+}
+
+/**
+ * Re-engagement sweep: find idle agents that acked a message but posted no completion
+ * (type=text) update since — i.e. completed-but-unreported or stalled after a self-compact —
+ * and send exactly ONE nudge per idle spell. The `last_nudged_at < last_update_at` guard
+ * ensures a truly-stuck agent is nudged once and then allowed to archive naturally (it is
+ * only eligible again after it posts a fresh update). Excludes standby pool agents and
+ * `waiting-for-input` agents (they legitimately wait on the user).
+ */
+export function nudgeStalledAgents(idleMinutes = 10): string[] {
+  const db = getDb();
+  const candidates = db.prepare(`
+    SELECT a.id, a.title
+    FROM agents a
+    WHERE a.status = 'idle'
+      AND COALESCE(a.role, '') != 'standby'
+      AND (julianday('now') - julianday(a.last_update_at)) * 1440 > ?
+      AND (a.last_nudged_at IS NULL OR a.last_nudged_at < a.last_update_at)
+      AND EXISTS (
+        SELECT 1 FROM messages m
+        WHERE m.agent_id = a.id AND m.acknowledged_at IS NOT NULL
+          -- only RECENT unreported work — avoid waking agents that acked something long ago
+          AND m.acknowledged_at > datetime('now', '-6 hours')
+          AND m.acknowledged_at > COALESCE(
+            (SELECT MAX(u.timestamp) FROM updates u WHERE u.agent_id = a.id AND u.type = 'text'),
+            '1970-01-01')
+      )
+  `).all(idleMinutes) as { id: string; title: string }[];
+
+  if (candidates.length === 0) return [];
+  const nudge =
+    "[SYSTEM RE-ENGAGEMENT] You've been idle for a while since acking a message, with no completion/report posted since. " +
+    "If you have UNFINISHED or UNREPORTED work: re-read claudeadmin/context-summary.md and your recent messages, then continue and post a type=text completion update. " +
+    "If you are genuinely finished, post a brief completion so we know. (Automated nudge — it stops once you post any update.)";
+  const mark = db.prepare("UPDATE agents SET last_nudged_at = datetime('now') WHERE id = ?");
+  const nudged: string[] = [];
+  for (const c of candidates) {
+    try {
+      addMessage(c.id, nudge, "system", undefined, 0, undefined, "standard");
+      mark.run(c.id);
+      nudged.push(c.title || c.id);
+    } catch { /* best-effort — never let one failure stop the sweep */ }
+  }
+  return nudged;
 }
 
 // Safety-net: auto-acknowledge delivered messages that have been waiting > 5 minutes.
