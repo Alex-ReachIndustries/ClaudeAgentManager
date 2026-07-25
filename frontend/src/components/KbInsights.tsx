@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Search, Eye, Plus, Users, Target, AlertTriangle, TrendingUp } from 'lucide-react';
-import { fetchKbAnalytics, type KbAnalytics } from '../api';
+import { X, Search, Eye, Plus, Users, Target, AlertTriangle, TrendingUp, Inbox } from 'lucide-react';
+import { fetchKbAnalytics, decideKbWanted, type KbAnalytics } from '../api';
 
 const RANGES = [7, 30, 90] as const;
 
@@ -75,6 +75,40 @@ function ListPanel({
       <div className="flex items-center gap-1.5 text-sm font-medium text-dark-200 mb-1">{icon}{title}</div>
       {hint && <div className="text-[11px] text-dark-500 mb-3">{hint}</div>}
       {empty ? <div className="text-xs text-dark-600 py-3">Nothing here yet.</div> : <div className="space-y-1.5 mt-2">{children}</div>}
+    </div>
+  );
+}
+
+function WantedPanel({ items }: { items: NonNullable<KbAnalytics['knowledge_wanted']>['top'] }) {
+  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  const visible = items.filter((w) => !dismissed.has(w.id));
+  return (
+    <div className="bg-dark-900 border border-amber-600/30 rounded-lg p-4">
+      <div className="flex items-center gap-1.5 text-sm font-medium text-dark-200 mb-1">
+        <Inbox size={14} className="text-amber-400" />Knowledge wanted
+      </div>
+      <div className="text-[11px] text-dark-500 mb-3">Genuine search misses — write these, or dismiss the noise.</div>
+      {visible.length === 0 ? (
+        <div className="text-xs text-dark-600 py-2">Backlog clear.</div>
+      ) : (
+        <div className="space-y-1.5">
+          {visible.map((w) => (
+            <div key={w.id} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-dark-300 truncate">{w.query}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-amber-400/80 tabular-nums">{w.times}×</span>
+                <button
+                  title="Dismiss"
+                  onClick={async () => { setDismissed((p) => new Set(p).add(w.id)); try { await decideKbWanted(w.id, 'dismissed'); } catch { /* optimistic */ } }}
+                  className="text-dark-600 hover:text-dark-300 transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -166,6 +200,11 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
                 </div>
                 <UsageChart series={data.timeseries} />
               </div>
+
+              {/* Knowledge wanted — actionable backlog of genuine misses */}
+              {a.knowledge_wanted && a.knowledge_wanted.top.length > 0 && (
+                <WantedPanel items={a.knowledge_wanted.top} />
+              )}
 
               {/* Two-column detail */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

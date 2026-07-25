@@ -304,6 +304,7 @@ export interface KbAnalytics {
   days: number;
   logging_since: string | null;
   surfacing?: { surfaces: number; entries_surfaced: number; entries_opened: number; open_rate: number | null };
+  knowledge_wanted?: { open: number; top: { id: number; query: string; times: number; last_seen: string }[] };
   window_totals: { search: number; view: number; related: number; propose: number; surface?: number };
   all_time_totals: { search: number; view: number; related: number; propose: number; surface?: number };
   timeseries: { date: string; search: number; view: number; related: number; propose: number }[];
@@ -365,6 +366,10 @@ export async function fetchKbStats(): Promise<KbStats> {
 
 export async function fetchKbAnalytics(days = 30): Promise<KbAnalytics> {
   return request<KbAnalytics>(`/kb/analytics?days=${encodeURIComponent(String(days))}`);
+}
+
+export async function decideKbWanted(id: number, status: 'filled' | 'dismissed' | 'open'): Promise<{ ok: boolean }> {
+  return request(`/kb/wanted/${id}/decide`, { method: 'POST', body: JSON.stringify({ status, by: 'dashboard' }) });
 }
 
 // --- KB Category Tree / membership ---
