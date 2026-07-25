@@ -125,6 +125,26 @@ export function initKnowledgeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_kb_access_action ON kb_access_log(action);
     CREATE INDEX IF NOT EXISTS idx_kb_access_agent ON kb_access_log(agent);
     CREATE INDEX IF NOT EXISTS idx_kb_access_entry ON kb_access_log(entry_id);
+
+    -- "Knowledge wanted": a genuine search miss (nothing relevant found) becomes an
+    -- actionable, deduped backlog item so the gap gets filled instead of forgotten.
+    -- norm_query (lower/trimmed) is the dedup key; times counts repeat demand.
+    CREATE TABLE IF NOT EXISTS kb_wanted (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      norm_query TEXT NOT NULL UNIQUE,
+      query TEXT NOT NULL,                      -- most recent original phrasing
+      times INTEGER NOT NULL DEFAULT 1,
+      agents TEXT NOT NULL DEFAULT '[]',        -- JSON array of distinct requesting agents
+      status TEXT NOT NULL DEFAULT 'open'
+        CHECK(status IN ('open','filled','dismissed')),
+      filled_entry_id INTEGER,
+      first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_at TEXT,
+      decided_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_wanted_status ON kb_wanted(status);
+    CREATE INDEX IF NOT EXISTS idx_kb_wanted_last ON kb_wanted(last_seen);
   `);
 
   // Per-category minimum auto-classify score (overrides the global threshold). Lets an

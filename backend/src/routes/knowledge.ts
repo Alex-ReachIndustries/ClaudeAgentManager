@@ -15,7 +15,7 @@ import { embeddingsReady, embeddingDim } from "../knowledge/embeddings.js";
 import {
   createProposal, getEntry, listPending, getPending, decideProposal,
   upsertProfile, getProfile, listProfiles, stats, countEntries,
-  logAccess, accessAnalytics,
+  logAccess, accessAnalytics, recordWanted, listWanted, decideWanted,
 } from "../knowledge/store.js";
 import {
   listCategories, getCategory, createCategory, updateCategory, deleteCategory,
@@ -146,9 +146,12 @@ router.get("/search", async (req: Request, res: Response) => {
     // otherwise mark off-topic queries as hits. Fall back to keyword-match only during
     // the brief warmup before the embedding model is loaded.
     const hit = vecReady ? topSim >= KB_HIT_MIN_SIM : kwMatched;
+    const searchAgent = callerAgent(req);
+    // A genuine miss → actionable "knowledge wanted" backlog item (deduped).
+    if (!hit) recordWanted(q, searchAgent);
     logAccess({
       action: "search",
-      agent: callerAgent(req),
+      agent: searchAgent,
       query: q,
       type_filter: type,
       result_count: results.length,
@@ -278,6 +281,26 @@ router.get("/analytics", (req: Request, res: Response) => {
     logger.error({ err }, "KB analytics failed");
     res.status(500).json({ error: "Analytics failed" });
   }
+});
+
+// GET /api/kb/wanted?status=open — the "knowledge wanted" backlog (misses to fill).
+router.get("/wanted", (req: Request, res: Response) => {
+  const statusParam = String(req.query.status ?? "open");
+  const status = ["open", "filled", "dismissed"].includes(statusParam) ? statusParam : "open";
+  res.json({ data: listWanted(status) });
+});
+
+// POST /api/kb/wanted/:id/decide — mark a wanted item filled/dismissed/open.
+router.post("/wanted/:id/decide", (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const status = String(req.body?.status ?? "");
+  if (!["filled", "dismissed", "open"].includes(status)) {
+    res.status(400).json({ error: "status must be filled|dismissed|open" }); return;
+  }
+  const ok = decideWanted(id, status as "filled" | "dismissed" | "open", req.body?.by, req.body?.filled_entry_id);
+  if (!ok) { res.status(404).json({ error: "Wanted item not found" }); return; }
+  res.json({ ok: true });
 });
 
 // POST /api/kb/seed — import operator markdown. Guarded: only runs on an empty
