@@ -47,12 +47,12 @@ sleep 5
 # Launch Cam — the system manager agent (only if not already running)
 echo "[$(date -u +%H:%M:%S)] Launching Cam (system manager agent)..."
 # Write cam model config so session-connect can include it in registration (used by launchResumeAgent to pick the right model on resume)
-echo -n "sonnet" > ~/.claude/cam-model
+echo -n "claude-sonnet-5" > ~/.claude/cam-model
 echo -n "high" > ~/.claude/cam-effort
 # Check if a tmux session named "Dailies" already exists
 if ! tmux has-session -t "Dailies" 2>/dev/null; then
     tmux new-session -d -s "Dailies" -n "Cam - System Manager" \
-        "bash -c 'cd \"$CM_DIR\" && exec claude --model sonnet --effort high --dangerously-skip-permissions \"You are Cam, the ClaudeManager system manager agent. Run /session-connect then: (1) post-reboot triage — assess every agent record per feedback_reboot_recovery.md, archive obvious orphans, surface real-work resumes; (2) once triage is done, start the launcher daemon (it processes live launch_requests automatically — see step in startup.sh and feedback_cam_is_spawn_gatekeeper.md); (3) re-establish the monitoring schedule per ~/.claude/memory/feedback_monitoring_schedule.md (five recurring crons: 15-min message audit + three monitoring ticks + one daily maintenance cron — list with CronList first, only create those that are not already scheduled); (4) keep system resources tidy and ensure project managers are alive. Title: Cam — System Manager.\"'"
+        "bash -c 'cd \"$CM_DIR\" && exec claude --model claude-sonnet-5 --effort high --dangerously-skip-permissions \"You are Cam, the ClaudeManager system manager agent. Run /session-connect then: (1) post-reboot triage — assess every agent record per feedback_reboot_recovery.md, archive obvious orphans, surface real-work resumes; (2) once triage is done, start the launcher daemon (it processes live launch_requests automatically — see step in startup.sh and feedback_cam_is_spawn_gatekeeper.md); (3) re-establish the monitoring schedule per ~/.claude/memory/feedback_monitoring_schedule.md (five recurring crons: 15-min message audit + three monitoring ticks + one daily maintenance cron — list with CronList first, only create those that are not already scheduled); (4) keep system resources tidy and ensure project managers are alive. Title: Cam — System Manager.\"'"
     # Open a desktop terminal window attached to the Dailies session if a GUI is available.
     # Tries Cinnamon's terminal first (Mint), then GNOME's, then xterm as a fallback.
     if [ -n "${DISPLAY:-}" ]; then

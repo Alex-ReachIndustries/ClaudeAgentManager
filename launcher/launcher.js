@@ -63,18 +63,20 @@ const USER_HOME = os.homedir();
 // To upgrade: update the values here. DB records storing old versions auto-upgrade on next spawn.
 const MODEL_DEFAULTS = {
   // Short family aliases (preferred for new agents stored in DB)
-  'opus':    'claude-opus-4-8',
-  'sonnet':  'claude-sonnet-4-6',
+  'opus':    'claude-opus-5',
+  'sonnet':  'claude-sonnet-5',
   'haiku':   'claude-haiku-4-5-20251001',
   // claude- prefixed family aliases
-  'claude-opus':   'claude-opus-4-8',
-  'claude-sonnet': 'claude-sonnet-4-6',
+  'claude-opus':   'claude-opus-5',
+  'claude-sonnet': 'claude-sonnet-5',
   'claude-haiku':  'claude-haiku-4-5-20251001',
-  // Legacy pinned versions — auto-upgrade to latest
-  'claude-opus-4-5':  'claude-opus-4-8',
-  'claude-opus-4-6':  'claude-opus-4-8',
-  'claude-opus-4-7':  'claude-opus-4-8',
-  'claude-sonnet-4-5': 'claude-sonnet-4-6',
+  // Legacy pinned versions — auto-upgrade to latest (Opus 5 / Sonnet 5)
+  'claude-opus-4-5':  'claude-opus-5',
+  'claude-opus-4-6':  'claude-opus-5',
+  'claude-opus-4-7':  'claude-opus-5',
+  'claude-opus-4-8':  'claude-opus-5',
+  'claude-sonnet-4-5': 'claude-sonnet-5',
+  'claude-sonnet-4-6': 'claude-sonnet-5',
 };
 
 function resolveModel(model) {
