@@ -60,6 +60,7 @@ const proposeSchema = z.object({
   agent: z.string().max(200).optional(),
   rationale: z.string().max(4000).optional(),
   category_ids: z.array(z.number().int().positive()).max(50).optional(),
+  wanted_id: z.number().int().positive().optional(),   // gap this fills; auto-resolved on approval
 }).refine((d) => d.kind === "edit" ? !!d.entry_id : !!d.title, {
   message: "kind 'new' requires title; kind 'edit' requires entry_id",
 });
@@ -194,6 +195,7 @@ router.post("/propose", validate(proposeSchema), async (req: Request, res: Respo
       agent: body.agent,
       rationale: body.rationale,
       conflicts,
+      wanted_id: body.wanted_id,
     });
     // Manual category pins (source='manual') — these stick and override auto.
     if (entry_id != null && body.category_ids?.length) {
@@ -281,6 +283,18 @@ router.get("/analytics", (req: Request, res: Response) => {
     logger.error({ err }, "KB analytics failed");
     res.status(500).json({ error: "Analytics failed" });
   }
+});
+
+// POST /api/kb/wanted — explicitly log a knowledge gap, even when a search DID return
+// results but they didn't answer the question (a note explains why). Deduped by query.
+router.post("/wanted", (req: Request, res: Response) => {
+  const query = String(req.body?.query ?? "").trim();
+  if (query.length < 3) { res.status(400).json({ error: "query is required" }); return; }
+  const note = req.body?.note != null ? String(req.body.note).slice(0, 2000) : null;
+  const agent = callerAgent(req) || (req.body?.agent ? String(req.body.agent) : null);
+  const id = recordWanted(query, agent, note);
+  if (id == null) { res.status(422).json({ error: "query too trivial to log (needs a real word, >=8 chars)" }); return; }
+  res.json({ ok: true, wanted_id: id });
 });
 
 // GET /api/kb/wanted?status=open — the "knowledge wanted" backlog (misses to fill).
