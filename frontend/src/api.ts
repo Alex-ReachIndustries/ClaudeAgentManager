@@ -22,6 +22,9 @@ export function clearApiKey(): void {
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  // Attribute KB searches/opens/proposals made from the dashboard to the human user
+  // (only the KB routes read this header; everything else ignores it).
+  headers['X-Agent-Id'] = 'user';
   return headers;
 }
 
