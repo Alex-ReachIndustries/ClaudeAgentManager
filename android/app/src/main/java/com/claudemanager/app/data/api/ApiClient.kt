@@ -41,16 +41,12 @@ object ApiClient {
     @Volatile
     private var agentApi: AgentApi? = null
 
-    /** Auth interceptor that adds Bearer token to all requests when API key is set */
+    /** Auth interceptor: adds Bearer token when set, and flags KB requests as coming
+     *  from the human user (only the KB routes read X-Agent-Id; others ignore it). */
     private val authInterceptor = Interceptor { chain ->
-        val request = if (apiKey.isNotEmpty()) {
-            chain.request().newBuilder()
-                .addHeader("Authorization", "Bearer $apiKey")
-                .build()
-        } else {
-            chain.request()
-        }
-        chain.proceed(request)
+        val builder = chain.request().newBuilder().addHeader("X-Agent-Id", "user")
+        if (apiKey.isNotEmpty()) builder.addHeader("Authorization", "Bearer $apiKey")
+        chain.proceed(builder.build())
     }
 
     /** Get the current API key */
