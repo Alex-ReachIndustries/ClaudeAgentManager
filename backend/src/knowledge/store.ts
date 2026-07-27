@@ -26,6 +26,7 @@ export interface ProposalInput {
   agent?: string;
   rationale?: string;
   conflicts?: ConflictFlag[];
+  wanted_id?: number | null;   // the "knowledge wanted" gap this proposal fills (auto-resolved on approval)
 }
 
 export interface DecisionInput {
@@ -165,15 +166,15 @@ export function createProposal(input: ProposalInput): { entry_id: number | null;
 
     const pres = db.prepare(`
       INSERT INTO knowledge_pending
-        (entry_id, kind, proposed_title, proposed_body, proposed_category, proposed_tags, proposed_systems, proposed_source, proposing_agent, rationale, conflict_flags, review_flag)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (entry_id, kind, proposed_title, proposed_body, proposed_category, proposed_tags, proposed_systems, proposed_source, proposing_agent, rationale, conflict_flags, review_flag, wanted_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       entryId, input.kind,
       input.title ?? null, input.body ?? null, input.category ?? null,
       input.tags ? JSON.stringify(input.tags) : null,
       input.systems ? JSON.stringify(input.systems) : null,
       input.source ?? null, input.agent ?? null, input.rationale ?? "",
-      conflictsJson, reviewFlag
+      conflictsJson, reviewFlag, input.wanted_id ?? null
     );
 
     return { entry_id: entryId, pending_id: Number(pres.lastInsertRowid) };
@@ -345,6 +346,15 @@ export function decideProposal(id: number, d: DecisionInput): { ok: boolean; ent
     db.prepare(
       "UPDATE knowledge_pending SET status = ?, decided_at = datetime('now'), decided_note = ? WHERE id = ?"
     ).run(pendingStatus, decidedNote, id);
+
+    // (c) Close the gap→fill loop: if this proposal was filling a "knowledge wanted"
+    // item, resolve that item and link it to the now-approved entry.
+    const wantedId = pending.wanted_id != null ? Number(pending.wanted_id) : null;
+    if (wantedId != null && entryId != null && (d.decision === "accept" || d.decision === "update")) {
+      db.prepare(
+        "UPDATE kb_wanted SET status = 'filled', filled_entry_id = ?, decided_at = datetime('now'), decided_by = ? WHERE id = ? AND status != 'dismissed'"
+      ).run(entryId, d.decidedBy ?? "auto (proposal approved)", wantedId);
+    }
 
     return { ok: true, entry_id: entryId };
   });
@@ -648,12 +658,17 @@ export function logAccess(a: AccessLogInput): void {
 
 // ─── Knowledge wanted (misses → actionable backlog) ─────────────────────────
 
-/** Record a genuine search miss as a deduped "knowledge wanted" item. Best-effort. */
-export function recordWanted(query: string, agent: string | null): void {
+/**
+ * Record a knowledge gap as a deduped "knowledge wanted" item. Best-effort.
+ * Fires automatically on a zero-result search, and explicitly via POST /api/kb/wanted
+ * when an agent got results but they didn't answer the question (pass a note).
+ * Returns the wanted item's id (so the caller can link a proposal to it), or null.
+ */
+export function recordWanted(query: string, agent: string | null, note?: string | null): number | null {
   const q = (query || "").trim();
   const norm = q.toLowerCase();
   // Skip trivial/gibberish: need a real word and some length.
-  if (norm.length < 8 || !/[a-z]{3,}/.test(norm)) return;
+  if (norm.length < 8 || !/[a-z]{3,}/.test(norm)) return null;
   try {
     const db = getDb();
     const existing = db.prepare("SELECT id, agents FROM kb_wanted WHERE norm_query = ?").get(norm) as
@@ -664,14 +679,17 @@ export function recordWanted(query: string, agent: string | null): void {
       if (agent && !agents.includes(agent)) agents.push(agent);
       db.prepare(
         "UPDATE kb_wanted SET times = times + 1, query = ?, agents = ?, last_seen = datetime('now'), " +
+        "note = COALESCE(?, note), " +
         "status = CASE WHEN status = 'dismissed' THEN 'dismissed' ELSE 'open' END WHERE id = ?"
-      ).run(q, JSON.stringify(agents.slice(0, 20)), existing.id);
-    } else {
-      db.prepare("INSERT INTO kb_wanted (norm_query, query, agents) VALUES (?, ?, ?)")
-        .run(norm, q, JSON.stringify(agent ? [agent] : []));
+      ).run(q, JSON.stringify(agents.slice(0, 20)), note ?? null, existing.id);
+      return existing.id;
     }
+    const res = db.prepare("INSERT INTO kb_wanted (norm_query, query, agents, note) VALUES (?, ?, ?, ?)")
+      .run(norm, q, JSON.stringify(agent ? [agent] : []), note ?? null);
+    return Number(res.lastInsertRowid);
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, "KB recordWanted failed");
+    return null;
   }
 }
 

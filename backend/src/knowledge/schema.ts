@@ -138,6 +138,7 @@ export function initKnowledgeSchema(db: Database.Database): void {
       status TEXT NOT NULL DEFAULT 'open'
         CHECK(status IN ('open','filled','dismissed')),
       filled_entry_id INTEGER,
+      note TEXT,                                -- optional agent note (why the search was unsatisfied)
       first_seen TEXT NOT NULL DEFAULT (datetime('now')),
       last_seen TEXT NOT NULL DEFAULT (datetime('now')),
       decided_at TEXT,
@@ -151,6 +152,10 @@ export function initKnowledgeSchema(db: Database.Database): void {
   // inherently over-matching category (e.g. a broad "meta" topic) demand a higher bar so it
   // isn't flooded. NULL = use the global KB_CAT_THRESHOLD. Additive migration.
   try { db.exec("ALTER TABLE kb_categories ADD COLUMN auto_min_score REAL"); } catch { /* column exists */ }
+  // Additive columns for the gap→fill loop (a/b/c): a note on a wanted item, and a link
+  // from a pending proposal back to the wanted item it fills (auto-resolved on approval).
+  try { db.exec("ALTER TABLE kb_wanted ADD COLUMN note TEXT"); } catch { /* column exists */ }
+  try { db.exec("ALTER TABLE knowledge_pending ADD COLUMN wanted_id INTEGER"); } catch { /* column exists */ }
 
   // FTS5 shadow tables (manually kept in sync by the store layer). Contentless-external
   // rowids map 1:1 to entry/profile ids.
