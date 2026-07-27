@@ -117,7 +117,7 @@ Access the Agent Manager dashboard from your phone or any device on any network 
 
 2. **Install Tailscale on your phone** from the App Store / Play Store
 
-3. **Sign in to both devices** with the same account (Google, GitHub, etc.)
+3. **Sign in to both devices with the SAME account — use a PERSONAL email, NOT a `reach.industries` email.** A reach.industries login places you on a different, org-managed tailnet where the devices won't see each other; a personal account (personal email / Google / GitHub) keeps the server and your phone on one tailnet so they connect.
 
 4. **Enable HTTPS** in the [Tailscale admin console](https://login.tailscale.com/admin/dns) under DNS settings
 
@@ -193,7 +193,15 @@ PDF reports are generated via a PrintingPress-based service. The PDF generator r
 
 ## Documentation
 
-See [docs/ClaudeManager_v4.0.0_User_Manual.pdf](docs/ClaudeManager_v4.0.0_User_Manual.pdf) for the comprehensive reference manual covering all v4.0.0 features: multi-agent projects, relay messaging, cost tracking, Android companion app, deployment guide, and full API reference.
+- **[docs/setup-all-platforms.md](docs/setup-all-platforms.md)** — set up and run the Manager on **Windows, macOS, or Linux**, plus remote access via Tailscale (incl. the personal-email requirement) and how to reach the UI from an iPhone.
+- **Non-technical user guide** — a friendly walkthrough for non-technical users (Windows + iPhone), attached to the latest GitHub release / shared as a PDF.
+- **[docs/ClaudeManager_v4.0.0_User_Manual.pdf](docs/ClaudeManager_v4.0.0_User_Manual.pdf)** — the older comprehensive v4 reference manual (multi-agent projects, relay messaging, cost tracking, Android app, API reference).
+
+### Recent developments (v7)
+
+- **Knowledge Hub** — a shared, searchable knowledge base (`/api/kb/*`) the agents consult and contribute to: semantic + keyword hybrid search, an approval queue, people profiles, a nested category tree, proactive retrieval (relevant entries auto-surfaced on task delivery), a **knowledge-wanted** backlog for gaps, and an **Insights** analytics view (usage, hit rate, gaps, surface→open, per-agent).
+- **Context hygiene** — agents compact-on-idle and write pointer-only summaries, re-fetching detail from the KB on demand.
+- **Model tiers** — the launcher resolves the `opus`/`sonnet` families to the current latest (Opus 5 / Sonnet 5) centrally.
 
 ## License
 
