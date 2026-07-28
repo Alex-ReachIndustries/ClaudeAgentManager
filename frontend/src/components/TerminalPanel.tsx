@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Terminal, ChevronDown, ChevronUp, Send, CornerDownLeft, Ban, Radio } from 'lucide-react';
 import type { AgentUpdate, TerminalLine } from '../types';
 import { sendInput, sendSignal } from '../api';
@@ -19,6 +19,10 @@ const TYPE_COLOR: Record<string, string> = {
   relay:    'text-purple-500',
   diagram:  'text-cyan-500',
 };
+
+type TimelineEntry =
+  | { kind: 'update'; ts: number; data: AgentUpdate }
+  | { kind: 'live'; ts: number; key: string; data: TerminalLine };
 
 function summarise(u: AgentUpdate): string {
   if (u.summary) return u.summary;
@@ -41,6 +45,20 @@ function TerminalPanel({ updates, liveLines = [], agentId, canControl = false }:
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const totalCount = updates.length + liveLines.length;
+
+  // updates and liveLines arrive as two independent arrays (the former can be
+  // reordered/merged by pagination or catch-up fetches, the latter is append-only
+  // receipt order) — render position must never be trusted, so merge + sort both
+  // by actual timestamp into one interleaved list, same pattern UpdateTimeline
+  // already uses for updates+files.
+  const entries = useMemo<TimelineEntry[]>(() => {
+    const merged: TimelineEntry[] = [
+      ...updates.map((u): TimelineEntry => ({ kind: 'update', ts: new Date(u.timestamp).getTime(), data: u })),
+      ...liveLines.map((l, i): TimelineEntry => ({ kind: 'live', ts: new Date(l.timestamp).getTime(), key: `live-${i}-${l.timestamp}`, data: l })),
+    ];
+    merged.sort((a, b) => a.ts - b.ts);
+    return merged;
+  }, [updates, liveLines]);
 
   useEffect(() => {
     if (!collapsed && scrollRef.current) {
@@ -107,30 +125,26 @@ function TerminalPanel({ updates, liveLines = [], agentId, canControl = false }:
             {totalCount === 0 ? (
               <p className="text-dark-700 py-2 text-center">No entries</p>
             ) : (
-              <>
-                {updates.map(u => {
-                  const ts = new Date(u.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-                  const typeColor = TYPE_COLOR[u.type] ?? 'text-dark-500';
-                  const line = summarise(u);
+              entries.map(entry => {
+                const ts = new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+                if (entry.kind === 'update') {
+                  const typeColor = TYPE_COLOR[entry.data.type] ?? 'text-dark-500';
                   return (
-                    <div key={u.id} className="flex gap-2 leading-5 hover:bg-dark-900/40 px-1 rounded group">
+                    <div key={`u-${entry.data.id}`} className="flex gap-2 leading-5 hover:bg-dark-900/40 px-1 rounded group">
                       <span className="text-dark-700 shrink-0 select-none">{ts}</span>
-                      <span className={`shrink-0 w-14 ${typeColor}`}>{u.type}</span>
-                      <span className="text-dark-300 break-all">{line}</span>
+                      <span className={`shrink-0 w-14 ${typeColor}`}>{entry.data.type}</span>
+                      <span className="text-dark-300 break-all">{summarise(entry.data)}</span>
                     </div>
                   );
-                })}
-                {liveLines.map((line, i) => {
-                  const ts = new Date(line.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-                  return (
-                    <div key={`live-${i}`} className="flex gap-2 leading-5 hover:bg-dark-900/40 px-1 rounded group">
-                      <span className="text-dark-700 shrink-0 select-none">{ts}</span>
-                      <span className="shrink-0 w-14 text-green-500">live</span>
-                      <span className="text-dark-200 break-all whitespace-pre-wrap">{line.output}</span>
-                    </div>
-                  );
-                })}
-              </>
+                }
+                return (
+                  <div key={entry.key} className="flex gap-2 leading-5 hover:bg-dark-900/40 px-1 rounded group">
+                    <span className="text-dark-700 shrink-0 select-none">{ts}</span>
+                    <span className="shrink-0 w-14 text-green-500">live</span>
+                    <span className="text-dark-200 break-all whitespace-pre-wrap">{entry.data.output}</span>
+                  </div>
+                );
+              })
             )}
           </div>
 
