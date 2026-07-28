@@ -30,7 +30,7 @@ type DetailTab = 'conversation' | 'info';
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { agent, updates, messages, loading, error, refetch } = useAgent(id!);
+  const { agent, updates, messages, loading, error, refetch, hasMoreHistory, isLoadingMore, loadMoreHistory } = useAgent(id!);
 
   const isArchived = agent?.status === 'archived';
   const isLive = agent ? LIVE_STATUSES.has(agent.status) : false;
@@ -333,7 +333,13 @@ function AgentDetail() {
       {/* Conversation tab */}
       {tab === 'conversation' && (
         <div className="space-y-4">
-          <UpdateTimeline updates={updates} files={files} />
+          <UpdateTimeline
+            updates={updates}
+            files={files}
+            hasMore={hasMoreHistory}
+            isLoadingMore={isLoadingMore}
+            onLoadMore={loadMoreHistory}
+          />
           <TerminalPanel updates={updates} />
           <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
         </div>

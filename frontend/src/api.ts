@@ -61,11 +61,17 @@ export async function fetchAgent(id: string): Promise<Agent> {
   return request<Agent>(`/agents/${id}`);
 }
 
-export async function fetchUpdates(agentId: string): Promise<AgentUpdate[]> {
-  const result = await request<{ data: AgentUpdate[] } | AgentUpdate[]>(`/agents/${agentId}/updates`);
-  const updates = Array.isArray(result) ? result : result.data;
-  if (!updates) return [];
-  return updates.map((u) => {
+export interface PaginatedResult<T> {
+  items: T[];
+  nextCursor: number | null;
+  hasMore: boolean;
+}
+
+export async function fetchUpdates(agentId: string, before?: number): Promise<PaginatedResult<AgentUpdate>> {
+  const query = before ? `?before=${before}` : '';
+  const result = await request<{ data: AgentUpdate[]; next_cursor: number | null; has_more: boolean } | AgentUpdate[]>(`/agents/${agentId}/updates${query}`);
+  const raw = Array.isArray(result) ? result : result.data;
+  const items = (raw ?? []).map((u) => {
     let content = u.content;
     if (typeof content === 'string') {
       try {
@@ -76,11 +82,22 @@ export async function fetchUpdates(agentId: string): Promise<AgentUpdate[]> {
     }
     return { ...u, content };
   });
+  return {
+    items,
+    nextCursor: Array.isArray(result) ? null : result.next_cursor,
+    hasMore: Array.isArray(result) ? false : result.has_more,
+  };
 }
 
-export async function fetchMessages(agentId: string): Promise<AgentMessage[]> {
-  const result = await request<{ data: AgentMessage[] } | AgentMessage[]>(`/agents/${agentId}/messages`);
-  return Array.isArray(result) ? result : result.data;
+export async function fetchMessages(agentId: string, before?: number): Promise<PaginatedResult<AgentMessage>> {
+  const query = before ? `?before=${before}` : '';
+  const result = await request<{ data: AgentMessage[]; next_cursor: number | null; has_more: boolean } | AgentMessage[]>(`/agents/${agentId}/messages${query}`);
+  const items = Array.isArray(result) ? result : (result.data ?? []);
+  return {
+    items,
+    nextCursor: Array.isArray(result) ? null : result.next_cursor,
+    hasMore: Array.isArray(result) ? false : result.has_more,
+  };
 }
 
 export interface ReplyRef {
