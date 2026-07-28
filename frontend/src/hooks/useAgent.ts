@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Agent, AgentUpdate, AgentMessage } from '../types';
+import type { Agent, AgentUpdate, AgentMessage, TerminalLine } from '../types';
 import { fetchAgent, fetchUpdates, fetchMessages, subscribeToEvents } from '../api';
+
+const LIVE_TERMINAL_SCROLLBACK = 500;
 
 export function useAgent(id: string) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [updates, setUpdates] = useState<AgentUpdate[]>([]);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const [liveTerminalLines, setLiveTerminalLines] = useState<TerminalLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,11 +69,19 @@ export function useAgent(id: string) {
             setError('Agent has been deleted');
           }
           break;
+        case 'terminal-output':
+          if (event.data.agentId === id) {
+            setLiveTerminalLines((prev) => {
+              const next = [...prev, { output: event.data.output, timestamp: event.data.timestamp }];
+              return next.length > LIVE_TERMINAL_SCROLLBACK ? next.slice(-LIVE_TERMINAL_SCROLLBACK) : next;
+            });
+          }
+          break;
       }
     });
 
     return unsubscribe;
   }, [id]);
 
-  return { agent, updates, messages, loading, error, refetch };
+  return { agent, updates, messages, liveTerminalLines, loading, error, refetch };
 }
