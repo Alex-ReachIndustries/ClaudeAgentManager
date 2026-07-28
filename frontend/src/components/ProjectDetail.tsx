@@ -154,8 +154,8 @@ export default function ProjectDetail() {
 
   const loadAgentMessages = useCallback(async (agentId: string) => {
     try {
-      const msgs = await fetchMessages(agentId);
-      setAgentMessages(msgs);
+      const { items } = await fetchMessages(agentId);
+      setAgentMessages(items);
     } catch {
       setAgentMessages([]);
     }

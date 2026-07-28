@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft, Download, Bot, User, Paperclip, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, FileText, ArrowRightLeft, Download, Bot, User, Paperclip, ChevronDown, ChevronUp, Loader2, History } from 'lucide-react';
 import type { AgentUpdate, AgentFile } from '../types';
 import { timeAgo } from '../utils/time';
 import MermaidDiagram from './MermaidDiagram';
@@ -8,13 +8,16 @@ import ErrorBoundary from './ErrorBoundary';
 interface UpdateTimelineProps {
   updates: AgentUpdate[];
   files?: AgentFile[];
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 type TimelineEntry =
   | { kind: 'update'; ts: string; data: AgentUpdate }
   | { kind: 'file'; ts: string; data: AgentFile };
 
-function UpdateTimeline({ updates, files = [] }: UpdateTimelineProps) {
+function UpdateTimeline({ updates, files = [], hasMore = false, isLoadingMore = false, onLoadMore }: UpdateTimelineProps) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const toggleExpanded = (id: number) => {
@@ -49,6 +52,18 @@ function UpdateTimeline({ updates, files = [] }: UpdateTimelineProps) {
         </h2>
       </div>
       <div className="max-h-[calc(100vh-320px)] overflow-y-auto p-4 space-y-3">
+        {hasMore && (
+          <div className="flex justify-center pb-1">
+            <button
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-dark-400 hover:text-dark-200 bg-dark-850 hover:bg-dark-800 border border-dark-800 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {isLoadingMore ? <Loader2 size={12} className="animate-spin" /> : <History size={12} />}
+              {isLoadingMore ? 'Loading older history…' : 'Load older history'}
+            </button>
+          </div>
+        )}
         {entries.map((entry, idx) => (
           <div
             key={entry.kind === 'update' ? `u-${entry.data.id}` : `f-${(entry.data as AgentFile).id}`}
