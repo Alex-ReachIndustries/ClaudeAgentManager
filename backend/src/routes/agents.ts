@@ -1911,6 +1911,44 @@ router.post("/:id/cost", (req: Request, res: Response) => {
   }
 });
 
+// GET /analytics/costs — aggregate cost data across all agents.
+// Must be registered BEFORE /:id/costs below: both are 2-segment routes ending
+// in the literal "costs", so /:id/costs would otherwise shadow this one (Express
+// matches in registration order and treats "analytics" as the :id param).
+router.get("/analytics/costs", (_req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const agents = db.prepare("SELECT id, title, metadata, project_id FROM agents").all() as {
+      id: string; title: string; metadata: string | null; project_id: string | null;
+    }[];
+
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalCost = 0;
+    const agentCosts: { id: string; title: string; project_id: string | null; costs: Record<string, number> }[] = [];
+
+    for (const agent of agents) {
+      let meta: Record<string, unknown> = {};
+      try { meta = JSON.parse(agent.metadata || "{}"); } catch { continue; }
+      const costs = meta.costs as Record<string, number> | undefined;
+      if (costs && (costs.input_tokens || costs.output_tokens || costs.cost_usd)) {
+        totalInput += costs.input_tokens || 0;
+        totalOutput += costs.output_tokens || 0;
+        totalCost += costs.cost_usd || 0;
+        agentCosts.push({ id: agent.id, title: agent.title, project_id: agent.project_id, costs });
+      }
+    }
+
+    res.json({
+      total: { input_tokens: totalInput, output_tokens: totalOutput, cost_usd: Math.round(totalCost * 1e6) / 1e6 },
+      agents: agentCosts,
+    });
+  } catch (err) {
+    logger.error({ err }, "Error fetching cost analytics");
+    res.status(500).json({ error: "Failed to fetch cost analytics" });
+  }
+});
+
 // GET /:id/costs — per-agent cost breakdown by task label
 router.get("/:id/costs", (req: Request, res: Response) => {
   try {
@@ -1949,7 +1987,6 @@ router.get("/:id/costs", (req: Request, res: Response) => {
   }
 });
 
-// GET /analytics/costs — aggregate cost data across all agents
 // GET /analytics/compliance — message-handling compliance per agent + per model tier
 // over the last 7 days: ack rate, ack-content presence, median-ish time-to-ack,
 // redelivery volume. This is the validation metric for the compact-reminder rollout:
@@ -1998,40 +2035,6 @@ router.get("/analytics/compliance", (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "Error fetching compliance analytics");
     res.status(500).json({ error: "Failed to fetch compliance analytics" });
-  }
-});
-
-router.get("/analytics/costs", (_req: Request, res: Response) => {
-  try {
-    const db = getDb();
-    const agents = db.prepare("SELECT id, title, metadata, project_id FROM agents").all() as {
-      id: string; title: string; metadata: string | null; project_id: string | null;
-    }[];
-
-    let totalInput = 0;
-    let totalOutput = 0;
-    let totalCost = 0;
-    const agentCosts: { id: string; title: string; project_id: string | null; costs: Record<string, number> }[] = [];
-
-    for (const agent of agents) {
-      let meta: Record<string, unknown> = {};
-      try { meta = JSON.parse(agent.metadata || "{}"); } catch { continue; }
-      const costs = meta.costs as Record<string, number> | undefined;
-      if (costs && (costs.input_tokens || costs.output_tokens || costs.cost_usd)) {
-        totalInput += costs.input_tokens || 0;
-        totalOutput += costs.output_tokens || 0;
-        totalCost += costs.cost_usd || 0;
-        agentCosts.push({ id: agent.id, title: agent.title, project_id: agent.project_id, costs });
-      }
-    }
-
-    res.json({
-      total: { input_tokens: totalInput, output_tokens: totalOutput, cost_usd: Math.round(totalCost * 1e6) / 1e6 },
-      agents: agentCosts,
-    });
-  } catch (err) {
-    logger.error({ err }, "Error fetching cost analytics");
-    res.status(500).json({ error: "Failed to fetch cost analytics" });
   }
 });
 
