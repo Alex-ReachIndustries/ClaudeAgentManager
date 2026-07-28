@@ -260,6 +260,46 @@ export async function runRetention() { return request<any>('/retention/run', { m
 // --- Files ---
 export async function fetchAgentFiles(agentId: string) { return request<any[]>(`/agents/${agentId}/files`); }
 
+// --- Costs ---
+export interface AgentCostEvent {
+  id: number;
+  agent_id: string;
+  label: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  created_at: string;
+}
+export interface AgentCostBreakdown {
+  total: { input_tokens: number; output_tokens: number; cost_usd: number };
+  breakdown: {
+    label: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number;
+    event_count: number;
+    first_at: string;
+    last_at: string;
+  }[];
+  events?: AgentCostEvent[];
+}
+export async function fetchAgentCosts(agentId: string): Promise<AgentCostBreakdown> {
+  return request<AgentCostBreakdown>(`/agents/${agentId}/costs?detail=true`);
+}
+
+export interface FleetCostAnalytics {
+  total: { input_tokens: number; output_tokens: number; cost_usd: number };
+  agents: {
+    id: string;
+    title: string;
+    project_id: string | null;
+    costs: { input_tokens: number; output_tokens: number; cost_usd: number };
+  }[];
+}
+export async function fetchFleetCosts(): Promise<FleetCostAnalytics> {
+  return request<FleetCostAnalytics>(`/agents/analytics/costs`);
+}
+
 // --- Roles ---
 export interface Role {
   id: string;

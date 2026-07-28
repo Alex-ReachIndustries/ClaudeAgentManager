@@ -11,6 +11,7 @@ import Projects from './components/Projects';
 import ProjectDetail from './components/ProjectDetail';
 import Knowledge from './components/Knowledge';
 import PendingKnowledge from './components/PendingKnowledge';
+import Costs from './components/Costs';
 import BottomNav from './components/BottomNav';
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -56,6 +57,7 @@ function App() {
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/workflows/new" element={<WorkflowCreate />} />
           <Route path="/workflows/:id" element={<WorkflowDetail />} />
+          <Route path="/costs" element={<Costs />} />
         </Routes>
       </main>
       <BottomNav />

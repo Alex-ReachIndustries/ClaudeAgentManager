@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronUp, Users, Zap, MessageSquare, Activity } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronUp, Users, Zap, MessageSquare, Activity, ArrowRight } from 'lucide-react';
 import { fetchAnalytics } from '../api';
 
 interface AnalyticsData {
@@ -67,6 +68,15 @@ function AnalyticsPanel() {
             icon={<MessageSquare size={16} className="text-lumi-400" />}
           />
         </div>
+      )}
+
+      {!collapsed && (
+        <Link
+          to="/costs"
+          className="inline-flex items-center gap-1.5 text-sm text-dark-400 hover:text-dark-200 transition-colors mt-3"
+        >
+          View cost breakdown <ArrowRight size={14} />
+        </Link>
       )}
     </div>
   );

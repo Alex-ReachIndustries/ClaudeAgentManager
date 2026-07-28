@@ -1,9 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2, Loader2, DollarSign } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles } from '../api';
-import type { Role } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles, fetchAgentCosts } from '../api';
+import type { Role, AgentCostBreakdown } from '../api';
 import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
 import UpdateTimeline from './UpdateTimeline';
@@ -25,7 +25,7 @@ const statusConfig = {
 
 const LIVE_STATUSES = new Set(['active', 'working', 'idle', 'waiting-for-input', 'standby']);
 
-type DetailTab = 'conversation' | 'info';
+type DetailTab = 'conversation' | 'info' | 'costs';
 
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
@@ -49,6 +49,8 @@ function AgentDetail() {
   const [savingWtWindow, setSavingWtWindow] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [costs, setCosts] = useState<AgentCostBreakdown | null>(null);
+  const [costsError, setCostsError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -66,6 +68,13 @@ function AgentDetail() {
   useEffect(() => {
     fetchRoles().then(setRoles).catch(() => {});
   }, []);
+
+  // Fetch cost breakdown lazily, the first time the Costs tab is opened
+  useEffect(() => {
+    if (tab === 'costs' && id && costs === null && !costsError) {
+      fetchAgentCosts(id).then(setCosts).catch(() => setCostsError(true));
+    }
+  }, [tab, id, costs, costsError]);
 
   // Fetch files for inline timeline display
   useEffect(() => {
@@ -315,7 +324,7 @@ function AgentDetail() {
 
       {/* Tab bar */}
       <div className="flex border-b border-dark-800 mb-6">
-        {(['conversation', 'info'] as DetailTab[]).map(t => (
+        {(['conversation', 'info', 'costs'] as DetailTab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -534,6 +543,82 @@ function AgentDetail() {
           <FilesPanel agentId={agent.id} />
         </div>
       )}
+
+      {/* Costs tab */}
+      {tab === 'costs' && (
+        <div className="space-y-4 max-w-2xl">
+          {costsError && (
+            <div className="bg-red-950/30 border border-red-800/50 rounded-xl p-4 text-center text-sm text-red-400">
+              Failed to load cost data.
+            </div>
+          )}
+          {!costsError && !costs && (
+            <div className="animate-pulse space-y-4">
+              <div className="h-20 bg-dark-900 rounded-xl border border-dark-800" />
+              <div className="h-40 bg-dark-900 rounded-xl border border-dark-800" />
+            </div>
+          )}
+          {!costsError && costs && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <StatCard icon={<DollarSign size={13} />} label="Total Cost" value={formatUsd(costs.total.cost_usd)} />
+                <StatCard icon={<Activity size={13} />} label="Input Tokens" value={costs.total.input_tokens.toLocaleString()} />
+                <StatCard icon={<Activity size={13} />} label="Output Tokens" value={costs.total.output_tokens.toLocaleString()} />
+              </div>
+
+              <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
+                <h3 className="text-sm font-semibold text-dark-300 mb-3">Cost by Task Label</h3>
+                {costs.breakdown.length === 0 ? (
+                  <p className="text-xs text-dark-500 py-4 text-center">No cost events recorded for this agent yet.</p>
+                ) : (
+                  <CostBreakdown rows={costs.breakdown} />
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Small stat tile — matches the KB Insights analytics visual language. */
+function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string | number }) {
+  return (
+    <div className="bg-dark-900 border border-dark-700 rounded-lg px-4 py-3">
+      <div className="flex items-center gap-1.5 text-dark-500 text-[11px] mb-1">{icon}{label}</div>
+      <div className="text-xl font-semibold text-dark-100">{value}</div>
+    </div>
+  );
+}
+
+function formatUsd(n: number): string {
+  return `$${n.toFixed(n < 1 ? 4 : 2)}`;
+}
+
+/** Hand-rolled horizontal bar list, one row per task label, sorted by cost descending. */
+function CostBreakdown({ rows }: { rows: AgentCostBreakdown['breakdown'] }) {
+  const sorted = [...rows].sort((a, b) => b.cost_usd - a.cost_usd);
+  const max = Math.max(1e-9, ...sorted.map(r => r.cost_usd));
+  return (
+    <div className="space-y-3">
+      {sorted.map(row => (
+        <div key={row.label}>
+          <div className="flex justify-between items-baseline gap-2 mb-1">
+            <span className="text-xs text-dark-300 truncate">{row.label}</span>
+            <span className="text-xs text-dark-400 font-mono shrink-0">{formatUsd(row.cost_usd)}</span>
+          </div>
+          <div className="h-1.5 bg-dark-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-lumi-500 rounded-full"
+              style={{ width: `${(row.cost_usd / max) * 100}%` }}
+            />
+          </div>
+          <div className="text-[11px] text-dark-600 mt-1">
+            {row.event_count} event{row.event_count !== 1 ? 's' : ''} · {(row.input_tokens + row.output_tokens).toLocaleString()} tokens
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
