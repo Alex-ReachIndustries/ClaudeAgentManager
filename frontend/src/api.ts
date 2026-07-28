@@ -114,10 +114,6 @@ export async function sendMessage(agentId: string, content: string, reply?: Repl
   });
 }
 
-export async function deleteAgent(agentId: string): Promise<void> {
-  return request<void>(`/agents/${agentId}`, { method: 'DELETE' });
-}
-
 export async function updateAgent(
   agentId: string,
   fields: Partial<Pick<Agent, 'title' | 'status' | 'poll_delay_until' | 'role' | 'effort' | 'model' | 'wt_window'>>,
@@ -177,15 +173,6 @@ export interface FolderEntry {
 
 export async function fetchFolders(folderPath: string = ''): Promise<{ current: string; folders: FolderEntry[] }> {
   return request<{ current: string; folders: FolderEntry[] }>(`/folders?path=${encodeURIComponent(folderPath)}`);
-}
-
-// --- Agent close ---
-export async function closeAgent(agentId: string): Promise<{ ok: boolean; terminated: boolean; pid: number | null }> {
-  return request<{ ok: boolean; terminated: boolean; pid: number | null }>(`/agents/${agentId}/close`, { method: 'POST' });
-}
-
-export async function resumeAgent(agentId: string): Promise<{ ok: boolean; launch_request_id: number }> {
-  return request<{ ok: boolean; launch_request_id: number }>(`/agents/${agentId}/resume`, { method: 'POST' });
 }
 
 export async function sendSignal(agentId: string, signal: 'ctrl-c' | 'enter'): Promise<{ ok: boolean }> {
