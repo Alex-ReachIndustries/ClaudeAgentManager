@@ -34,7 +34,12 @@ data class ProjectDetailUiState(
     val messageText: String = "",
     val isSendingMessage: Boolean = false,
     val agentMessages: List<com.claudemanager.app.data.models.AgentMessage> = emptyList(),
-    val pendingDownload: com.claudemanager.app.ui.detail.PendingDownload? = null
+    val pendingDownload: com.claudemanager.app.ui.detail.PendingDownload? = null,
+    val pendingFileAction: com.claudemanager.app.ui.detail.PendingFileAction? = null,
+    // Project files span multiple agents, so unlike AgentDetailViewModel (which has a single
+    // fixed agentId) we need to remember which agent the pending file action belongs to.
+    val pendingFileActionAgentId: String? = null,
+    val activeDownload: com.claudemanager.app.ui.detail.ActiveDownload? = null
 )
 
 /**
@@ -251,38 +256,123 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     }
 
     /**
-     * Download a project file via OkHttp and open it.
+     * Show the Open/Save action dialog for a tapped file. Called immediately on tap,
+     * before any network activity — mirrors AgentDetailViewModel.showFileActionDialog.
      */
-    fun downloadFile(agentId: String, fileId: Long, filename: String, context: android.content.Context) {
+    fun showFileActionDialog(agentId: String, fileId: Long, filename: String) {
+        _uiState.update {
+            it.copy(
+                pendingFileAction = com.claudemanager.app.ui.detail.PendingFileAction(fileId, filename),
+                pendingFileActionAgentId = agentId
+            )
+        }
+    }
+
+    /** Dismiss the file action dialog without taking any action. */
+    fun dismissFileActionDialog() {
+        _uiState.update { it.copy(pendingFileAction = null, pendingFileActionAgentId = null) }
+    }
+
+    /**
+     * Hand a save-to-SAF download off to [com.claudemanager.app.service.FileDownloadService] so
+     * it survives this screen closing or the app backgrounding — same mechanism as
+     * AgentDetailViewModel.downloadFileToUri. Takes explicit params (rather than reading
+     * pendingFileAction from state) because the SAF picker is async and the action dialog is
+     * dismissed before it returns, same as AgentDetailScreen's saveToDeviceLauncher flow.
+     */
+    fun downloadFileToUri(agentId: String, fileId: Long, filename: String, uri: android.net.Uri, context: android.content.Context) {
+        val url = repository.getFileDownloadUrl(agentId, fileId)
+        com.claudemanager.app.service.FileDownloadService.start(context, url, filename, uri)
+        _uiState.update { it.copy(actionMessage = "Saving $filename in background") }
+    }
+
+    /**
+     * Stream the file to app cache while showing a progress dialog, then open it with the
+     * appropriate viewer app — same mechanism as AgentDetailViewModel.startOpenDownload.
+     */
+    fun startOpenDownload(context: android.content.Context) {
+        val action = _uiState.value.pendingFileAction ?: return
+        val agentId = _uiState.value.pendingFileActionAgentId ?: return
+        _uiState.update {
+            it.copy(
+                pendingFileAction = null,
+                pendingFileActionAgentId = null,
+                activeDownload = com.claudemanager.app.ui.detail.ActiveDownload(action.fileId, action.filename, -1f)
+            )
+        }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val url = repository.getFileDownloadUrl(agentId, fileId)
+                val url = repository.getFileDownloadUrl(agentId, action.fileId)
                 val client = com.claudemanager.app.data.api.ApiClient.getRetrofit().callFactory() as okhttp3.OkHttpClient
-                val request = okhttp3.Request.Builder().url(url).build()
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .header("Accept-Encoding", "identity")
+                    .build()
                 val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val body = response.body ?: return@launch
-                    val mimeType = response.header("Content-Type") ?: "application/octet-stream"
-                    val cacheDir = java.io.File(context.cacheDir, "downloads")
-                    cacheDir.mkdirs()
-                    val file = java.io.File(cacheDir, filename)
-                    file.outputStream().use { out -> body.byteStream().use { it.copyTo(out) } }
+                if (!response.isSuccessful) {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        _uiState.update { it.copy(pendingDownload = com.claudemanager.app.ui.detail.PendingDownload(filename, mimeType, file)) }
+                        _uiState.update { it.copy(activeDownload = null, actionMessage = "Download failed: HTTP ${response.code}") }
                     }
-                } else {
+                    return@launch
+                }
+                val body = response.body ?: run {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        _uiState.update { it.copy(actionMessage = "Download failed: HTTP ${response.code}") }
+                        _uiState.update { it.copy(activeDownload = null, actionMessage = "Download failed: empty response") }
                     }
+                    return@launch
+                }
+                val total = body.contentLength()
+                val mimeType = response.header("Content-Type") ?: "application/octet-stream"
+                val cacheDir = java.io.File(context.cacheDir, "downloads").also { it.mkdirs() }
+                val file = java.io.File(cacheDir, action.filename)
+
+                if (total > 0) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { s -> s.copy(activeDownload = s.activeDownload?.copy(progress = 0f)) }
+                    }
+                }
+
+                var written = 0L
+                var lastPostedPercent = -1
+                file.outputStream().use { out ->
+                    body.byteStream().use { input ->
+                        val buf = ByteArray(8192)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n == -1) break
+                            out.write(buf, 0, n)
+                            written += n
+                            if (total > 0) {
+                                val pct = ((written * 100L) / total).toInt()
+                                if (pct != lastPostedPercent) {
+                                    lastPostedPercent = pct
+                                    val progress = pct / 100f
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        _uiState.update { s -> s.copy(activeDownload = s.activeDownload?.copy(progress = progress)) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            activeDownload = null,
+                            pendingDownload = com.claudemanager.app.ui.detail.PendingDownload(action.filename, mimeType, file)
+                        )
+                    }
+                    openPendingDownload(context)
                 }
             } catch (e: Exception) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.update { it.copy(actionMessage = "Download failed: ${e.message}") }
+                    _uiState.update { it.copy(activeDownload = null, actionMessage = "Download failed: ${e.message}") }
                 }
             }
         }
     }
 
+    /** Open the pending download with an appropriate viewer app (ACTION_VIEW). */
     fun openPendingDownload(context: android.content.Context) {
         val pending = _uiState.value.pendingDownload ?: return
         _uiState.update { it.copy(pendingDownload = null) }
@@ -298,29 +388,6 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         } catch (_: Exception) {
             _uiState.update { it.copy(actionMessage = "No app found to open ${pending.filename}") }
         }
-    }
-
-    fun savePendingDownloadToUri(uri: android.net.Uri, context: android.content.Context) {
-        val pending = _uiState.value.pendingDownload ?: return
-        _uiState.update { it.copy(pendingDownload = null) }
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    pending.cachedFile.inputStream().use { it.copyTo(out) }
-                }
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.update { it.copy(actionMessage = "Saved ${pending.filename}") }
-                }
-            } catch (e: Exception) {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    _uiState.update { it.copy(actionMessage = "Save failed: ${e.message}") }
-                }
-            }
-        }
-    }
-
-    fun clearPendingDownload() {
-        _uiState.update { it.copy(pendingDownload = null) }
     }
 
     /**

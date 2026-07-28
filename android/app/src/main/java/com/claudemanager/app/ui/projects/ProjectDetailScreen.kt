@@ -56,7 +56,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
@@ -109,12 +108,26 @@ fun ProjectDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showMenu by remember { mutableStateOf(false) }
 
-    // Launcher for saving a downloaded file to a user-chosen location via SAF
+    // The file the user picked Save for — held while the SAF picker is open, so the
+    // download only starts once a destination is chosen (mirrors AgentDetailScreen).
+    var pendingSaveAgentId by remember { mutableStateOf<String?>(null) }
+    var pendingSaveFileId by remember { mutableStateOf<Long?>(null) }
+    var pendingSaveFilename by remember { mutableStateOf("") }
+
+    // Launcher for saving a tapped file to a user-chosen location via SAF. Uses the same
+    // mime-aware contract as AgentDetailScreen so the picker gets the correct file type.
     val saveToDeviceLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("*/*")
+        com.claudemanager.app.ui.detail.CreateDocumentWithMime()
     ) { uri ->
-        uri?.let { viewModel.savePendingDownloadToUri(it, context) }
-            ?: viewModel.clearPendingDownload()
+        val aid = pendingSaveAgentId
+        val fid = pendingSaveFileId
+        val name = pendingSaveFilename
+        if (uri != null && aid != null && fid != null) {
+            viewModel.downloadFileToUri(aid, fid, name, uri, context)
+        }
+        pendingSaveAgentId = null
+        pendingSaveFileId = null
+        pendingSaveFilename = ""
     }
 
     // Initialize with project ID
@@ -135,27 +148,81 @@ fun ProjectDetailScreen(
         }
     }
 
-    // Download action dialog
-    state.pendingDownload?.let { pending ->
+    // Action dialog — shown immediately when the user taps a file, before any download
+    // starts. From here they can Open (download to cache + ACTION_VIEW) or Save to Device
+    // (pick an SAF destination, then stream in background). Mirrors AgentDetailScreen.
+    state.pendingFileAction?.let { action ->
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { viewModel.clearPendingDownload() },
-            title = { Text(pending.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            onDismissRequest = { viewModel.dismissFileActionDialog() },
+            title = { Text(action.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             text = { Text("Open with an app or save to device storage?") },
             confirmButton = {
-                TextButton(onClick = { viewModel.openPendingDownload(context) }) {
+                TextButton(onClick = { viewModel.startOpenDownload(context) }) {
                     Text("Open", color = LumiPurple500)
                 }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { viewModel.clearPendingDownload() }) {
+                    TextButton(onClick = { viewModel.dismissFileActionDialog() }) {
                         Text("Cancel")
                     }
-                    TextButton(onClick = { saveToDeviceLauncher.launch(pending.filename) }) {
+                    TextButton(onClick = {
+                        pendingSaveAgentId = state.pendingFileActionAgentId
+                        pendingSaveFileId = action.fileId
+                        pendingSaveFilename = action.filename
+                        viewModel.dismissFileActionDialog()
+                        saveToDeviceLauncher.launch(
+                            Pair(action.filename, com.claudemanager.app.ui.detail.mimeTypeForFilename(action.filename))
+                        )
+                    }) {
                         Text("Save to Device", color = LumiPurple500)
                     }
                 }
             },
+            containerColor = LumiCard,
+            titleContentColor = LumiOnSurface,
+            textContentColor = LumiOnSurfaceSecondary
+        )
+    }
+
+    // Progress dialog — shown while downloading for Open. Save runs in FileDownloadService
+    // and surfaces its own progress notification. Mirrors AgentDetailScreen.
+    state.activeDownload?.let { dl ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Downloading", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = dl.filename,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (dl.progress >= 0f) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { dl.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = LumiPurple500
+                        )
+                        Text(
+                            text = "${(dl.progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = LumiOnSurfaceTertiary
+                        )
+                    } else {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = LumiPurple500
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
             containerColor = LumiCard,
             titleContentColor = LumiOnSurface,
             textContentColor = LumiOnSurfaceSecondary
@@ -456,7 +523,7 @@ fun ProjectDetailScreen(
                                 items(state.files, key = { it.id }) { file ->
                                     FileCard(
                                         file = file,
-                                        onDownload = { viewModel.downloadFile(file.agentId, file.id.toLong(), file.filename, context) }
+                                        onDownload = { viewModel.showFileActionDialog(file.agentId, file.id.toLong(), file.filename) }
                                     )
                                 }
                             }

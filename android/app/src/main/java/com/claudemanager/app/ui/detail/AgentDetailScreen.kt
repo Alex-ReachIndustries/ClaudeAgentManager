@@ -97,8 +97,9 @@ import com.claudemanager.app.ui.PredefinedRole
 import androidx.compose.material.icons.filled.ExpandMore
 
 /** ActivityResultContract that accepts (filename, mimeType) so the SAF picker uses the correct
- *  MIME type — this causes deduplication counters to land before the extension (e.g. file(1).pdf). */
-private class CreateDocumentWithMime : ActivityResultContract<Pair<String, String>, android.net.Uri?>() {
+ *  MIME type — this causes deduplication counters to land before the extension (e.g. file(1).pdf).
+ *  Internal (not private) so other detail screens with the same download-dialog flow can reuse it. */
+internal class CreateDocumentWithMime : ActivityResultContract<Pair<String, String>, android.net.Uri?>() {
     override fun createIntent(context: android.content.Context, input: Pair<String, String>): Intent =
         Intent(Intent.ACTION_CREATE_DOCUMENT)
             .addCategory(Intent.CATEGORY_OPENABLE)
@@ -109,7 +110,7 @@ private class CreateDocumentWithMime : ActivityResultContract<Pair<String, Strin
         if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
 
-private fun mimeTypeForFilename(name: String): String {
+internal fun mimeTypeForFilename(name: String): String {
     val ext = name.substringAfterLast('.', "").lowercase()
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
 }
