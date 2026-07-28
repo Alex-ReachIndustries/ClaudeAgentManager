@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2 } from 'lucide-react';
+import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2, Loader2 } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
 import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles } from '../api';
 import type { Role } from '../api';
@@ -146,7 +146,6 @@ function AgentDetail() {
 
   const handleExportPdf = async () => {
     if (!id || exporting) return;
-    setShowMenu(false);
     setExporting(true);
     try {
       const res = await fetch(`/api/agents/${id}/export/pdf`);
@@ -162,6 +161,7 @@ function AgentDetail() {
       console.error('PDF export failed:', err);
     } finally {
       setExporting(false);
+      setShowMenu(false);
     }
   };
 
@@ -252,9 +252,9 @@ function AgentDetail() {
           <button
             onClick={() => setShowMenu((prev) => !prev)}
             className="p-2 text-dark-400 hover:text-dark-200 hover:bg-dark-800 rounded-lg transition-colors"
-            title="Agent actions"
+            title={exporting ? 'Exporting PDF…' : 'Agent actions'}
           >
-            <MoreVertical size={20} />
+            {exporting ? <Loader2 size={20} className="animate-spin text-lumi-400" /> : <MoreVertical size={20} />}
           </button>
 
           {showMenu && (
