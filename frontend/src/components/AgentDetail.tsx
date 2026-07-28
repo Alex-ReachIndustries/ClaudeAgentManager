@@ -11,6 +11,7 @@ import MessagePanel from './MessagePanel';
 import ProjectTodoPanel from './ProjectTodoPanel';
 import PollDelayControl from './PollDelayControl';
 import FilesPanel from './FilesPanel';
+import RulesPanel from './RulesPanel';
 import TerminalPanel from './TerminalPanel';
 import type { ProjectStatus, TodoStatus } from '../types';
 
@@ -400,6 +401,9 @@ function AgentDetail() {
               </div>
             );
           })()}
+
+          {/* Agent Rules */}
+          <RulesPanel agentId={agent.id} />
 
           {/* Role */}
           <div className="bg-dark-900 rounded-xl border border-dark-800 p-4">
