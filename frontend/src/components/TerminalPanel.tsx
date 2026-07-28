@@ -86,9 +86,12 @@ function TerminalPanel({ updates, liveLines = [], agentId, canControl = false }:
           <Terminal size={13} />
           Terminal Log
           <span className="text-dark-700 font-normal normal-case tracking-normal">({totalCount})</span>
-          {canControl && (
-            <span className="flex items-center gap-1 text-green-500 font-normal normal-case tracking-normal">
-              <Radio size={10} className="animate-pulse" /> live
+          {liveLines.length > 0 && (
+            <span
+              className="flex items-center gap-1 text-green-500 font-normal normal-case tracking-normal"
+              title="Raw terminal output has been observed streaming in for this agent"
+            >
+              <Radio size={10} className="animate-pulse" /> streaming
             </span>
           )}
         </span>
@@ -135,6 +138,11 @@ function TerminalPanel({ updates, liveLines = [], agentId, canControl = false }:
             <div className="border-t border-dark-800 px-3 py-2 space-y-1.5">
               {canControl ? (
                 <>
+                  {liveLines.length === 0 && (
+                    <p className="text-xs text-dark-600">
+                      Input and signal controls below are live. Raw output streaming above isn't active for this agent yet.
+                    </p>
+                  )}
                   <div className="flex gap-1.5">
                     <input
                       type="text"
