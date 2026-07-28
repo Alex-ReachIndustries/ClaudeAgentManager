@@ -142,12 +142,12 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-800 sticky top-0 bg-dark-950 rounded-t-xl z-10">
-          <div className="flex items-center gap-2">
-            <TrendingUp size={18} className="text-lumi-400" />
-            <h2 className="text-lg font-semibold text-dark-100">Knowledge Hub — Insights</h2>
+        <div className="flex items-center justify-between flex-wrap gap-y-2 px-5 py-4 border-b border-dark-800 sticky top-0 bg-dark-950 rounded-t-xl z-10">
+          <div className="flex items-center gap-2 min-w-0">
+            <TrendingUp size={18} className="text-lumi-400 shrink-0" />
+            <h2 className="text-base sm:text-lg font-semibold text-dark-100 truncate">Knowledge Hub — Insights</h2>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="flex items-center gap-1 bg-dark-900 border border-dark-700 rounded-lg p-0.5">
               {RANGES.map((r) => (
                 <button

@@ -270,7 +270,7 @@ export default function Knowledge() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between flex-wrap gap-y-2 mb-6">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/')}
@@ -286,17 +286,19 @@ export default function Knowledge() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowInsights(true)}
+            aria-label="Insights"
             className="flex items-center gap-1.5 px-3 py-2 bg-dark-800 hover:bg-dark-700 text-dark-200 text-sm rounded-lg border border-dark-700 transition-colors"
           >
             <TrendingUp size={16} />
-            Insights
+            <span className="hidden sm:inline">Insights</span>
           </button>
           <button
             onClick={() => setShowPropose(true)}
+            aria-label="Propose Knowledge"
             className="flex items-center gap-1.5 px-4 py-2 bg-lumi-600 hover:bg-lumi-500 text-white text-sm rounded-lg transition-colors"
           >
             <Plus size={16} />
-            Propose Knowledge
+            <span className="hidden sm:inline">Propose Knowledge</span>
           </button>
         </div>
       </div>
