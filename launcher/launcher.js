@@ -1298,6 +1298,107 @@ async function reconcileTmuxAgents() {
 
 let reconcileCounter = 0;
 
+// ---------------------------------------------------------------------------
+// Live terminal-output producer (Linux only, runs every ~6s)
+//
+// The dashboard's terminal-output SSE/MQTT channel has a consumer (TerminalPanel)
+// but nothing was ever producing it — this is that producer. Reuses the same
+// list-panes/capture-pane primitives reconcileTmuxAgents/scanRateLimitDialogs
+// already use safely every ~60s, just on a shorter cadence and diffed against
+// the last capture so only genuinely new lines are POSTed (idle agents produce
+// zero traffic; one bounded request per live agent per tick, not a raw pipe).
+// ---------------------------------------------------------------------------
+
+const lastPaneLines = new Map(); // "session:window" → string[] (last capture, split into lines)
+const MAX_CAPTURE_LINES = 200;   // bound per capture-pane call
+const MAX_NEW_LINES_PER_TICK = 200; // safety cap if a pane produced a flood since last tick
+
+// tmux capture-pane returns the full pane HEIGHT, padded with blank lines below
+// whatever content is actually there (e.g. 3 real lines in a 23-row pane) — so
+// captures must be trimmed of trailing blanks before diffing, or matching against
+// a blank "last line" trivially hits the padding instead of real prior content.
+function trimTrailingBlank(lines) {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1] === '') end--;
+  return lines.slice(0, end);
+}
+
+// Find the new tail of `curr` relative to `prev` via longest-common-PREFIX, not
+// last-line matching — the pane's final row is a live, mutable prompt/input line
+// that gets text appended in place as it's typed, so it isn't a stable anchor to
+// match against (it recurs identically, then differs, then recurs again once the
+// next command finishes — matching on it alone can land on the wrong occurrence
+// and silently drop real content). Since already-written rows above the prompt
+// never change, a common prefix is a reliable "how much of this have we already
+// seen" boundary; everything after it is new. If the pane scrolled past what we
+// tracked (prefix collapses to ~0), fall back to the tail of curr, capped.
+// Both inputs must already be trimmed of trailing blank padding.
+function diffPaneLines(prev, curr) {
+  if (prev.length === 0) return []; // first-ever capture for this pane — nothing to diff yet
+  let i = 0;
+  const minLen = Math.min(prev.length, curr.length);
+  while (i < minLen && prev[i] === curr[i]) i++;
+  const newLines = curr.slice(i);
+  return newLines.length > MAX_NEW_LINES_PER_TICK ? newLines.slice(-MAX_NEW_LINES_PER_TICK) : newLines;
+}
+
+async function streamTerminalOutput() {
+  if (!IS_LINUX) return;
+  try {
+    const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
+    const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
+    const liveById = new Map(
+      list.filter(a => LIVE_FOR_RECONCILE.includes(a.status)).map(a => [a.id.substring(0, 8), a.id])
+    );
+    if (liveById.size === 0) return;
+
+    const paneResult = spawnSync('tmux',
+      ['list-panes', '-a', '-F', '#{session_name}:#{window_index} #{window_name}'],
+      { encoding: 'utf8', stdio: 'pipe' });
+    if (paneResult.status !== 0) return;
+
+    const seenTargets = new Set();
+    for (const line of (paneResult.stdout || '').split('\n').filter(Boolean)) {
+      const spaceIdx = line.indexOf(' ');
+      if (spaceIdx === -1) continue;
+      const target = line.substring(0, spaceIdx);
+      const windowName = line.substring(spaceIdx + 1).trim();
+      const agentId = liveById.get(windowName);
+      if (!agentId) continue; // not a live-agent window (or not one we track)
+      seenTargets.add(target);
+
+      const captureResult = spawnSync('tmux', ['capture-pane', '-p', '-t', target],
+        { encoding: 'utf8', stdio: 'pipe' });
+      if (captureResult.status !== 0) continue;
+      const currLines = trimTrailingBlank((captureResult.stdout || '').split('\n')).slice(-MAX_CAPTURE_LINES);
+      const prevLines = lastPaneLines.get(target) || [];
+      const newLines = diffPaneLines(prevLines, currLines);
+      lastPaneLines.set(target, currLines);
+
+      if (newLines.length === 0) continue;
+      try {
+        await postJSON(`${SERVER_URL}/api/agents/${agentId}/terminal`, {
+          output: newLines.join('\n'),
+        });
+      } catch (err) {
+        log(`Terminal-output stream: failed to post for agent ${windowName}: ${err.message}`);
+      }
+    }
+
+    // Drop tracked state for panes that no longer exist, so a future re-use of
+    // the same tmux target doesn't get diffed against stale content.
+    for (const target of lastPaneLines.keys()) {
+      if (!seenTargets.has(target)) lastPaneLines.delete(target);
+    }
+  } catch (err) {
+    if (!err.message?.includes('ECONNREFUSED')) {
+      log(`Terminal-output stream error: ${err.message}`);
+    }
+  }
+}
+
+let terminalStreamCounter = 0;
+
 async function schedulePoll() {
   await processPendingRequests();
 
@@ -1320,6 +1421,15 @@ async function schedulePoll() {
   if (reconcileCounter >= 20) {
     reconcileCounter = 0;
     await reconcileTmuxAgents();
+  }
+
+  // Run terminal-output producer every ~6s (every 2nd poll) — more frequent than
+  // the other sweeps since this drives the "live" feel, but still throttled well
+  // below a raw pipe.
+  terminalStreamCounter++;
+  if (terminalStreamCounter >= 2) {
+    terminalStreamCounter = 0;
+    await streamTerminalOutput();
   }
 
   setTimeout(schedulePoll, POLL_INTERVAL);
