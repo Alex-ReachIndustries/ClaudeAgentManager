@@ -30,7 +30,7 @@ type DetailTab = 'conversation' | 'info';
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { agent, updates, messages, loading, error, refetch } = useAgent(id!);
+  const { agent, updates, messages, liveTerminalLines, loading, error, refetch } = useAgent(id!);
 
   const isArchived = agent?.status === 'archived';
   const isLive = agent ? LIVE_STATUSES.has(agent.status) : false;
@@ -334,7 +334,12 @@ function AgentDetail() {
       {tab === 'conversation' && (
         <div className="space-y-4">
           <UpdateTimeline updates={updates} files={files} />
-          <TerminalPanel updates={updates} />
+          <TerminalPanel
+            updates={updates}
+            liveLines={liveTerminalLines}
+            agentId={agent.id}
+            canControl={isLive && !!agent.pid}
+          />
           <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
         </div>
       )}
