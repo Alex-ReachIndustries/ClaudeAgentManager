@@ -4,8 +4,8 @@ import AgentCard from './AgentCard';
 import FolderPicker from './FolderPicker';
 import AnalyticsPanel from './AnalyticsPanel';
 import BatchActionsBar from './BatchActionsBar';
-import { createLaunchRequest } from '../api';
-import { RefreshCw, Bot, Archive, Plus, Search, Layers, Monitor } from 'lucide-react';
+import { createLaunchRequest, exportPdf } from '../api';
+import { RefreshCw, Bot, Archive, Plus, Search, Layers, Monitor, FileDown, Loader2 } from 'lucide-react';
 
 type StatusFilter = 'all' | 'active' | 'idle' | 'working' | 'waiting-for-input' | 'archived';
 type SortOption = 'activity' | 'created' | 'updates' | 'name';
@@ -42,6 +42,7 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
   const [groupByWindow, setGroupByWindow] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [exportingGroup, setExportingGroup] = useState<string | null>(null);
 
   // Collect unique project names for filter dropdown
   const projectNames = useMemo(() => {
@@ -56,6 +57,24 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
 
   // Detect whether any active agents have wt_window set
   const hasWindowGroups = useMemo(() => agents.some((a) => a.wt_window && a.status !== 'archived'), [agents]);
+
+  const handleExportGroupPdf = async (windowName: string) => {
+    if (exportingGroup) return;
+    setExportingGroup(windowName);
+    try {
+      const blob = await exportPdf(`/agents/groups/${encodeURIComponent(windowName)}/export/pdf`, { method: 'POST' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${windowName}_group_export.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Group PDF export failed:', err);
+    } finally {
+      setExportingGroup(null);
+    }
+  };
 
   const handleLaunch = async (folderPath: string, options: { wtWindow?: string; role?: string; task?: string; effort?: string; model?: string }) => {
     try {
@@ -320,6 +339,20 @@ function Dashboard({ agents, loading, error, refetch }: DashboardProps) {
                     {group.name ?? 'Ungrouped'}
                   </h2>
                   <span className="text-xs text-dark-600">{group.agents.length}</span>
+                  {group.name && (
+                    <button
+                      onClick={() => handleExportGroupPdf(group.name!)}
+                      disabled={exportingGroup === group.name}
+                      className="p-1 text-dark-500 hover:text-dark-200 transition-colors disabled:opacity-50"
+                      title={exportingGroup === group.name ? 'Exporting PDF…' : 'Export group PDF'}
+                    >
+                      {exportingGroup === group.name ? (
+                        <Loader2 size={14} className="animate-spin text-lumi-400" />
+                      ) : (
+                        <FileDown size={14} />
+                      )}
+                    </button>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {group.agents.map((agent) => (
