@@ -109,9 +109,6 @@ dependencies {
     // Gson
     implementation(libs.gson)
 
-    // MQTT Client (HiveMQ)
-    implementation("com.hivemq:hivemq-mqtt-client:1.3.3")
-
     // Coroutines
     implementation(libs.coroutines.core)
     implementation(libs.coroutines.android)
