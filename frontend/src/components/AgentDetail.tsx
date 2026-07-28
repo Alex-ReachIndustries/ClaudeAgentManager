@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2, Loader2, DollarSign } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles, fetchAgentCosts } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles, fetchAgentCosts, exportPdf } from '../api';
 import type { Role, AgentCostBreakdown } from '../api';
 import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
@@ -157,9 +157,7 @@ function AgentDetail() {
     if (!id || exporting) return;
     setExporting(true);
     try {
-      const res = await fetch(`/api/agents/${id}/export/pdf`);
-      if (!res.ok) throw new Error('Export failed');
-      const blob = await res.blob();
+      const blob = await exportPdf(`/agents/${id}/export/pdf`);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

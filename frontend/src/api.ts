@@ -152,6 +152,22 @@ export async function uploadFile(
   return res.json();
 }
 
+/**
+ * Fetch a binary PDF response. Bypasses request() (which assumes JSON) and,
+ * like uploadFile, attaches the API key by hand since raw fetch() otherwise
+ * sends no auth header at all.
+ */
+export async function exportPdf(path: string, options?: RequestInit): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+  return res.blob();
+}
+
 // --- Folder browser ---
 export interface FolderEntry {
   name: string;
