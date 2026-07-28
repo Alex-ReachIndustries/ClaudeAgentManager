@@ -30,7 +30,7 @@ type DetailTab = 'conversation' | 'info';
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { agent, updates, messages, loading, error, refetch, hasMoreHistory, isLoadingMore, loadMoreHistory } = useAgent(id!);
+  const { agent, updates, messages, liveTerminalLines, loading, error, refetch, hasMoreHistory, isLoadingMore, loadMoreHistory } = useAgent(id!);
 
   const isArchived = agent?.status === 'archived';
   const isLive = agent ? LIVE_STATUSES.has(agent.status) : false;
@@ -340,7 +340,12 @@ function AgentDetail() {
             isLoadingMore={isLoadingMore}
             onLoadMore={loadMoreHistory}
           />
-          <TerminalPanel updates={updates} />
+          <TerminalPanel
+            updates={updates}
+            liveLines={liveTerminalLines}
+            agentId={agent.id}
+            canControl={isLive && !!agent.pid}
+          />
           <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
         </div>
       )}

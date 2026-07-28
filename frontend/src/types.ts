@@ -84,8 +84,14 @@ export interface TodoStatus {
   project?: string;
 }
 
+export interface TerminalLine {
+  output: string;
+  timestamp: string;
+}
+
 export type SSEEvent =
   | { type: 'agent-updated'; data: Agent }
   | { type: 'agent-deleted'; data: { id: string } }
   | { type: 'message-queued'; data: AgentMessage }
-  | { type: 'messages-acknowledged'; data: { agent_id: string; ids: number[]; ack_content: string } };
+  | { type: 'messages-acknowledged'; data: { agent_id: string; ids: number[]; ack_content: string } }
+  | { type: 'terminal-output'; data: { agentId: string; output: string; timestamp: string } };

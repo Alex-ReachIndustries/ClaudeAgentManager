@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Agent, AgentUpdate, AgentMessage } from '../types';
+import type { Agent, AgentUpdate, AgentMessage, TerminalLine } from '../types';
 import { fetchAgent, fetchUpdates, fetchMessages, subscribeToEvents } from '../api';
+
+const LIVE_TERMINAL_SCROLLBACK = 500;
 
 /** Merge newly-fetched items into an existing list, appending only ids not already present. */
 function mergeById<T extends { id: number }>(existing: T[], incoming: T[]): T[] {
@@ -21,6 +23,7 @@ export function useAgent(id: string) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [updates, setUpdates] = useState<AgentUpdate[]>([]);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const [liveTerminalLines, setLiveTerminalLines] = useState<TerminalLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasMoreUpdates, setHasMoreUpdates] = useState(false);
@@ -122,6 +125,14 @@ export function useAgent(id: string) {
             setError('Agent has been deleted');
           }
           break;
+        case 'terminal-output':
+          if (event.data.agentId === id) {
+            setLiveTerminalLines((prev) => {
+              const next = [...prev, { output: event.data.output, timestamp: event.data.timestamp }];
+              return next.length > LIVE_TERMINAL_SCROLLBACK ? next.slice(-LIVE_TERMINAL_SCROLLBACK) : next;
+            });
+          }
+          break;
       }
     });
 
@@ -132,6 +143,7 @@ export function useAgent(id: string) {
     agent,
     updates,
     messages,
+    liveTerminalLines,
     loading,
     error,
     refetch,

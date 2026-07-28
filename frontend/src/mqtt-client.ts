@@ -98,8 +98,13 @@ export function subscribeToMqttEvents(
       const parts = topic.split('/');
 
       if (parts[0] === 'agents' && parts[2] === 'updates') {
-        // Agent update — emit as agent-updated event
-        onEvent({ type: 'agent-updated', data });
+        if (data.type === 'terminal') {
+          // Live terminal output — distinct shape from a full Agent object
+          onEvent({ type: 'terminal-output', data: { agentId: parts[1], output: data.output, timestamp: data.timestamp } });
+        } else {
+          // Agent update — emit as agent-updated event
+          onEvent({ type: 'agent-updated', data });
+        }
       } else if (parts[0] === 'agents' && parts[2] === 'messages') {
         // Message queued — emit as message-queued event
         onEvent({ type: 'message-queued', data });

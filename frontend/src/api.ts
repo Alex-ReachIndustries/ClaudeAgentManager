@@ -176,6 +176,10 @@ export async function sendSignal(agentId: string, signal: 'ctrl-c' | 'enter'): P
   return request<{ ok: boolean }>(`/agents/${agentId}/signal`, { method: 'POST', body: JSON.stringify({ signal }) });
 }
 
+export async function sendInput(agentId: string, text: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/agents/${agentId}/input`, { method: 'POST', body: JSON.stringify({ text }) });
+}
+
 // --- Launch requests ---
 export async function fetchWtWindows(): Promise<string[]> {
   return request<string[]>('/agents/wt-windows');
@@ -560,16 +564,22 @@ function subscribeToSSE(
     onEvent({ type: 'messages-acknowledged', data: JSON.parse(e.data) });
   };
 
+  const handleTerminalOutput = (e: MessageEvent) => {
+    onEvent({ type: 'terminal-output', data: JSON.parse(e.data) });
+  };
+
   es.addEventListener('agent-updated', handleAgentUpdated);
   es.addEventListener('agent-deleted', handleAgentDeleted);
   es.addEventListener('message-queued', handleMessageQueued);
   es.addEventListener('messages-acknowledged', handleMessagesAcknowledged);
+  es.addEventListener('terminal-output', handleTerminalOutput);
 
   return () => {
     es.removeEventListener('agent-updated', handleAgentUpdated);
     es.removeEventListener('agent-deleted', handleAgentDeleted);
     es.removeEventListener('message-queued', handleMessageQueued);
     es.removeEventListener('messages-acknowledged', handleMessagesAcknowledged);
+    es.removeEventListener('terminal-output', handleTerminalOutput);
     es.close();
     emitState('disconnected');
   };
