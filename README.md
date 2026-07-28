@@ -41,10 +41,15 @@ A self-hosted dashboard for monitoring, communicating with, and launching Claude
 
 ### Prerequisites
 
-- Docker Desktop installed and running
-- Git
+To **run agents** (a host machine that launches/resumes Claude sessions):
+
+- Docker Desktop installed and running — runs the dashboard + backend
 - Node.js (for the host launcher)
+- **Claude Code CLI — installed *and* signed in.** This is **separate from Docker**: the agents you launch *are* Claude Code sessions the launcher spawns on the host, so Docker does not include it. Install with `npm install -g @anthropic-ai/claude-code` (or see the [Claude Code docs](https://docs.claude.com/en/docs/claude-code)) and run `claude` once to log in.
+- Git
 - ~2GB free disk space
+
+To **only view/message agents** (e.g. from your phone), you need nothing but a web browser + Tailscale — see [Remote Access](#remote-access-via-tailscale).
 
 ### Deploy
 

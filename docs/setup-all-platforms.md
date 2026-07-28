@@ -8,10 +8,17 @@ The Manager itself (backend, frontend, MQTT, PDF service) runs in **Docker** and
 
 ## 1. Prerequisites (all platforms)
 
-- **Docker** — Docker Desktop (Windows/macOS) or Docker Engine + Compose plugin (Linux). Must be running.
+What you need depends on the machine's role:
+
+**To RUN agents (a "host" machine that launches/resumes Claude sessions):**
+- **Docker** — Docker Desktop (Windows/macOS) or Docker Engine + Compose plugin (Linux). Must be running. This runs the Manager itself (dashboard + backend + MQTT + PDF service).
+- **Node.js 20+** — runs the host launcher (spawns agent sessions). Not in Docker.
+- **Claude Code CLI** — **installed *and* signed in.** This is **separate from Docker** and is easy to miss: the agents you launch *are* Claude Code sessions — the launcher runs the `claude` CLI on the host in a terminal/tmux window. Docker does **not** bundle it. Install it (`npm install -g @anthropic-ai/claude-code`, or see [Claude Code docs](https://docs.claude.com/en/docs/claude-code)) and run `claude` once to log in before launching agents.
 - **Git** — to clone the repo (or download the release ZIP).
-- **Node.js 20+** — only needed on the machine that runs the host launcher.
 - ~2 GB free disk.
+
+**To only VIEW / message agents (e.g. your phone, or any laptop browser):**
+- Just a **web browser** + **Tailscale** (see the remote-access section). No Docker, no Node, no Claude Code — you're only talking to a host machine that's already running the stack.
 
 ## 2. Get the code
 
