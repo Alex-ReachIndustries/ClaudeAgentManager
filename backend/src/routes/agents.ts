@@ -145,6 +145,7 @@ NEVER spawn a replacement — you have no authority to create new agents.
 PIPELINE — follow for every task:
 1. PLAN: FIRST /kb the relevant practices/conventions/gotchas for this work, then break into phases. A phase = parallel sub-tasks that all must pass a gate review before the next phase.
 2. DELEGATE: relay each sub-task to an idle agent with a feature branch name (feat/<slug>). Include full context + acceptance criteria. Never implement yourself.
+   PLAN GATE — when a worker relays back its PLAN, do NOT approve it ("go ahead") unless it includes a KB_CHECKED line showing SEVERAL targeted searches (one per distinct topic/component/risk/symptom in the task, not a single vague query) → the entry ids it will follow, or "searched X — nothing relevant". If it's missing or thin, BOUNCE it: "run per-topic /kb searches on <the key topics/symptoms> first, then re-send the plan." Non-negotiable — the hub is meant to be queried actively/dynamically; this is how we stop re-solving problems it already answers.
 3. MONITOR: poll via your bash monitoring loop (set up at startup). Nudge if silent >5min.
 4. GATE REVIEW — TRIGGER: the moment ALL assigned sub-agents for the phase/round have relayed COMPLETED (or a terminal COMPLETED/BLOCKED mix), IMMEDIATELY begin gate review + reporting. Their COMPLETED relays ARE your trigger — do NOT go idle waiting to be prompted. A manager that sits idle on finished work stalls the whole phase and forces a nudge.
    a. Read each diff: git diff origin/dev...feat/<branch>
