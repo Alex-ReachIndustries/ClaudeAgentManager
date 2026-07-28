@@ -192,6 +192,17 @@ export async function sendSignal(agentId: string, signal: 'ctrl-c' | 'enter'): P
   return request<{ ok: boolean }>(`/agents/${agentId}/signal`, { method: 'POST', body: JSON.stringify({ signal }) });
 }
 
+// Display-only — hits the /preview endpoint, never the delivery route, so viewing
+// this never marks rules as delivered to the agent (see backend route comment).
+export async function fetchAgentRules(agentId: string): Promise<string> {
+  const res = await fetch(`${BASE}/agents/${agentId}/rules/preview`, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+  return res.text();
+}
+
 // --- Launch requests ---
 export async function fetchWtWindows(): Promise<string[]> {
   return request<string[]>('/agents/wt-windows');

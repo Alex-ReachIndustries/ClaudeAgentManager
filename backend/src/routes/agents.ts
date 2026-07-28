@@ -1385,6 +1385,26 @@ router.get("/:id/rules", (req: Request, res: Response) => {
   }
 });
 
+// GET /:id/rules/preview — same rules content as /:id/rules, for display-only
+// consumers (e.g. the dashboard's rules inspection panel). Deliberately separate
+// from the delivery route above: it must NEVER call markRulesInjected, or a human
+// just viewing the panel would silently cancel that agent's pending rules-refresh.
+router.get("/:id/rules/preview", (req: Request, res: Response) => {
+  try {
+    const id = param(req, "id");
+    const agent = getAgent(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    const { fullRules, tier } = buildAgentRules(agent as Record<string, unknown>);
+    res.type("text/plain").send(`[FULL RULES — tier: ${tier}]\n${fullRules.trim()}\n`);
+  } catch (err) {
+    logger.error({ err }, "Error getting agent rules preview");
+    res.status(500).json({ error: "Failed to get rules preview" });
+  }
+});
+
 // GET /:id/messages/:msgId — fetch a single message's full content by id.
 // Used by the "reply/reference" feature so an agent can retrieve the full text
 // of a message referenced by id (the reply embeds only a short snippet + id).
