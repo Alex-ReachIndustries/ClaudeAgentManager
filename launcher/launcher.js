@@ -260,6 +260,113 @@ function resolveClaudeExe() {
   throw new Error(`resolveClaudeExe: could not find claude.exe. Tried: ${triedList}`);
 }
 
+// PID tracking helpers (Windows). The stored agent PID has historically been the
+// wrapping cmd.exe/wt.exe terminal PID, not claude.exe itself — terminateAgent relies
+// on /T tree-kill to reach claude.exe indirectly, but liveness checks against that PID
+// can't tell "claude.exe crashed, terminal window still open" from "still alive".
+//
+// Win32_Process (queried via PowerShell/WMI below) exposes CommandLine but NOT a
+// process's environment block, so a CLAUDE_AGENT_ID env var alone isn't queryable this
+// way. We still inject it into the batch file (see launchNewAgent/launchResumeAgent)
+// for any future direct-env consumer, but PID *resolution* here keys off substrings
+// that actually appear in CommandLine: `--resume <agentId>` for resumed agents, or the
+// spawning batch file's unique name (found on the wrapping cmd.exe, then walked to its
+// claude.exe child) for brand-new agents where no session id is known yet.
+function psEscapeLikePattern(str) {
+  // Escape for safe interpolation inside a single-quoted PowerShell string and a -like pattern.
+  return String(str).replace(/'/g, "''").replace(/`/g, '``').replace(/\$/g, '`$').replace(/[\[\]]/g, '`$&');
+}
+
+function findClaudeExePidByCommandLineSubstring(substring) {
+  try {
+    const pattern = psEscapeLikePattern(substring);
+    const psCmd = `(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -like '*${pattern}*' } | Select-Object -First 1 -ExpandProperty ProcessId)`;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psCmd], { encoding: 'utf8' });
+    const out = (result.stdout || '').trim();
+    if (result.status === 0 && /^\d+$/.test(out)) return parseInt(out, 10);
+  } catch (err) {
+    log(`findClaudeExePidByCommandLineSubstring: query failed: ${err.message}`);
+  }
+  return null;
+}
+
+function findClaudeExeChildOfCmdMatching(substring) {
+  try {
+    const pattern = psEscapeLikePattern(substring);
+    const psCmd = `$p = Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*${pattern}*' } | Select-Object -First 1; if ($p) { (Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.ProcessId) AND Name='claude.exe'" | Select-Object -First 1 -ExpandProperty ProcessId) }`;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psCmd], { encoding: 'utf8' });
+    const out = (result.stdout || '').trim();
+    if (result.status === 0 && /^\d+$/.test(out)) return parseInt(out, 10);
+  } catch (err) {
+    log(`findClaudeExeChildOfCmdMatching: query failed: ${err.message}`);
+  }
+  return null;
+}
+
+async function pollForPid(finderFn, timeoutMs = 10000, intervalMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pid = finderFn();
+    if (pid) return pid;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
+// Resolves the real claude.exe PID for a just-resumed agent (agent id already known)
+// and corrects the backend's stored pid. Fire-and-forget from the caller.
+async function correctResumedAgentPid(agentId) {
+  const realPid = await pollForPid(() => findClaudeExePidByCommandLineSubstring(`--resume ${agentId}`));
+  if (!realPid) {
+    log(`Could not resolve real claude.exe PID for resumed agent ${agentId} within 10s — leaving terminal PID as-is`);
+    return;
+  }
+  log(`Resolved real claude.exe PID ${realPid} for resumed agent ${agentId} (was tracked as terminal PID)`);
+  try {
+    await patchJSON(`${SERVER_URL}/api/agents/${agentId}`, { pid: realPid });
+  } catch (err) {
+    log(`Failed to patch corrected pid for ${agentId}: ${err.message}`);
+  }
+}
+
+// Resolves the real claude.exe PID for a brand-new agent (no session id known yet —
+// Windows doesn't pre-generate one, see launchNewAgent) by matching the wrapping cmd.exe
+// process to this launch's unique batch file name, then waits for the agent to register
+// (same cwd+spawnTime correlation as deliverPromptWhenRegistered) to know which backend
+// record to correct. Fire-and-forget from the caller.
+async function correctNewAgentPid(cwd, batchFile) {
+  const spawnTime = Date.now();
+  const realPid = await pollForPid(() => findClaudeExeChildOfCmdMatching(path.basename(batchFile)));
+  if (!realPid) {
+    log(`Could not resolve real claude.exe PID for new agent at "${cwd}" within 10s — leaving terminal PID as self-reported`);
+    return;
+  }
+  log(`Resolved real claude.exe PID ${realPid} for new agent at "${cwd}" (was tracked as terminal PID)`);
+
+  const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
+  const deadline = spawnTime + 120000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000));
+    try {
+      const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
+      const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
+      const fresh = list.find((a) => {
+        const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
+        const registeredAt = new Date(a.created_at).getTime();
+        return agentCwd === normCwd && registeredAt >= spawnTime - 3000 && a.pid !== realPid;
+      });
+      if (fresh) {
+        await patchJSON(`${SERVER_URL}/api/agents/${fresh.id}`, { pid: realPid });
+        log(`Corrected pid for new agent ${fresh.id} to real claude.exe PID ${realPid}`);
+        return;
+      }
+    } catch (err) {
+      log(`pid-correction registration poll failed: ${err.message}`);
+    }
+  }
+  log(`Gave up waiting for new agent at "${normCwd}" to register for pid correction`);
+}
+
 // Resolves an absolute path to wt.exe (Windows Terminal). Checked in order:
 // `where wt.exe` -> hardcoded per-user WindowsApps install path. Cached once resolved;
 // if resolution fails once, cached as "unresolvable" so every launch doesn't re-shell out.
@@ -640,12 +747,18 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   fs.writeFileSync(promptFile, initialPrompt.replace(/"/g, "'"), 'utf8');
   const winModelFlag = buildSafeCliFlag('model', spawnMeta && spawnMeta.model ? resolveModel(spawnMeta.model) : null);
   const winEffortFlag = buildSafeCliFlag('effort', spawnMeta && spawnMeta.effort ? spawnMeta.effort : null);
-  fs.writeFileSync(batchFile, `@echo off\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
+  // CLAUDE_AGENT_ID here is a launcher-only tracking tag, NOT Claude's own session id
+  // (Windows new-agent launches don't pre-generate that — see comment above). Exists for
+  // env-based tooling; our own PID resolution below keys off the batch file name instead
+  // since WMI can't see environment variables (see correctNewAgentPid).
+  const trackingId = pregenUuid || randomUUID();
+  fs.writeFileSync(batchFile, `@echo off\nset CLAUDE_AGENT_ID=${trackingId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
   const proc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile);
   // Clean up batch file + prompt sidecar after agent starts
   setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
   log(`Spawned terminal for new agent via ${batchFile}`);
+  correctNewAgentPid(cwd, batchFile).catch((err) => log(`correctNewAgentPid failed: ${err.message}`));
   return proc;
 }
 
@@ -729,11 +842,15 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   fs.writeFileSync(promptFile, 'run /session-resume and then await instructions'.replace(/"/g, "'"), 'utf8');
   const winAgentModelFlag = buildSafeCliFlag('model', agentModelRaw ? resolveModel(agentModelRaw) : null);
   const winAgentEffortFlag = buildSafeCliFlag('effort', agentEffortRaw);
-  fs.writeFileSync(batchFile, `@echo off\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winAgentModelFlag}${winAgentEffortFlag} --resume ${agentId} "%LAUNCH_PROMPT%"\n`, 'utf8');
+  // CLAUDE_AGENT_ID mirrors the real session id here (unlike launchNewAgent, it's already
+  // known) — for env-based tooling. Our own PID resolution still keys off `--resume
+  // <agentId>` in claude.exe's CommandLine since WMI can't see environment variables.
+  fs.writeFileSync(batchFile, `@echo off\nset CLAUDE_AGENT_ID=${agentId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winAgentModelFlag}${winAgentEffortFlag} --resume ${agentId} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
   const proc = spawnWindowsTerminal(resolvedWtWindow, tabTitle, cwd, batchFile);
   setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
   log(`Spawned terminal for resume agent ${agentId} via ${batchFile}`);
+  correctResumedAgentPid(agentId).catch((err) => log(`correctResumedAgentPid failed: ${err.message}`));
   return proc;
 }
 
@@ -1500,4 +1617,6 @@ module.exports = {
   resolveClaudeExe, resolveWtExe, spawnWindowsTerminal, resolveFolder,
   ensureWorkspaceTrusted, resolveModel, terminateAgent, isPidRunning,
   sanitizeFlagValue, buildSafeCliFlag,
+  findClaudeExePidByCommandLineSubstring, findClaudeExeChildOfCmdMatching, pollForPid,
+  launchNewAgent, launchResumeAgent, correctNewAgentPid, correctResumedAgentPid,
 };
