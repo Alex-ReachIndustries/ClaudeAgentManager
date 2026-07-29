@@ -293,11 +293,11 @@ function MessagePanel({ agentId, messages, onSent }: MessagePanelProps) {
       </div>
 
       {/* Message list */}
-      <div className="max-h-[calc(100vh-480px)] overflow-y-auto p-4 space-y-3">
+      <div className="max-h-[calc(100vh-360px)] overflow-y-auto p-4 space-y-3">
         {messages.length === 0 ? (
           <p className="text-sm text-dark-600 text-center py-4">No messages yet</p>
         ) : (
-          [...messages].reverse().map((msg) => {
+          messages.map((msg) => {
             const statusCfg = messageStatusConfig[msg.status];
             const StatusIcon = statusCfg.icon;
             const isAgent = msg.source === 'agent';

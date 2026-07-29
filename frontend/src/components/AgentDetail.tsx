@@ -2,11 +2,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Calendar, Activity, Archive, ArchiveRestore, FileDown, Play, XCircle, MoreVertical, Trash2, Loader2, DollarSign } from 'lucide-react';
 import { useAgent } from '../hooks/useAgent';
-import { updateAgent, markAgentRead, createLaunchRequest, fetchAgentFiles, sendMessage, fetchRoles, fetchAgentCosts, exportPdf } from '../api';
+import { updateAgent, markAgentRead, createLaunchRequest, sendMessage, fetchRoles, fetchAgentCosts, exportPdf } from '../api';
 import type { Role, AgentCostBreakdown } from '../api';
-import type { AgentFile } from '../types';
 import { formatDate } from '../utils/time';
-import UpdateTimeline from './UpdateTimeline';
 import MessagePanel from './MessagePanel';
 import ProjectTodoPanel from './ProjectTodoPanel';
 import PollDelayControl from './PollDelayControl';
@@ -31,7 +29,7 @@ type DetailTab = 'conversation' | 'info' | 'costs';
 function AgentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { agent, updates, messages, loading, error, refetch, hasMoreHistory, isLoadingMore, loadMoreHistory } = useAgent(id!);
+  const { agent, updates, messages, loading, error, refetch } = useAgent(id!);
 
   const isArchived = agent?.status === 'archived';
   const isLive = agent ? LIVE_STATUSES.has(agent.status) : false;
@@ -40,7 +38,6 @@ function AgentDetail() {
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [terminating, setTerminating] = useState(false);
-  const [files, setFiles] = useState<AgentFile[]>([]);
   const [roleInput, setRoleInput] = useState('');
   const [savingRole, setSavingRole] = useState(false);
   const [effortInput, setEffortInput] = useState('high');
@@ -76,15 +73,6 @@ function AgentDetail() {
       fetchAgentCosts(id).then(setCosts).catch(() => setCostsError(true));
     }
   }, [tab, id, costs, costsError]);
-
-  // Fetch files for inline timeline display
-  useEffect(() => {
-    if (id) {
-      fetchAgentFiles(id).then((data) => {
-        setFiles(Array.isArray(data) ? data : []);
-      }).catch(() => {});
-    }
-  }, [id, agent?.update_count]);
 
   // Sync role/effort/model/wt_window inputs when agent loads
   useEffect(() => {
@@ -341,15 +329,8 @@ function AgentDetail() {
       {/* Conversation tab */}
       {tab === 'conversation' && (
         <div className="space-y-4">
-          <UpdateTimeline
-            updates={updates}
-            files={files}
-            hasMore={hasMoreHistory}
-            isLoadingMore={isLoadingMore}
-            onLoadMore={loadMoreHistory}
-          />
-          <TerminalPanel updates={updates} />
           <MessagePanel agentId={agent.id} messages={messages} onSent={refetch} />
+          <TerminalPanel updates={updates} />
         </div>
       )}
 
