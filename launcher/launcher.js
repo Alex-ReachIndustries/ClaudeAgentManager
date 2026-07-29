@@ -84,6 +84,28 @@ function resolveModel(model) {
   return MODEL_DEFAULTS[model] || model;
 }
 
+// model/effort ultimately come from launch-request/spawn API payloads and are
+// interpolated directly into a Windows batch file's command line (e.g. `--model
+// ${value}`). Neither is restricted to a fixed enum at the transport layer, so an
+// unsanitized value containing a quote or `&`/`|` could break out of the intended
+// argument and inject arbitrary commands into the batch file. Only allow the
+// character set real model/effort identifiers use.
+function sanitizeFlagValue(value, label) {
+  if (value == null) return null;
+  const str = String(value);
+  if (!/^[a-zA-Z0-9._-]+$/.test(str)) {
+    log(`SECURITY: rejected unsafe ${label} value for batch interpolation: ${JSON.stringify(str)}`);
+    return null;
+  }
+  return str;
+}
+
+function buildSafeCliFlag(flagName, rawValue) {
+  if (rawValue == null) return '';
+  const safe = sanitizeFlagValue(rawValue, flagName);
+  return safe ? ` --${flagName} ${safe}` : '';
+}
+
 function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);
   console.log(`[${ts}] ${msg}`);
@@ -604,16 +626,25 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
     return;
   }
 
-  // Windows: write prompt to a temp batch file to avoid cmd.exe special character issues
+  // Windows: write the prompt to a sidecar .txt file and read it into a batch variable
+  // via `set /P` rather than embedding it as command-line text. This sidesteps cmd.exe
+  // batch expansion entirely (%, !, ^, embedded quotes all break differently depending on
+  // delayed-expansion state) since the value is read as one literal line, not parsed.
   const claudeExe = resolveClaudeExe();
   const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
-  // Escape the prompt for batch: double up % signs, wrap in quotes
-  const batchPrompt = initialPrompt.replace(/%/g, '%%');
-  fs.writeFileSync(batchFile, `@echo off\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
+  const promptFile = path.join(os.tmpdir(), `claude-launch-prompt-${Date.now()}.txt`);
+  // set /P reads the sidecar line correctly even if it contains %, !, or ^, but a literal
+  // embedded " still breaks the *receiving* command's quoting once %LAUNCH_PROMPT% is
+  // re-wrapped in quotes (verified: %/!/^ round-trip intact, embedded " does not). These
+  // prompts are plain instructional text, so swap " for ' rather than leave that case unhandled.
+  fs.writeFileSync(promptFile, initialPrompt.replace(/"/g, "'"), 'utf8');
+  const winModelFlag = buildSafeCliFlag('model', spawnMeta && spawnMeta.model ? resolveModel(spawnMeta.model) : null);
+  const winEffortFlag = buildSafeCliFlag('effort', spawnMeta && spawnMeta.effort ? spawnMeta.effort : null);
+  fs.writeFileSync(batchFile, `@echo off\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
   const proc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile);
-  // Clean up batch file after agent starts
-  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} }, 30000);
+  // Clean up batch file + prompt sidecar after agent starts
+  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
   log(`Spawned terminal for new agent via ${batchFile}`);
   return proc;
 }
@@ -623,11 +654,15 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   let resolvedWtWindow = wtWindow || null;
   let agentModelFlag = '';
   let agentEffortFlag = '';
+  let agentModelRaw = null;
+  let agentEffortRaw = null;
 
   // Always fetch agent to get stored cwd, wt_window, model, and effort
   try {
     const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
     if (agent) {
+      agentModelRaw = agent.model || null;
+      agentEffortRaw = agent.effort || null;
       if (!path.isAbsolute(folderPath || '') && agent.cwd) {
         if (IS_LINUX) {
           cwd = agent.cwd;
@@ -685,13 +720,19 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     return;
   }
 
-  // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues)
+  // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues).
+  // Prompt goes through a sidecar .txt + `set /P` for the same reason as launchNewAgent
+  // (sidesteps cmd.exe batch expansion of %, !, ^, embedded quotes entirely).
   const claudeExe = resolveClaudeExe();
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
-  fs.writeFileSync(batchFile, `@echo off\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
+  const promptFile = path.join(os.tmpdir(), `claude-resume-prompt-${Date.now()}.txt`);
+  fs.writeFileSync(promptFile, 'run /session-resume and then await instructions'.replace(/"/g, "'"), 'utf8');
+  const winAgentModelFlag = buildSafeCliFlag('model', agentModelRaw ? resolveModel(agentModelRaw) : null);
+  const winAgentEffortFlag = buildSafeCliFlag('effort', agentEffortRaw);
+  fs.writeFileSync(batchFile, `@echo off\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winAgentModelFlag}${winAgentEffortFlag} --resume ${agentId} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
   const proc = spawnWindowsTerminal(resolvedWtWindow, tabTitle, cwd, batchFile);
-  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} }, 30000);
+  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
   log(`Spawned terminal for resume agent ${agentId} via ${batchFile}`);
   return proc;
 }
@@ -1458,4 +1499,5 @@ if (require.main === module) {
 module.exports = {
   resolveClaudeExe, resolveWtExe, spawnWindowsTerminal, resolveFolder,
   ensureWorkspaceTrusted, resolveModel, terminateAgent, isPidRunning,
+  sanitizeFlagValue, buildSafeCliFlag,
 };
