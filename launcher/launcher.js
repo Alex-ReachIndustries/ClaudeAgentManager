@@ -1031,20 +1031,38 @@ function terminateAgent(pid) {
   }
 
   try {
-    // Windows: The stored PID is the cmd.exe terminal tab (parent of claude.exe).
-    // Killing it with /T /F closes the terminal window and all children (including claude).
-    const proc = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
-      stdio: 'pipe',
-    });
-    let output = '';
-    proc.stdout.on('data', (data) => { output += data.toString(); });
-    proc.stderr.on('data', (data) => { output += data.toString(); });
-    proc.on('close', (code) => {
-      if (code === 0) {
-        log(`Successfully terminated PID ${pid} and its process tree`);
-      } else {
-        log(`taskkill exited with code ${code} for PID ${pid}: ${output.trim()}`);
-      }
+    // Windows: graceful-before-forceful. `taskkill /PID <pid> /T` WITHOUT /F sends a
+    // close signal (CTRL_CLOSE_EVENT) down the process tree instead of forcibly killing
+    // it — claude.exe gets a chance to checkpoint/exit cleanly rather than being killed
+    // mid-write. Only escalate to /T /F (hard kill) if it's still alive 5s later.
+    const forceKill = () => {
+      const proc = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'pipe' });
+      let output = '';
+      proc.stdout.on('data', (data) => { output += data.toString(); });
+      proc.stderr.on('data', (data) => { output += data.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) {
+          log(`Successfully force-terminated PID ${pid} and its process tree`);
+        } else {
+          log(`Force taskkill exited with code ${code} for PID ${pid}: ${output.trim()}`);
+        }
+      });
+    };
+
+    const graceful = spawn('taskkill', ['/PID', String(pid), '/T'], { stdio: 'pipe' });
+    let gracefulOutput = '';
+    graceful.stdout.on('data', (data) => { gracefulOutput += data.toString(); });
+    graceful.stderr.on('data', (data) => { gracefulOutput += data.toString(); });
+    graceful.on('close', (code) => {
+      log(`Graceful taskkill (no /F) for PID ${pid} exited ${code}: ${gracefulOutput.trim()}`);
+      setTimeout(() => {
+        if (isPidRunning(pid)) {
+          log(`PID ${pid} still alive 5s after graceful taskkill — force-killing`);
+          forceKill();
+        } else {
+          log(`PID ${pid} exited gracefully — no force-kill needed`);
+        }
+      }, 5000);
     });
   } catch (err) {
     log(`Failed to terminate PID ${pid}: ${err.message}`);
