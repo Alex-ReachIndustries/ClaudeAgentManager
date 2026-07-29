@@ -183,6 +183,19 @@ async function postJSON(urlStr, body) {
 // this launcher process's PATH, especially when the launcher runs as a scheduled task).
 // Checked in order: known install dir -> `where claude` -> npm global prefix.
 // Cached after first successful resolution since it won't change during a launcher run.
+// fs.existsSync follows reparse points and can throw EACCES (swallowed -> false) on
+// Windows Store "app execution alias" stubs (e.g. wt.exe under WindowsApps) that are
+// only resolvable by CreateProcess, not by stat. lstat checks the directory entry
+// itself without following the reparse target, so it correctly reports these as present.
+function pathExistsRobust(p) {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 let _cachedClaudeExe = null;
 function resolveClaudeExe() {
   if (_cachedClaudeExe) return _cachedClaudeExe;
@@ -213,7 +226,7 @@ function resolveClaudeExe() {
   }
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate.path)) {
+    if (pathExistsRobust(candidate.path)) {
       log(`resolveClaudeExe: using "${candidate.path}" (via ${candidate.via})`);
       _cachedClaudeExe = candidate.path;
       return _cachedClaudeExe;
@@ -223,6 +236,83 @@ function resolveClaudeExe() {
   const triedList = candidates.map(c => `${c.path} (${c.via})`).join(', ') || '(no candidates produced)';
   log(`resolveClaudeExe: FATAL — could not resolve claude.exe. Tried: ${triedList}`);
   throw new Error(`resolveClaudeExe: could not find claude.exe. Tried: ${triedList}`);
+}
+
+// Resolves an absolute path to wt.exe (Windows Terminal). Checked in order:
+// `where wt.exe` -> hardcoded per-user WindowsApps install path. Cached once resolved;
+// if resolution fails once, cached as "unresolvable" so every launch doesn't re-shell out.
+let _cachedWtExe = null;
+let _wtExeUnresolvable = false;
+function resolveWtExe() {
+  if (_cachedWtExe) return _cachedWtExe;
+  if (_wtExeUnresolvable) return null;
+
+  const candidates = [];
+  try {
+    const whereResult = spawnSync('where', ['wt.exe'], { encoding: 'utf8' });
+    if (whereResult.status === 0 && whereResult.stdout) {
+      const firstLine = whereResult.stdout.split(/\r?\n/).map(l => l.trim()).find(Boolean);
+      if (firstLine) candidates.push({ path: firstLine, via: 'where wt.exe' });
+    }
+  } catch (err) {
+    log(`resolveWtExe: 'where wt.exe' failed: ${err.message}`);
+  }
+  const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || USER_HOME, 'AppData', 'Local');
+  candidates.push({ path: path.join(localAppData, 'Microsoft', 'WindowsApps', 'wt.exe'), via: 'hardcoded WindowsApps' });
+
+  for (const c of candidates) {
+    if (pathExistsRobust(c.path)) {
+      log(`resolveWtExe: using "${c.path}" (via ${c.via})`);
+      _cachedWtExe = c.path;
+      return _cachedWtExe;
+    }
+  }
+
+  const triedList = candidates.map(c => `${c.path} (${c.via})`).join(', ') || '(no candidates produced)';
+  log(`resolveWtExe: could not resolve wt.exe. Tried: ${triedList}. Terminal spawns will fall back to a plain conhost window.`);
+  _wtExeUnresolvable = true;
+  return null;
+}
+
+// Spawns a terminal for a launch/resume batch file. Tries wt.exe first (grouped into
+// wtWindow if given); falls back to a bare conhost window (cmd.exe /k) if wt.exe can't
+// be resolved, or if the wt.exe spawn itself errors (missing DLL, corrupted install, etc.)
+// so an agent can still launch even when Windows Terminal is unusable — it just won't be
+// grouped into the named window tab set in that case.
+function spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile) {
+  const wtExe = resolveWtExe();
+
+  function spawnConhostFallback(reason) {
+    log(`spawnWindowsTerminal: falling back to conhost (cmd.exe /k) — ${reason}`);
+    const proc = spawn('cmd.exe', ['/k', batchFile], {
+      detached: true,
+      stdio: 'ignore',
+      cwd,
+    });
+    proc.on('error', (err) => log(`spawnWindowsTerminal: conhost fallback ALSO failed: ${err.message}`));
+    proc.unref();
+    return proc;
+  }
+
+  if (!wtExe) {
+    return spawnConhostFallback('wt.exe unresolvable');
+  }
+
+  const wtArgs = wtWindow
+    ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
+    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
+
+  try {
+    const proc = spawn(wtExe, wtArgs, { detached: true, stdio: 'ignore' });
+    proc.on('error', (err) => {
+      log(`spawnWindowsTerminal: wt.exe spawn error: ${err.message}`);
+      spawnConhostFallback(`wt.exe spawn errored: ${err.message}`);
+    });
+    proc.unref();
+    return proc;
+  } catch (err) {
+    return spawnConhostFallback(`wt.exe spawn threw: ${err.message}`);
+  }
 }
 
 function resolveFolder(folderPath) {
@@ -521,18 +611,10 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   const batchPrompt = initialPrompt.replace(/%/g, '%%');
   fs.writeFileSync(batchFile, `@echo off\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
 
-  const wtArgs = wtWindow
-    ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
-    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
-
-  const proc = spawn('wt.exe', wtArgs, {
-    detached: true,
-    stdio: 'ignore',
-  });
-  proc.unref();
+  const proc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile);
   // Clean up batch file after agent starts
   setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} }, 30000);
-  log(`Spawned wt.exe for new agent via ${batchFile}`);
+  log(`Spawned terminal for new agent via ${batchFile}`);
   return proc;
 }
 
@@ -608,17 +690,9 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
   fs.writeFileSync(batchFile, `@echo off\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
 
-  const wtArgs = resolvedWtWindow
-    ? ['-w', resolvedWtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
-    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
-
-  const proc = spawn('wt.exe', wtArgs, {
-    detached: true,
-    stdio: 'ignore',
-  });
-  proc.unref();
+  const proc = spawnWindowsTerminal(resolvedWtWindow, tabTitle, cwd, batchFile);
   setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} }, 30000);
-  log(`Spawned wt.exe for resume agent ${agentId} via ${batchFile}`);
+  log(`Spawned terminal for resume agent ${agentId} via ${batchFile}`);
   return proc;
 }
 
@@ -1374,4 +1448,14 @@ async function schedulePoll() {
   setTimeout(schedulePoll, POLL_INTERVAL);
 }
 
-schedulePoll();
+// Guarded so this file can be `require()`d (e.g. by test harnesses exercising
+// individual functions like resolveClaudeExe/resolveWtExe) without starting a second
+// poller that would race the live PM2-managed launcher process for pending requests.
+if (require.main === module) {
+  schedulePoll();
+}
+
+module.exports = {
+  resolveClaudeExe, resolveWtExe, spawnWindowsTerminal, resolveFolder,
+  ensureWorkspaceTrusted, resolveModel, terminateAgent, isPidRunning,
+};
