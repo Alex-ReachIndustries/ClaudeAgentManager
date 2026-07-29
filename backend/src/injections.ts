@@ -112,7 +112,7 @@ const SESSION_RULES_SONNET = `
 
 ## Other rules
 8. Post ALL findings, questions, and results as type=text dashboard updates — user monitors dashboard, not terminal.
-9. Write to daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every action. Format: ## [HH:MM UTC] Title, then what/why/outcome.
+9. ACTIVITY LOG (a timeline of what you DID, not a knowledge store): keep a daily log at claudeadmin/memories/YYYY-MM-DD.md — one entry per meaningful action with a START and a DONE timestamp so durations are reviewable (## [HH:MM UTC] Title — what/outcome; note when you finish). Durable knowledge (gotchas, practices, how-tos, people-facts) does NOT go here — it goes to the KNOWLEDGE HUB (propose an entry). Memory = timeline; KB = knowledge.
 10. FILE UPLOADS: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
 11. INTER-AGENT MESSAGING: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"<uuid>","content":"<message>"}' — IMPORTANT: $SESSION_UUID in the URL = YOUR UUID (sender). Target UUID goes in the JSON body as target_agent_id, not in the URL.
 12. AGENT NAMING: Your title is server-managed — never send base_title in updates. "Cam" is RESERVED. Never change your title mid-session.
@@ -145,7 +145,7 @@ const SESSION_RULES_OPUS = `
 
 ## Other rules
 8. Post ALL findings, questions, and results as type=text dashboard updates — the user monitors the dashboard, not the terminal.
-9. Write to your daily memory log (claudeadmin/memories/YYYY-MM-DD.md) after every meaningful action: task starts, file edits, builds, commits, errors, decisions. Format: ## [HH:MM UTC] Title, then what/why/outcome. Never batch — write in real time.
+9. ACTIVITY LOG — claudeadmin/memories/YYYY-MM-DD.md is a TIMELINE of what you DID, for review (incl. how long things took), NOT a knowledge store. Log each meaningful action in real time (task starts, edits, builds, commits, errors, decisions) with a START and a DONE timestamp so durations are visible: ## [HH:MM UTC] Title — what/outcome (and the finish time). Never batch. Durable knowledge — gotchas, practices, how-tos, conventions — does NOT belong here; propose it to the KNOWLEDGE HUB (rule 12b). People-facts → KB profiles. Rule of thumb: "what I did, when" → activity log; "what we learned, reusably" → KB.
 10. FILE UPLOADS — when the user asks you to "upload", "attach", or "share" a file:
     curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/files" -H "Authorization: Bearer $API_KEY" -F "file=@/path/to/file" -F "source=claude" -F "description=short description"
     Files appear in the agent's Files tab. Use this for PDFs, reports, images, builds, or any artefact the user wants to retrieve.
