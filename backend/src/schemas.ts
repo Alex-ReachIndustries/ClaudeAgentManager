@@ -45,7 +45,7 @@ export const updateSchema = z.object({
 export const messageSchema = z.object({
   content: z.string().min(1).max(65_536).trim(),
   priority: z.number().int().min(0).max(10).default(0),
-  source: z.enum(["user", "agent", "peer", "system"]).default("user"),
+  source: z.enum(["user", "agent", "peer", "system", "manager"]).default("user"),
   source_agent_id: z.string().max(100).optional(),
   source_peer_name: z.string().max(100).optional(),
   // Reply/reference: quote a prior message/update/file (rendered as a ghost quote).
