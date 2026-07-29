@@ -19,7 +19,7 @@
  * Run: node scripts/watchdog.js
  */
 
-const { exec, spawn } = require('child_process');
+const { exec, spawn, spawnSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
@@ -180,6 +180,28 @@ async function getClaudeProcesses() {
   }
 }
 
+// Windows only: before declaring an agent dead because its stored PID is gone, check
+// whether a claude.exe process for this EXACT agent exists under a different PID —
+// e.g. it was resumed/restarted by something other than the watchdog's own recovery
+// flow (manually, or a stale registration) and the DB's pid column was never updated.
+// Matches on `--resume <agentId>` in CommandLine (visible via WMI, unlike env vars —
+// see launcher.js's CLAUDE_AGENT_ID/PID-tracking comments for why). Uses spawnSync with
+// an argument array rather than exec()'s shell string to avoid nested cmd.exe/PowerShell
+// quote-escaping fragility.
+function findClaudeExePidByResumeId(agentId) {
+  if (IS_LINUX) return null;
+  try {
+    const pattern = String(agentId).replace(/'/g, "''").replace(/`/g, '``').replace(/\$/g, '`$').replace(/[\[\]]/g, '`$&');
+    const psCmd = `(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -like '*--resume ${pattern}*' } | Select-Object -First 1 -ExpandProperty ProcessId)`;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psCmd], { encoding: 'utf8', timeout: 10000 });
+    const out = (result.stdout || '').trim();
+    if (result.status === 0 && /^\d+$/.test(out)) return parseInt(out, 10);
+  } catch (err) {
+    log(`findClaudeExePidByResumeId failed for ${agentId}: ${err.message}`);
+  }
+  return null;
+}
+
 // sendEnterToProcess removed — rate limits no longer show a dialog
 
 // ---------------------------------------------------------------------------
@@ -272,6 +294,24 @@ async function checkAgents() {
 
     // Only act if process is DEAD and no update for DEAD_THRESHOLD
     if (!processAlive && timeSinceUpdate > DEAD_THRESHOLD) {
+      // Windows: last-chance check before declaring dead — is a claude.exe process for
+      // this exact agent alive under a PID we haven't recorded? Correct it and skip
+      // rather than trigger an unnecessary resume-recovery on an agent that isn't dead.
+      if (!IS_LINUX) {
+        const correctedPid = findClaudeExePidByResumeId(agent.id);
+        if (correctedPid && correctedPid !== pid) {
+          logAgent(agent.id, `PID mismatch, not dead: stored ${pid || 'none'}, found live claude.exe ${correctedPid} via --resume match — correcting, not recovering`);
+          try {
+            await fetchJSON(`${SERVER_URL}/api/agents/${agent.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ pid: correctedPid }),
+            });
+          } catch (err) {
+            logAgent(agent.id, `Failed to correct pid: ${err.message}`);
+          }
+          continue;
+        }
+      }
       deadCount++;
       logAgent(agent.id, `DEAD: PID ${pid || 'none'} gone, no update for ${Math.round(timeSinceUpdate / 60000)}m`);
       await handleDeadAgent(agent);
@@ -429,7 +469,14 @@ async function start() {
   log('Monitoring active');
 }
 
-start().catch(err => {
-  log(`Fatal: ${err.message}`);
-  process.exit(1);
-});
+// Guarded so this file can be require()d by test harnesses (e.g. exercising
+// findClaudeExePidByResumeId directly) without starting a second competing watchdog
+// against the live PM2-managed instance.
+if (require.main === module) {
+  start().catch(err => {
+    log(`Fatal: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { findClaudeExePidByResumeId };
