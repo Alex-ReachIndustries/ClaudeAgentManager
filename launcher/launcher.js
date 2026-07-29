@@ -178,6 +178,53 @@ async function postJSON(urlStr, body) {
   });
 }
 
+// Resolves an absolute path to claude.exe on Windows so launch batch files never
+// depend on PATH resolution inside the spawned cmd.exe (PATH there can differ from
+// this launcher process's PATH, especially when the launcher runs as a scheduled task).
+// Checked in order: known install dir -> `where claude` -> npm global prefix.
+// Cached after first successful resolution since it won't change during a launcher run.
+let _cachedClaudeExe = null;
+function resolveClaudeExe() {
+  if (_cachedClaudeExe) return _cachedClaudeExe;
+
+  const candidates = [];
+
+  const userProfile = process.env.USERPROFILE || USER_HOME;
+  candidates.push({ path: path.join(userProfile, '.local', 'bin', 'claude.exe'), via: 'USERPROFILE\\.local\\bin' });
+
+  try {
+    const whereResult = spawnSync('where', ['claude'], { encoding: 'utf8' });
+    if (whereResult.status === 0 && whereResult.stdout) {
+      const firstLine = whereResult.stdout.split(/\r?\n/).map(l => l.trim()).find(Boolean);
+      if (firstLine) candidates.push({ path: firstLine, via: 'where claude' });
+    }
+  } catch (err) {
+    log(`resolveClaudeExe: 'where claude' failed: ${err.message}`);
+  }
+
+  try {
+    const npmPrefix = spawnSync('npm', ['prefix', '-g'], { encoding: 'utf8', shell: true });
+    if (npmPrefix.status === 0 && npmPrefix.stdout) {
+      const prefix = npmPrefix.stdout.trim();
+      if (prefix) candidates.push({ path: path.join(prefix, 'claude.cmd'), via: 'npm prefix -g' });
+    }
+  } catch (err) {
+    log(`resolveClaudeExe: 'npm prefix -g' failed: ${err.message}`);
+  }
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate.path)) {
+      log(`resolveClaudeExe: using "${candidate.path}" (via ${candidate.via})`);
+      _cachedClaudeExe = candidate.path;
+      return _cachedClaudeExe;
+    }
+  }
+
+  const triedList = candidates.map(c => `${c.path} (${c.via})`).join(', ') || '(no candidates produced)';
+  log(`resolveClaudeExe: FATAL — could not resolve claude.exe. Tried: ${triedList}`);
+  throw new Error(`resolveClaudeExe: could not find claude.exe. Tried: ${triedList}`);
+}
+
 function resolveFolder(folderPath) {
   if (!folderPath) return USER_HOME;
   if (!IS_LINUX) {
@@ -468,10 +515,11 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   }
 
   // Windows: write prompt to a temp batch file to avoid cmd.exe special character issues
+  const claudeExe = resolveClaudeExe();
   const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
   // Escape the prompt for batch: double up % signs, wrap in quotes
   const batchPrompt = initialPrompt.replace(/%/g, '%%');
-  fs.writeFileSync(batchFile, `@echo off\nclaude --permission-mode bypassPermissions --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${modelFlag}${effortFlag}${resumeFlag} "${batchPrompt}"\n`, 'utf8');
 
   const wtArgs = wtWindow
     ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
@@ -556,8 +604,9 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   }
 
   // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues)
+  const claudeExe = resolveClaudeExe();
   const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
-  fs.writeFileSync(batchFile, `@echo off\nclaude --permission-mode bypassPermissions --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${agentModelFlag}${agentEffortFlag} --resume ${agentId} "run /session-resume and then await instructions"\n`, 'utf8');
 
   const wtArgs = resolvedWtWindow
     ? ['-w', resolvedWtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
