@@ -51,7 +51,24 @@ To **run agents** (a host machine that launches/resumes Claude sessions):
 
 To **only view/message agents** (e.g. from your phone), you need nothing but a web browser + Tailscale — see [Remote Access](#remote-access-via-tailscale).
 
-### Deploy
+### One-command setup (recommended)
+
+On a **fresh machine**, the turnkey installer does everything below for you — installs Docker, Node, Claude Code and Git, brings the stack up, prints your API key, and walks the login + optional Tailscale:
+
+```bash
+# Linux (Debian/Ubuntu)
+curl -fsSL https://raw.githubusercontent.com/Alex-ReachIndustries/ClaudeAgentManager/main/setup/install-linux.sh | bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/Alex-ReachIndustries/ClaudeAgentManager/main/setup/install-mac.sh | bash
+```
+```powershell
+# Windows (PowerShell) — download then run so you can review it first
+irm https://raw.githubusercontent.com/Alex-ReachIndustries/ClaudeAgentManager/main/setup/install-windows.ps1 -OutFile install-windows.ps1
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+```
+Each installer is idempotent and supports `--dry-run` (`-DryRun` on Windows) to preview every action. Prefer the manual steps? Continue below.
+
+### Deploy (manual)
 
 ```bash
 git clone https://github.com/Alex-ReachIndustries/ClaudeAgentManager.git

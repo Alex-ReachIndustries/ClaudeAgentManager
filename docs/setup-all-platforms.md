@@ -20,6 +20,20 @@ What you need depends on the machine's role:
 **To only VIEW / message agents (e.g. your phone, or any laptop browser):**
 - Just a **web browser** + **Tailscale** (see the remote-access section). No Docker, no Node, no Claude Code — you're only talking to a host machine that's already running the stack.
 
+## 1b. One-command install (recommended for a fresh machine)
+
+Instead of the manual steps in sections 2–4, the turnkey installer does the lot — installs Docker + Node + Claude Code + Git, clones the repo, brings the stack up, prints your API key, and walks the Claude login + optional Tailscale. It's idempotent and has a dry-run mode (`--dry-run`, or `-DryRun` on Windows) to preview every action.
+
+- **Linux (Debian/Ubuntu):** `curl -fsSL https://raw.githubusercontent.com/Alex-ReachIndustries/ClaudeAgentManager/main/setup/install-linux.sh | bash`
+- **macOS:** `curl -fsSL https://raw.githubusercontent.com/Alex-ReachIndustries/ClaudeAgentManager/main/setup/install-mac.sh | bash`
+- **Windows (PowerShell):** download then run so you can review it first —
+  ```powershell
+  irm https://raw.githubusercontent.com/Alex-ReachIndustries/ClaudeAgentManager/main/setup/install-windows.ps1 -OutFile install-windows.ps1
+  powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+  ```
+
+Prefer to do it by hand (or on an unsupported distro)? Follow the manual steps below.
+
 ## 2. Get the code
 
 ```bash
