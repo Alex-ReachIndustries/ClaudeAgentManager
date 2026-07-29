@@ -3,9 +3,15 @@ set -euo pipefail
 echo "=== 07: ClaudeManager Setup ==="
 
 REPO_DIR="$HOME/Research/ClaudeManager"
-# This is the master key for the agent manager on this desktop. The same value
-# was written to ~/.claude/agent-manager-key in step 00 so Claude can connect.
-AGENT_MANAGER_KEY="9970726e74c96ea61113163e13f05a7778c8f413dcbb69dfa06f9aaa44d68542"
+# The master key for this desktop's agent manager. Do NOT hardcode secrets in the
+# repo — supply it via the AGENT_MANAGER_KEY env var before running (the same value
+# step 00 wrote to ~/.claude/agent-manager-key). Fresh installs can leave it unset
+# and let the backend generate one (see setup/install-linux.sh).
+AGENT_MANAGER_KEY="${AGENT_MANAGER_KEY:-}"
+if [ -z "$AGENT_MANAGER_KEY" ]; then
+  echo "AGENT_MANAGER_KEY not set — export it first, e.g. 'export AGENT_MANAGER_KEY=<key>', then re-run." >&2
+  exit 1
+fi
 
 # Clone or update repo
 if [ -d "$REPO_DIR/.git" ]; then

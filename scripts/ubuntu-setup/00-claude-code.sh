@@ -46,9 +46,17 @@ claude --version
 #    (manager itself is brought up by 07-claude-manager.sh)
 mkdir -p "$HOME/.claude/commands" "$HOME/.claude/memory"
 
-AGENT_MANAGER_KEY="9970726e74c96ea61113163e13f05a7778c8f413dcbb69dfa06f9aaa44d68542"
-echo "$AGENT_MANAGER_KEY" > "$HOME/.claude/agent-manager-key"
-chmod 600 "$HOME/.claude/agent-manager-key"
+# Supply this desktop's master key via the AGENT_MANAGER_KEY env var — never hardcode
+# secrets in the repo. (Fresh installs can skip this and let the backend generate a key;
+# see setup/install-linux.sh.)
+AGENT_MANAGER_KEY="${AGENT_MANAGER_KEY:-}"
+if [ -n "$AGENT_MANAGER_KEY" ]; then
+  echo "$AGENT_MANAGER_KEY" > "$HOME/.claude/agent-manager-key"
+  chmod 600 "$HOME/.claude/agent-manager-key"
+else
+  echo "(AGENT_MANAGER_KEY not set — skipping key seed; retrieve the generated key later with:"
+  echo "   cd ~/Research/ClaudeManager && sudo docker compose logs backend | grep -i 'API Key')"
+fi
 
 echo "http://localhost:3001" > "$HOME/.claude/agent-server-url"
 
