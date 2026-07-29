@@ -1103,6 +1103,7 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
       AND (type IS NULL OR type != 'ack_echo')
   `);
   const getTitle = db.prepare("SELECT title FROM agents WHERE id = ?");
+  const agentExists = db.prepare("SELECT 1 FROM agents WHERE id = ? LIMIT 1");
   const insertEcho = db.prepare(`
     INSERT INTO messages (agent_id, content, source, source_agent_id, priority, source_peer_name, type)
     VALUES (?, ?, 'agent', ?, 0, NULL, 'ack_echo')
@@ -1111,11 +1112,12 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
     const result = ackStmt.run(ackContent, agentId, ...ids);
     if (ackContent) updateAgent.run(ackContent, agentId);
 
-    // Echo ack back to each originating agent
+    // Echo ack back to each originating agent (skip cross-system agents not in this DB)
     const ackingAgent = getTitle.get(agentId) as { title: string } | undefined;
     const senderName = ackingAgent?.title ?? "Agent";
     const sources = fetchSourceAgents.all(agentId, ...ids) as { source_agent_id: string }[];
     for (const { source_agent_id } of sources) {
+      if (!agentExists.get(source_agent_id)) continue;
       insertEcho.run(source_agent_id, `[ACK from ${senderName}]: ${ackContent}`, agentId);
     }
 
