@@ -993,8 +993,26 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema, flagNonCo
       logger.error({ err }, "Push notification error")
     );
 
+    // Completion gate (Knowledge Hub): a substantive completion update must record what the
+    // agent did with the hub. If it doesn't, flag it straight back — contributing the durable
+    // lesson (or a genuine reason there isn't one) is part of "done", not optional. Passive rules
+    // weren't producing the behaviour; this makes skipping the hub visible instead of silent.
+    let kbReminder: string | undefined;
+    const isCompletion = type === "text" && status === "idle" &&
+      !(typeof summary === "string" && /compact/i.test(summary));
+    if (isCompletion) {
+      const body = `${typeof content === "string" ? content : ""}\n${summary || ""}`;
+      const substantive = body.trim().length >= 200;
+      const hasKbRecord = /\bKB\s*[:\-]/i.test(body) ||
+        /\b(propos(e|ed|al)|knowledge hub|\/kb\b|kb[_-]?check|wanted_id|no(thing)? reusable)\b/i.test(body);
+      if (substantive && !hasKbRecord) {
+        kbReminder = "⚠️ Completion posted with NO Knowledge Hub record. Before your next task: /kb search what you just did; if the hub lacks it, PROPOSE the durable lesson (an empty/near-empty hub means MORE to add, not less). Then re-post your completion ending with a `KB:` line — `KB: searched <topics> → [ids|none]; proposed [id|'nothing reusable: <why>']`. Contributing is part of 'done'.";
+        logger.warn({ agentId: id }, "KB completion gate: substantive completion update lacked a KB record");
+      }
+    }
+
     const pendingMessages = getPendingMessages(id);
-    res.json({ ok: true, pendingMessages });
+    res.json({ ok: true, pendingMessages, ...(kbReminder ? { kbReminder } : {}) });
   } catch (err) {
     logger.error({ err }, "Error posting update");
     res.status(500).json({ error: "Failed to post update" });
