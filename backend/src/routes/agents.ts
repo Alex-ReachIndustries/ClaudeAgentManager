@@ -232,7 +232,10 @@ BEFORE CONTEXT COMPACT: save project plan, phase status, agent assignments, pend
 // message. We do NOT log these as searches — the analytics "searches" metric
 // stays a measure of genuine agent-initiated pulls; engagement shows up when an
 // agent then opens a surfaced entry (a logged view).
-const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.62");
+// Surface FEWER, higher-confidence snippets. At 0.62 we pushed the same ~15 entries 604×
+// last week for a 6.7% open rate — noise agents learned to ignore. A tighter bar means
+// when we DO surface, it's a real match worth framing as an applicable standard.
+const KB_SURFACE_MIN_SIM = Number.parseFloat(process.env.KB_SURFACE_MIN_SIM || "0.72");
 const KB_SURFACE_MAX = Number.parseInt(process.env.KB_SURFACE_MAX || "2", 10);
 
 // Extract the substantive task text from a delivered message before using it as the
@@ -286,10 +289,13 @@ async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<
       result_ids: hits.map((h) => h.id),
     });
     const lines = hits.map((h) => {
-      const snip = (h.snippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
-      return `- [${h.id}] ${h.title}${snip ? ` — ${snip}` : ""}`;
+      const snip = (h.snippet || "").replace(/\s+/g, " ").trim().slice(0, 180);
+      return `• [${h.id}] ${h.title}${snip ? `: ${snip}` : ""}`;
     });
-    return `\n\n📚 RELEVANT KNOWLEDGE (auto-surfaced from the hub — verify before relying):\n${lines.join("\n")}\nOpen full via GET $AGENT_URL/api/kb/<id>?agent=$CLAUDE_AGENT_ID (pass agent= so we can learn which surfaced items actually help). Not what you need? /kb <question>, and propose what's missing.`;
+    // Framed as an applicable STANDARD, not a hedged "here's some knowledge, verify it"
+    // footnote — the hedge was training agents to skip it. High threshold above means when
+    // this fires it IS a strong match, so "apply it" is the right posture.
+    return `\n\n📌 APPLY — your team's Knowledge Hub has a standard for what you're about to do. Follow it and cite the [id]; if it's wrong or stale, propose an edit rather than ignoring it:\n${lines.join("\n")}\nFull text: GET $AGENT_URL/api/kb/<id>?agent=$CLAUDE_AGENT_ID. Genuinely not a fit? /kb <question>, and propose what's missing.`;
   } catch {
     return "";
   }
