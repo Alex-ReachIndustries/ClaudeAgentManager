@@ -367,81 +367,139 @@ async function correctNewAgentPid(cwd, batchFile) {
   log(`Gave up waiting for new agent at "${normCwd}" to register for pid correction`);
 }
 
-// Resolves an absolute path to wt.exe (Windows Terminal). Checked in order:
-// `where wt.exe` -> hardcoded per-user WindowsApps install path. Cached once resolved;
-// if resolution fails once, cached as "unresolvable" so every launch doesn't re-shell out.
-let _cachedWtExe = null;
-let _wtExeUnresolvable = false;
-function resolveWtExe() {
-  if (_cachedWtExe) return _cachedWtExe;
-  if (_wtExeUnresolvable) return null;
-
-  const candidates = [];
-  try {
-    const whereResult = spawnSync('where', ['wt.exe'], { encoding: 'utf8' });
-    if (whereResult.status === 0 && whereResult.stdout) {
-      const firstLine = whereResult.stdout.split(/\r?\n/).map(l => l.trim()).find(Boolean);
-      if (firstLine) candidates.push({ path: firstLine, via: 'where wt.exe' });
-    }
-  } catch (err) {
-    log(`resolveWtExe: 'where wt.exe' failed: ${err.message}`);
-  }
-  const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || USER_HOME, 'AppData', 'Local');
-  candidates.push({ path: path.join(localAppData, 'Microsoft', 'WindowsApps', 'wt.exe'), via: 'hardcoded WindowsApps' });
-
-  for (const c of candidates) {
-    if (pathExistsRobust(c.path)) {
-      log(`resolveWtExe: using "${c.path}" (via ${c.via})`);
-      _cachedWtExe = c.path;
-      return _cachedWtExe;
-    }
-  }
-
-  const triedList = candidates.map(c => `${c.path} (${c.via})`).join(', ') || '(no candidates produced)';
-  log(`resolveWtExe: could not resolve wt.exe. Tried: ${triedList}. Terminal spawns will fall back to a plain conhost window.`);
-  _wtExeUnresolvable = true;
-  return null;
+// Escapes text for safe literal use as a `title` command argument inside a generated
+// batch file. cmd.exe's line tokenizer resolves %, ^, &, |, <, > before the `title`
+// command ever sees its argument, so an unescaped role name or folder basename
+// containing one of these could break out of the title line and inject additional
+// commands — same class of concern sanitizeFlagValue() already guards against for
+// CLI flag values.
+function escapeForBatchTitle(text) {
+  return String(text).replace(/%/g, '%%').replace(/[\^&|<>"]/g, (c) => `^${c}`);
 }
 
-// Spawns a terminal for a launch/resume batch file. Tries wt.exe first (grouped into
-// wtWindow if given); falls back to a bare conhost window (cmd.exe /k) if wt.exe can't
-// be resolved, or if the wt.exe spawn itself errors (missing DLL, corrupted install, etc.)
-// so an agent can still launch even when Windows Terminal is unusable — it just won't be
-// grouped into the named window tab set in that case.
-function spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile) {
-  const wtExe = resolveWtExe();
-
-  function spawnConhostFallback(reason) {
-    log(`spawnWindowsTerminal: falling back to conhost (cmd.exe /k) — ${reason}`);
-    const proc = spawn('cmd.exe', ['/k', batchFile], {
-      detached: true,
-      stdio: 'ignore',
-      cwd,
-    });
-    proc.on('error', (err) => log(`spawnWindowsTerminal: conhost fallback ALSO failed: ${err.message}`));
-    proc.unref();
-    return proc;
+// Hides the terminal window hosting a spawned agent so it doesn't clutter the user's
+// screen, without touching the underlying claude.exe console session at all — window
+// visibility is a pure UI-frame property, unrelated to the console session claude.exe
+// is attached to, so this carries no risk to registration reliability.
+//
+// Matches by the spawned process's OWN pid, not by title or process name search.
+// Two things ruled that out: (1) wt.exe new-tab hands off to Windows Terminal's
+// single-instance "monarch" process system-wide — confirmed live that even `-w new`
+// still lands on the same pre-existing WindowsTerminal process, so hiding it risks
+// hiding any terminal window the human user has open themselves, not just agent tabs;
+// (2) Claude Code's own TUI overwrites the console title via OSC escape codes within
+// about a second of starting, so a title set at spawn time (tabTitle) stops matching
+// almost immediately regardless. Spawning cmd.exe directly (no wt.exe) sidesteps both
+// problems: it is never a singleton, so `proc.pid` IS the real, dedicated window-owning
+// process for this agent and nothing else's.
+// Uses EnumWindows/GetWindowThreadProcessId rather than Get-Process's MainWindowHandle
+// property — confirmed live that MainWindowHandle unreliably reports 0 for cmd.exe
+// console windows that demonstrably do exist and are visible (EnumWindows finds them
+// fine). MainWindowHandle's heuristic apparently doesn't recognize a console window
+// without window text as a process's "main" window.
+function hidePidWindow(pid, label) {
+  // Traverses top-level windows via GetTopWindow/GetWindow(GW_HWNDNEXT) rather than
+  // EnumWindows, which needs a callback delegate — marshaling a PowerShell scriptblock
+  // to an unmanaged callback is fragile inline. Sequential GetWindow calls need no
+  // callback at all and are just as authoritative.
+  const psScript = `
+$ErrorActionPreference = 'SilentlyContinue'
+$targetPid = [uint32]$env:HIDE_TARGET_PID
+Add-Type -Name Win32Hide -Namespace ClaudeManagerNative -MemberDefinition '
+[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+'
+function Find-WindowForPid([uint32]$p) {
+  $GW_HWNDNEXT = 2
+  $hwnd = [ClaudeManagerNative.Win32Hide]::GetTopWindow([IntPtr]::Zero)
+  while ($hwnd -ne [IntPtr]::Zero) {
+    $wndPid = 0
+    [ClaudeManagerNative.Win32Hide]::GetWindowThreadProcessId($hwnd, [ref]$wndPid) | Out-Null
+    if ($wndPid -eq $p) { return $hwnd }
+    $hwnd = [ClaudeManagerNative.Win32Hide]::GetWindow($hwnd, $GW_HWNDNEXT)
   }
-
-  if (!wtExe) {
-    return spawnConhostFallback('wt.exe unresolvable');
+  return [IntPtr]::Zero
+}
+$deadline = (Get-Date).AddSeconds(10)
+while ((Get-Date) -lt $deadline) {
+  $hwnd = Find-WindowForPid $targetPid
+  if ($hwnd -ne [IntPtr]::Zero) {
+    [ClaudeManagerNative.Win32Hide]::ShowWindowAsync($hwnd, 0) | Out-Null
+    Write-Output "hidden:$targetPid"
+    exit 0
   }
-
-  const wtArgs = wtWindow
-    ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
-    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
+  Start-Sleep -Milliseconds 300
+}
+Write-Output "not-found:$targetPid"
+`.trim();
 
   try {
-    const proc = spawn(wtExe, wtArgs, { detached: true, stdio: 'ignore' });
-    proc.on('error', (err) => {
-      log(`spawnWindowsTerminal: wt.exe spawn error: ${err.message}`);
-      spawnConhostFallback(`wt.exe spawn errored: ${err.message}`);
+    // NOT detached: confirmed live that detached:true + piped stdio is an unreliable
+    // combination on Windows (Node never delivers the child's stdout/stderr data —
+    // exits with code 0 and empty output regardless of what the script actually did).
+    // .unref() alone is enough to keep this from blocking the launcher's event loop.
+    const child = spawn('powershell.exe', ['-NoProfile', '-Command', psScript], {
+      env: { ...process.env, HIDE_TARGET_PID: String(pid) },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    proc.unref();
-    return proc;
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (spawnErr) => log(`hidePidWindow: helper spawn error: ${spawnErr.message}`));
+    child.on('close', () => {
+      if (out.includes('hidden:')) {
+        log(`hidePidWindow: hid window for ${label} (pid ${pid})`);
+      } else {
+        log(`hidePidWindow: WARNING — pid ${pid} (${label}) never got a window handle within 10s; it will remain visible. stdout=${out.trim()} stderr=${err.trim()}`);
+      }
+    });
+    child.unref();
   } catch (err) {
-    return spawnConhostFallback(`wt.exe spawn threw: ${err.message}`);
+    log(`hidePidWindow: failed to launch hide helper: ${err.message}`);
   }
+}
+
+// Spawns a hidden terminal for a launch/resume batch file. Deliberately does NOT use
+// wt.exe — Windows Terminal is a single-instance process system-wide (verified live),
+// so hiding a wt.exe-hosted window risks hiding any terminal window the human user has
+// open themselves. Plain cmd.exe is never a singleton: each spawn is a fully independent
+// process, so its own pid can be safely and precisely identified and hidden without
+// touching anything else on the desktop. wtWindow is accepted for call-site compatibility
+// (project sub-agent grouping) but is a no-op here — tab-grouping only mattered when
+// windows were visible.
+function spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile) {
+  // Node's own child_process.spawn() redirects a console child's std handles — even
+  // stdio:'ignore' points them at the NUL device rather than leaving them unset —
+  // confirmed live this causes cmd.exe's interactive `/k` prompt to hit immediate EOF
+  // on stdin and exit within ~1-2s, tearing the console (and claude.exe with it) down
+  // almost as soon as it starts. PowerShell's Start-Process does not have this problem:
+  // verified live that a process it launches this way keeps a genuine, real console
+  // alive indefinitely with no further input. Delegate the actual spawn to it.
+  const escapedBatch = batchFile.replace(/'/g, "''");
+  const escapedCwd = cwd.replace(/'/g, "''");
+  const psScript = `$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/k','${escapedBatch}' -WorkingDirectory '${escapedCwd}' -PassThru; Write-Output $p.Id`;
+
+  let cmdPid = null;
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psScript], { encoding: 'utf8' });
+    if (result.status === 0 && result.stdout) {
+      cmdPid = parseInt(result.stdout.trim(), 10) || null;
+    } else {
+      log(`spawnWindowsTerminal: Start-Process helper exited nonzero (${result.status}): ${result.stderr}`);
+    }
+  } catch (err) {
+    log(`spawnWindowsTerminal: Start-Process helper failed: ${err.message}`);
+  }
+
+  if (cmdPid) {
+    hidePidWindow(cmdPid, tabTitle);
+  } else {
+    log(`spawnWindowsTerminal: WARNING — could not determine spawned cmd.exe pid for "${tabTitle}"`);
+  }
+  return { pid: cmdPid };
 }
 
 function resolveFolder(folderPath) {
@@ -486,6 +544,32 @@ function ensureWorkspaceTrusted(absolutePath) {
   if (!fs.existsSync(settingsPath)) {
     fs.writeFileSync(settingsPath, JSON.stringify({ isTrusted: true }, null, 2));
     log(`Wrote trust settings: ${settingsPath}`);
+  }
+
+  // The write above does NOT actually suppress the "trust this folder?" prompt —
+  // confirmed live (2026-07-30) that claude.exe's real trust check reads
+  // hasTrustDialogAccepted from ~/.claude.json's projects[<absolute path>] entry,
+  // not this per-project settings.local.json. Every agent spawned into a fresh
+  // folder was hitting the trust dialog regardless of this write; kept above for
+  // whatever else may read it, but the actual fix is here.
+  try {
+    const homeConfigPath = path.join(USER_HOME, '.claude.json');
+    const globalConfig = JSON.parse(fs.readFileSync(homeConfigPath, 'utf8'));
+    globalConfig.projects = globalConfig.projects || {};
+    const existing = globalConfig.projects[normalized] || {};
+    if (!existing.hasTrustDialogAccepted) {
+      globalConfig.projects[normalized] = {
+        allowedTools: [], mcpContextUris: [], mcpServers: {}, enabledMcpjsonServers: [], disabledMcpjsonServers: [],
+        hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: false,
+        projectOnboardingSeenCount: 0,
+        ...existing,
+        hasTrustDialogAccepted: true,
+      };
+      fs.writeFileSync(homeConfigPath, JSON.stringify(globalConfig, null, 2));
+      log(`Marked "${normalized}" trusted in ~/.claude.json`);
+    }
+  } catch (err) {
+    log(`ensureWorkspaceTrusted: failed to update ~/.claude.json: ${err.message}`);
   }
 }
 
@@ -752,7 +836,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   // env-based tooling; our own PID resolution below keys off the batch file name instead
   // since WMI can't see environment variables (see correctNewAgentPid).
   const trackingId = pregenUuid || randomUUID();
-  fs.writeFileSync(batchFile, `@echo off\nset CLAUDE_AGENT_ID=${trackingId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\ntitle ${escapeForBatchTitle(tabTitle)}\nset CLAUDE_AGENT_ID=${trackingId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
   const proc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile);
   // Clean up batch file + prompt sidecar after agent starts
@@ -845,7 +929,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   // CLAUDE_AGENT_ID mirrors the real session id here (unlike launchNewAgent, it's already
   // known) — for env-based tooling. Our own PID resolution still keys off `--resume
   // <agentId>` in claude.exe's CommandLine since WMI can't see environment variables.
-  fs.writeFileSync(batchFile, `@echo off\nset CLAUDE_AGENT_ID=${agentId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winAgentModelFlag}${winAgentEffortFlag} --resume ${agentId} "%LAUNCH_PROMPT%"\n`, 'utf8');
+  fs.writeFileSync(batchFile, `@echo off\ntitle ${escapeForBatchTitle(tabTitle)}\nset CLAUDE_AGENT_ID=${agentId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winAgentModelFlag}${winAgentEffortFlag} --resume ${agentId} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
   const proc = spawnWindowsTerminal(resolvedWtWindow, tabTitle, cwd, batchFile);
   setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
@@ -1625,14 +1709,14 @@ async function schedulePoll() {
 }
 
 // Guarded so this file can be `require()`d (e.g. by test harnesses exercising
-// individual functions like resolveClaudeExe/resolveWtExe) without starting a second
-// poller that would race the live PM2-managed launcher process for pending requests.
+// individual functions like resolveClaudeExe) without starting a second poller
+// that would race the live PM2-managed launcher process for pending requests.
 if (require.main === module) {
   schedulePoll();
 }
 
 module.exports = {
-  resolveClaudeExe, resolveWtExe, spawnWindowsTerminal, resolveFolder,
+  resolveClaudeExe, spawnWindowsTerminal, resolveFolder,
   ensureWorkspaceTrusted, resolveModel, terminateAgent, isPidRunning,
   sanitizeFlagValue, buildSafeCliFlag,
   findClaudeExePidByCommandLineSubstring, findClaudeExeChildOfCmdMatching, pollForPid,
