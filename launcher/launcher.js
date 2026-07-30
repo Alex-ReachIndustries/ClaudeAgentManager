@@ -350,10 +350,14 @@ function autoConfirmTrustPrompt(ptyProcess) {
 // by cwd + not-before spawnTime — same correlation deliverPromptWhenRegistered uses.
 // Attaches the already-spawned pty to the resolved agent: stores it in ptyProcesses,
 // starts live output forwarding, and PATCHes the real pid (pty.pid) to the backend.
-async function attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder) {
+//
+// If the agent never registers within the deadline, kills this attempt's pty and retries
+// the whole spawn up to MAX_LAUNCH_ATTEMPTS times via respawnFn.
+const MAX_LAUNCH_ATTEMPTS = 3;
+async function attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder, respawnFn, attempt = 1) {
   const spawnTime = Date.now();
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
-  const deadline = spawnTime + 120000;
+  const deadline = spawnTime + 150000;
   while (Date.now() < deadline) {
     // 2s: a compromise. Tested reverting 1s -> 4s to check a suspected correlation with
     // registration reliability (a real, still-unexplained failure pattern was seen) —
@@ -381,14 +385,23 @@ async function attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder)
           ptyProcesses.delete(fresh.id);
         });
         await patchJSON(`${SERVER_URL}/api/agents/${fresh.id}`, { pid: ptyProcess.pid });
-        log(`Attached PTY (pid ${ptyProcess.pid}) to newly-registered agent ${fresh.id}`);
+        log(`Attached PTY (pid ${ptyProcess.pid}) to newly-registered agent ${fresh.id} on attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS}`);
         return;
       }
     } catch (err) {
       log(`attachNewAgentPtyOnceRegistered poll failed: ${err.message}`);
     }
   }
-  log(`Gave up waiting for new agent at "${normCwd}" to register for PTY attachment`);
+
+  log(`New agent at "${normCwd}" did not register within 150s (attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS})`);
+  try { ptyProcess.kill(); } catch (err) { log(`failed to kill unregistered pty (pid ${ptyProcess.pid}): ${err.message}`); }
+
+  if (attempt < MAX_LAUNCH_ATTEMPTS && respawnFn) {
+    log(`Retrying launch for "${normCwd}" (attempt ${attempt + 1}/${MAX_LAUNCH_ATTEMPTS})`);
+    const { ptyProcess: newPty, outputForwarder: newForwarder } = respawnFn();
+    return attachNewAgentPtyOnceRegistered(cwd, newPty, newForwarder, respawnFn, attempt + 1);
+  }
+  log(`Giving up on "${normCwd}" after ${MAX_LAUNCH_ATTEMPTS} attempts — surfacing as a real failure`);
 }
 
 function resolveFolder(folderPath) {
@@ -723,17 +736,27 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   // new-agent launches still don't pre-generate that (see comment above); the real agent
   // id is discovered via registration polling in attachNewAgentPtyOnceRegistered below.
   const trackingId = pregenUuid || randomUUID();
-  const ptyProcess = pty.spawn(claudeExe, args, {
-    name: 'xterm-256color',
-    cols: 120,
-    rows: 40,
-    cwd,
-    env: { ...process.env, CLAUDE_AGENT_ID: trackingId },
-  });
-  const outputForwarder = wirePtyOutput(ptyProcess);
-  autoConfirmTrustPrompt(ptyProcess);
-  log(`Spawned hidden ConPTY (pid ${ptyProcess.pid}) for new agent in ${cwd}`);
-  attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder)
+  // Factored out so attachNewAgentPtyOnceRegistered can call this again if the first
+  // attempt never registers, rather than only ever getting one shot at a probabilistic
+  // startup pause (confirmed live 2026-07-30: a fresh Claude Code instance occasionally
+  // pauses on an interactive confirmation prompt during its own startup reasoning, not a
+  // deterministic hang — a fresh attempt may simply not hit the same pause).
+  function doSpawn() {
+    const attemptPty = pty.spawn(claudeExe, args, {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 40,
+      cwd,
+      env: { ...process.env, CLAUDE_AGENT_ID: trackingId },
+    });
+    const attemptForwarder = wirePtyOutput(attemptPty);
+    autoConfirmTrustPrompt(attemptPty);
+    log(`Spawned hidden ConPTY (pid ${attemptPty.pid}) for new agent in ${cwd}`);
+    return { ptyProcess: attemptPty, outputForwarder: attemptForwarder };
+  }
+
+  const { ptyProcess, outputForwarder } = doSpawn();
+  attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder, doSpawn)
     .catch((err) => log(`attachNewAgentPtyOnceRegistered failed: ${err.message}`));
   return ptyProcess;
 }
