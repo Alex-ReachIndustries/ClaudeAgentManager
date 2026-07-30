@@ -838,9 +838,30 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
     "SELECT id, query, times, last_seen FROM kb_wanted WHERE status='open' ORDER BY times DESC, last_seen DESC LIMIT 10"
   ).all() as unknown[];
 
+  // UPTAKE vs WORK VOLUME — the honest measure of whether the hub is actually used per
+  // unit of work, not vanity absolute counts. Denominator = tasks (user-instruction
+  // messages) and substantive outputs (text updates) in the window. Targets encode the
+  // "good uptake" bar (rules say several searches per non-trivial task).
+  const work = db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM messages WHERE (source='user' OR source IS NULL) AND created_at >= datetime('now', ?)) tasks,
+       (SELECT COUNT(*) FROM updates WHERE type='text' AND timestamp >= datetime('now', ?)) outputs`
+  ).get(since, since) as { tasks: number; outputs: number };
+  const ratio = (n: number, d: number) => (d > 0 ? Number((n / d).toFixed(2)) : 0);
+  const uptake = {
+    tasks: work.tasks || 0,
+    substantive_outputs: work.outputs || 0,
+    searches_per_task: ratio(windowTotals.search || 0, work.tasks || 0),
+    proposals_per_task: ratio(windowTotals.propose || 0, work.tasks || 0),
+    searches_per_output: ratio(windowTotals.search || 0, work.outputs || 0),
+    surface_open_rate: openRate,
+    targets: { searches_per_task: 2, proposals_per_task: 0.3, surface_open_rate: 0.3 },
+  };
+
   return {
     days: win,
     logging_since: first.t,
+    uptake,
     knowledge_wanted: { open: wantedOpen, top: wantedTop },
     surfacing: {
       surfaces: surfacing.surfaces || 0,
