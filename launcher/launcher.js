@@ -320,14 +320,22 @@ async function attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder)
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
   const deadline = spawnTime + 120000;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 4000));
+    // Poll tightly (1s, not the old 4s) — until this attaches, signal/input/terminate
+    // for this agent silently fall through to the legacy Windows path, which doesn't
+    // work at all for a hidden ConPTY process (no window to taskkill /T cleanly or
+    // SendKeys-activate). Shrinking this window matters more than it used to.
+    await new Promise((r) => setTimeout(r, 1000));
     try {
       const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
       const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
       const fresh = list.find((a) => {
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
         const registeredAt = new Date(a.created_at).getTime();
-        return agentCwd === normCwd && registeredAt >= spawnTime - 3000 && a.pid !== ptyProcess.pid;
+        // NOTE: unlike the old WMI-correlation version of this check, we do NOT exclude
+        // agents whose self-reported pid already equals ptyProcess.pid — under ConPTY,
+        // session-connect's own self-detection can legitimately land on the right pid by
+        // itself (single real process, no wrapper), and that must still count as a match.
+        return agentCwd === normCwd && registeredAt >= spawnTime - 3000;
       });
       if (fresh) {
         ptyProcesses.set(fresh.id, ptyProcess);
