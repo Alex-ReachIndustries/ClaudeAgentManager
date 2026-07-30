@@ -467,7 +467,7 @@ fun AgentListScreen(
         var effortExpanded by remember { mutableStateOf(false) }
         var modelExpanded by remember { mutableStateOf(false) }
         var selectedEffort by remember { mutableStateOf("high") }
-        var selectedModel by remember { mutableStateOf("claude-sonnet-4-6") }
+        var selectedModel by remember { mutableStateOf("claude-sonnet-5") }
         var wtWindowExpanded by remember { mutableStateOf(false) }
         var selectedWtWindow by remember { mutableStateOf<String?>(null) }
         var customWtWindow by remember { mutableStateOf("") }
@@ -475,8 +475,8 @@ fun AgentListScreen(
         val effortOptions = listOf("low" to "Low", "medium" to "Medium", "high" to "High")
         val modelOptions = listOf(
             "claude-haiku-4-5-20251001" to "Haiku 4.5",
-            "claude-sonnet-4-6" to "Sonnet 4.6",
-            "claude-opus-4-6" to "Opus 4.6"
+            "claude-sonnet-5" to "Sonnet 5",
+            "claude-opus-5" to "Opus 5"
         )
 
         AlertDialog(

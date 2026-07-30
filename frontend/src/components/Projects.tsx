@@ -245,9 +245,9 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
   const [error, setError] = useState<string | null>(null);
   const [pmRole, setPmRole] = useState('');
   const [pmEffort, setPmEffort] = useState('high');
-  const [pmModel, setPmModel] = useState('claude-opus-4-6');
+  const [pmModel, setPmModel] = useState('claude-opus-5');
   const [agentEffort, setAgentEffort] = useState('high');
-  const [agentModel, setAgentModel] = useState('claude-sonnet-4-6');
+  const [agentModel, setAgentModel] = useState('claude-sonnet-5');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -373,8 +373,8 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
               <select value={pmModel} onChange={e => setPmModel(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
                 <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-                <option value="claude-opus-4-6">Opus 4.6</option>
+                <option value="claude-sonnet-5">Sonnet 5</option>
+                <option value="claude-opus-5">Opus 5</option>
               </select>
             </div>
             <div>
@@ -391,8 +391,8 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
               <select value={agentModel} onChange={e => setAgentModel(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
                 <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-                <option value="claude-opus-4-6">Opus 4.6</option>
+                <option value="claude-sonnet-5">Sonnet 5</option>
+                <option value="claude-opus-5">Opus 5</option>
               </select>
             </div>
           </div>
