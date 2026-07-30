@@ -333,38 +333,66 @@ async function correctResumedAgentPid(agentId) {
 // Windows doesn't pre-generate one, see launchNewAgent) by matching the wrapping cmd.exe
 // process to this launch's unique batch file name, then waits for the agent to register
 // (same cwd+spawnTime correlation as deliverPromptWhenRegistered) to know which backend
-// record to correct. Fire-and-forget from the caller.
-async function correctNewAgentPid(cwd, batchFile) {
+// record to correct.
+//
+// If the agent never registers within the deadline, kills this attempt and retries the
+// whole spawn up to MAX_LAUNCH_ATTEMPTS times via respawnFn — confirmed live (2026-07-30)
+// that a fresh Claude Code instance occasionally (probabilistically, not deterministically)
+// pauses on an interactive confirmation prompt during its own startup reasoning about the
+// launcher's standing instructions, rather than hitting a Windows/console-level hang. A
+// retry doesn't touch or override that judgment on any given attempt — it just gives the
+// agent a fresh, independent attempt, since the same instance re-reasoning about the same
+// prompt won't change its own mind, but a brand-new one might not pause at all.
+const MAX_LAUNCH_ATTEMPTS = 3;
+async function correctNewAgentPid(cwd, batchFile, respawnFn, attempt = 1) {
   const spawnTime = Date.now();
   const realPid = await pollForPid(() => findClaudeExeChildOfCmdMatching(path.basename(batchFile)));
-  if (!realPid) {
+  if (realPid) {
+    log(`Resolved real claude.exe PID ${realPid} for new agent at "${cwd}" (was tracked as terminal PID)`);
+  } else {
     log(`Could not resolve real claude.exe PID for new agent at "${cwd}" within 10s — leaving terminal PID as self-reported`);
-    return;
   }
-  log(`Resolved real claude.exe PID ${realPid} for new agent at "${cwd}" (was tracked as terminal PID)`);
 
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
-  const deadline = spawnTime + 120000;
+  const deadline = spawnTime + 150000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
       const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
       const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
+      // Registration succeeded if ANY agent matches this cwd within the spawn window,
+      // regardless of pid. Excluding on `a.pid !== realPid` here was a false-negative bug —
+      // session-connect's own self-detection often already sets the correct pid before this
+      // poll runs, which made this log "gave up" on attempts that had actually registered
+      // fine (confirmed live 2026-07-30 re-checking several "gave up" runs directly).
       const fresh = list.find((a) => {
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
         const registeredAt = new Date(a.created_at).getTime();
-        return agentCwd === normCwd && registeredAt >= spawnTime - 3000 && a.pid !== realPid;
+        return agentCwd === normCwd && registeredAt >= spawnTime - 5000;
       });
       if (fresh) {
-        await patchJSON(`${SERVER_URL}/api/agents/${fresh.id}`, { pid: realPid });
-        log(`Corrected pid for new agent ${fresh.id} to real claude.exe PID ${realPid}`);
+        if (realPid && fresh.pid !== realPid) {
+          await patchJSON(`${SERVER_URL}/api/agents/${fresh.id}`, { pid: realPid });
+          log(`Corrected pid for new agent ${fresh.id} to real claude.exe PID ${realPid}`);
+        } else {
+          log(`New agent ${fresh.id} registered on attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS}, no pid correction needed`);
+        }
         return;
       }
     } catch (err) {
       log(`pid-correction registration poll failed: ${err.message}`);
     }
   }
-  log(`Gave up waiting for new agent at "${normCwd}" to register for pid correction`);
+
+  log(`New agent at "${normCwd}" did not register within 150s (attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS})`);
+  if (realPid) terminateAgent(realPid);
+
+  if (attempt < MAX_LAUNCH_ATTEMPTS && respawnFn) {
+    log(`Retrying launch for "${normCwd}" (attempt ${attempt + 1}/${MAX_LAUNCH_ATTEMPTS})`);
+    const { batchFile: newBatchFile } = respawnFn();
+    return correctNewAgentPid(cwd, newBatchFile, respawnFn, attempt + 1);
+  }
+  log(`Giving up on "${normCwd}" after ${MAX_LAUNCH_ATTEMPTS} attempts — surfacing as a real failure`);
 }
 
 // Escapes text for safe literal use as a `title` command argument inside a generated
@@ -822,7 +850,6 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   // batch expansion entirely (%, !, ^, embedded quotes all break differently depending on
   // delayed-expansion state) since the value is read as one literal line, not parsed.
   const claudeExe = resolveClaudeExe();
-  const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
   const promptFile = path.join(os.tmpdir(), `claude-launch-prompt-${Date.now()}.txt`);
   // set /P reads the sidecar line correctly even if it contains %, !, or ^, but a literal
   // embedded " still breaks the *receiving* command's quoting once %LAUNCH_PROMPT% is
@@ -836,13 +863,27 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
   // env-based tooling; our own PID resolution below keys off the batch file name instead
   // since WMI can't see environment variables (see correctNewAgentPid).
   const trackingId = pregenUuid || randomUUID();
-  fs.writeFileSync(batchFile, `@echo off\ntitle ${escapeForBatchTitle(tabTitle)}\nset CLAUDE_AGENT_ID=${trackingId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
 
-  const proc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile);
-  // Clean up batch file + prompt sidecar after agent starts
-  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
-  log(`Spawned terminal for new agent via ${batchFile}`);
-  correctNewAgentPid(cwd, batchFile).catch((err) => log(`correctNewAgentPid failed: ${err.message}`));
+  // Factored out so correctNewAgentPid can call this again (with a fresh batch file — its
+  // unique timestamped name is how PID correlation works) if the first attempt never
+  // registers, rather than only ever getting one shot at a probabilistic startup pause.
+  function doSpawn() {
+    const attemptBatchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.bat`);
+    fs.writeFileSync(attemptBatchFile, `@echo off\ntitle ${escapeForBatchTitle(tabTitle)}\nset CLAUDE_AGENT_ID=${trackingId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
+    const attemptProc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, attemptBatchFile);
+    setTimeout(() => { try { fs.unlinkSync(attemptBatchFile); } catch {} }, 30000);
+    log(`Spawned terminal for new agent via ${attemptBatchFile}`);
+    return { proc: attemptProc, batchFile: attemptBatchFile };
+  }
+
+  const { proc, batchFile: firstBatchFile } = doSpawn();
+  // promptFile is shared across retry attempts (each gets its own batch file, but all of
+  // them read the same prompt sidecar) — only safe to delete once correctNewAgentPid fully
+  // resolves (success or all attempts exhausted), not on a fixed timer that could fire
+  // before a retry ~150s+ later even runs.
+  correctNewAgentPid(cwd, firstBatchFile, doSpawn)
+    .catch((err) => log(`correctNewAgentPid failed: ${err.message}`))
+    .finally(() => { try { fs.unlinkSync(promptFile); } catch {} });
   return proc;
 }
 
