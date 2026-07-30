@@ -434,6 +434,31 @@ function ensureWorkspaceTrusted(absolutePath) {
     fs.writeFileSync(settingsPath, JSON.stringify({ isTrusted: true }, null, 2));
     log(`Wrote trust settings: ${settingsPath}`);
   }
+
+  // The write above does NOT actually suppress the "trust this folder?" prompt —
+  // confirmed live (2026-07-30) that claude.exe's real trust check reads
+  // hasTrustDialogAccepted from ~/.claude.json's projects[<absolute path>] entry,
+  // not this per-project settings.local.json. autoConfirmTrustPrompt() below is a
+  // reactive workaround for this same gap; this is the preventative fix.
+  try {
+    const homeConfigPath = path.join(USER_HOME, '.claude.json');
+    const globalConfig = JSON.parse(fs.readFileSync(homeConfigPath, 'utf8'));
+    globalConfig.projects = globalConfig.projects || {};
+    const existing = globalConfig.projects[normalized] || {};
+    if (!existing.hasTrustDialogAccepted) {
+      globalConfig.projects[normalized] = {
+        allowedTools: [], mcpContextUris: [], mcpServers: {}, enabledMcpjsonServers: [], disabledMcpjsonServers: [],
+        hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: false,
+        projectOnboardingSeenCount: 0,
+        ...existing,
+        hasTrustDialogAccepted: true,
+      };
+      fs.writeFileSync(homeConfigPath, JSON.stringify(globalConfig, null, 2));
+      log(`Marked "${normalized}" trusted in ~/.claude.json`);
+    }
+  } catch (err) {
+    log(`ensureWorkspaceTrusted: failed to update ~/.claude.json: ${err.message}`);
+  }
 }
 
 // Track sidecar processes for cleanup
