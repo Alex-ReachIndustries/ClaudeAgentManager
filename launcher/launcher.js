@@ -481,11 +481,41 @@ function ensureWorkspaceTrusted(absolutePath) {
     fs.mkdirSync(projectDir, { recursive: true });
     log(`Pre-created project dir: ${projectDir}`);
   }
-  // Write settings.local.json to mark workspace as trusted
+  // Write settings.local.json to mark workspace as trusted (legacy — older Claude Code)
   const settingsPath = path.join(projectDir, 'settings.local.json');
   if (!fs.existsSync(settingsPath)) {
     fs.writeFileSync(settingsPath, JSON.stringify({ isTrusted: true }, null, 2));
     log(`Wrote trust settings: ${settingsPath}`);
+  }
+
+  // Current Claude Code (v2.1.x) does NOT honor settings.local.json {isTrusted}. It records
+  // per-folder trust in ~/.claude.json under projects["<abs path>"].hasTrustDialogAccepted.
+  // Without this, a FRESH/never-opened folder shows the interactive "Quick safety check: trust
+  // this folder?" TUI prompt on boot — which hangs any stdin-less/unattended session forever
+  // (the primary fresh-folder registration hang). Established folders never re-prompt because
+  // trust persists here after the first accept. Set it directly so no pane-scraping auto-accept
+  // is needed. Merge carefully — this file holds Claude Code's own state; never clobber it.
+  try {
+    const claudeJsonPath = path.join(USER_HOME, '.claude.json');
+    let cfg = {};
+    if (fs.existsSync(claudeJsonPath)) {
+      try { cfg = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8')) || {}; }
+      catch (e) { log(`ensureWorkspaceTrusted: ~/.claude.json unparseable, skipping trust flag: ${e.message}`); cfg = null; }
+    }
+    if (cfg) {
+      if (!cfg.projects || typeof cfg.projects !== 'object') cfg.projects = {};
+      const entry = (cfg.projects[absolutePath] && typeof cfg.projects[absolutePath] === 'object')
+        ? cfg.projects[absolutePath] : {};
+      if (entry.hasTrustDialogAccepted !== true) {
+        entry.hasTrustDialogAccepted = true;
+        cfg.projects[absolutePath] = entry;
+        fs.writeFileSync(claudeJsonPath, JSON.stringify(cfg, null, 2));
+        log(`Set hasTrustDialogAccepted for ${absolutePath} in ~/.claude.json`);
+      }
+    }
+  } catch (e) {
+    // Never let a trust-flag write block a spawn — Linux still has autoAcceptTrustDialog as a net.
+    log(`ensureWorkspaceTrusted: could not set hasTrustDialogAccepted: ${e.message}`);
   }
 }
 
