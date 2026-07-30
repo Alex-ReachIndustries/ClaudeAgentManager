@@ -190,6 +190,30 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
                 )}
               </div>
 
+              {/* Uptake vs work volume — the honest measure (ratios, not vanity counts) */}
+              {data.uptake && (
+                <div className="bg-dark-900 border border-dark-700 rounded-lg p-4">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-dark-200 mb-1"><Target size={14} />Uptake vs work</div>
+                  <div className="text-[11px] text-dark-500 mb-3">across {data.uptake.tasks} tasks / {data.uptake.substantive_outputs} substantive outputs this window</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {([
+                      { label: 'Searches / task', val: data.uptake.searches_per_task, tgt: data.uptake.targets.searches_per_task, fmt: (n: number) => n.toFixed(2) },
+                      { label: 'Proposals / task', val: data.uptake.proposals_per_task, tgt: data.uptake.targets.proposals_per_task, fmt: (n: number) => n.toFixed(2) },
+                      { label: 'Surfaced applied', val: data.uptake.surface_open_rate ?? 0, tgt: data.uptake.targets.surface_open_rate, fmt: (n: number) => `${Math.round(n * 100)}%` },
+                    ] as const).map((m) => {
+                      const ok = m.val >= m.tgt;
+                      return (
+                        <div key={m.label} className="bg-dark-950 border border-dark-800 rounded-lg px-3 py-2">
+                          <div className="text-[10px] text-dark-500 mb-1">{m.label}</div>
+                          <div className={`text-lg font-semibold ${ok ? 'text-green-400' : 'text-amber-400'}`}>{m.fmt(m.val)}</div>
+                          <div className="text-[10px] text-dark-600">target {m.fmt(m.tgt)}{ok ? ' ✓' : ''}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Usage over time */}
               <div className="bg-dark-900 border border-dark-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-3">
