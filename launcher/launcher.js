@@ -311,6 +311,41 @@ function wirePtyOutput(ptyProcess) {
   };
 }
 
+// Auto-confirms the interactive "trust this folder?" dialog. This is NOT a blanket
+// bypass of an unverified prompt: ensureWorkspaceTrusted() already wrote isTrusted:true
+// to settings.local.json moments before spawn, through the normal trust mechanism — this
+// just un-sticks a redundant confirmation of a decision already recorded that way (root
+// cause of why the dialog still renders under ConPTY despite the file being correct is
+// not identified; confirmed via testing that sending Enter here is safe and the session
+// proceeds completely normally afterward). Requested by Alex directly, 2026-07-30.
+//
+// Claude's TUI renders each prompt word as a separately cursor-positioned span, so the
+// raw byte stream is "trust" + ESC-sequence + "this" + ESC-sequence + "folder", not a
+// contiguous string — strip ANSI/CSI/OSC sequences before matching or this never fires.
+// Detaches (via the `done` flag) after confirming once, or after 45s if the dialog never
+// appears at all (observed: when it does appear, it's within the first ~1-2s).
+function autoConfirmTrustPrompt(ptyProcess) {
+  let buffer = '';
+  let done = false;
+  setTimeout(() => { done = true; }, 45000);
+  ptyProcess.onData((data) => {
+    if (done) return;
+    buffer += data;
+    if (buffer.length > 8192) buffer = buffer.slice(-8192); // only need recent text
+    const clean = buffer
+      .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+      .replace(/\x1b./g, '');
+    if (/trust\s*this\s*folder/i.test(clean)) {
+      done = true;
+      log(`autoConfirmTrustPrompt: detected trust dialog for pid ${ptyProcess.pid}, sending Enter (workspace already marked trusted via settings.local.json)`);
+      setTimeout(() => {
+        try { ptyProcess.write('\r'); } catch (err) { log(`autoConfirmTrustPrompt: failed to write Enter: ${err.message}`); }
+      }, 400);
+    }
+  });
+}
+
 // Waits for a brand-new agent (no pre-known session id on Windows) to register, matched
 // by cwd + not-before spawnTime — same correlation deliverPromptWhenRegistered uses.
 // Attaches the already-spawned pty to the resolved agent: stores it in ptyProcesses,
@@ -320,11 +355,12 @@ async function attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder)
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
   const deadline = spawnTime + 120000;
   while (Date.now() < deadline) {
-    // Poll tightly (1s, not the old 4s) — until this attaches, signal/input/terminate
-    // for this agent silently fall through to the legacy Windows path, which doesn't
-    // work at all for a hidden ConPTY process (no window to taskkill /T cleanly or
-    // SendKeys-activate). Shrinking this window matters more than it used to.
-    await new Promise((r) => setTimeout(r, 1000));
+    // 2s: a compromise. Tested reverting 1s -> 4s to check a suspected correlation with
+    // registration reliability (a real, still-unexplained failure pattern was seen) —
+    // that hypothesis did NOT hold up (4s failed too), so the interval itself is not the
+    // cause. Left at 2s rather than back at 1s purely to keep backend polling load a
+    // little lower given the root cause of the registration failures is still unknown.
+    await new Promise((r) => setTimeout(r, 2000));
     try {
       const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
       const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
@@ -670,6 +706,7 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
     env: { ...process.env, CLAUDE_AGENT_ID: trackingId },
   });
   const outputForwarder = wirePtyOutput(ptyProcess);
+  autoConfirmTrustPrompt(ptyProcess);
   log(`Spawned hidden ConPTY (pid ${ptyProcess.pid}) for new agent in ${cwd}`);
   attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder)
     .catch((err) => log(`attachNewAgentPtyOnceRegistered failed: ${err.message}`));
@@ -767,6 +804,7 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
   });
   const outputForwarder = wirePtyOutput(ptyProcess);
   outputForwarder.setAgentId(agentId);
+  autoConfirmTrustPrompt(ptyProcess);
   ptyProcesses.set(agentId, ptyProcess);
   ptyProcess.onExit(({ exitCode, signal }) => {
     log(`PTY for agent ${agentId} (pid ${ptyProcess.pid}) exited (code ${exitCode}, signal ${signal})`);
@@ -1611,4 +1649,5 @@ module.exports = {
   sanitizeFlagValue,
   launchNewAgent, launchResumeAgent,
   ptyProcesses, wirePtyOutput, sendSignalToTerminal, sendTextToTerminal,
+  autoConfirmTrustPrompt,
 };
