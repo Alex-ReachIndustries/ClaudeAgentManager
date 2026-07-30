@@ -375,9 +375,27 @@ data class KbNeverAccessed(
 )
 
 /** Full analytics payload from GET /api/kb/analytics?days=N. */
+data class KbUptakeTargets(
+    @SerializedName("searches_per_task") val searchesPerTask: Double = 2.0,
+    @SerializedName("proposals_per_task") val proposalsPerTask: Double = 0.3,
+    @SerializedName("surface_open_rate") val surfaceOpenRate: Double = 0.3,
+)
+
+/** Uptake measured against work volume — the honest measure (ratios, not vanity counts). */
+data class KbUptake(
+    @SerializedName("tasks") val tasks: Int = 0,
+    @SerializedName("substantive_outputs") val substantiveOutputs: Int = 0,
+    @SerializedName("searches_per_task") val searchesPerTask: Double = 0.0,
+    @SerializedName("proposals_per_task") val proposalsPerTask: Double = 0.0,
+    @SerializedName("searches_per_output") val searchesPerOutput: Double = 0.0,
+    @SerializedName("surface_open_rate") val surfaceOpenRate: Double? = null,
+    @SerializedName("targets") val targets: KbUptakeTargets = KbUptakeTargets(),
+)
+
 data class KbAnalytics(
     @SerializedName("days") val days: Int = 30,
     @SerializedName("logging_since") val loggingSince: String? = null,
+    @SerializedName("uptake") val uptake: KbUptake? = null,
     @SerializedName("window_totals") val windowTotals: KbActionTotals = KbActionTotals(),
     @SerializedName("all_time_totals") val allTimeTotals: KbActionTotals = KbActionTotals(),
     @SerializedName("timeseries") val timeseries: List<KbTimePoint> = emptyList(),

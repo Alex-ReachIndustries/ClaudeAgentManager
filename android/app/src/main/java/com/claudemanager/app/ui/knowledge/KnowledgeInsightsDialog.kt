@@ -176,6 +176,24 @@ private fun InsightsContent(a: KbAnalytics) {
             }
         }
 
+        // Uptake vs work volume — the honest measure (ratios, not vanity counts)
+        a.uptake?.let { u ->
+            item {
+                InsightCard("Uptake vs work", "across ${u.tasks} tasks / ${u.substantiveOutputs} outputs this window") {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        UptakeStat("Searches / task", String.format("%.2f", u.searchesPerTask), "target ${String.format("%.1f", u.targets.searchesPerTask)}", u.searchesPerTask >= u.targets.searchesPerTask)
+                        UptakeStat("Proposals / task", String.format("%.2f", u.proposalsPerTask), "target ${String.format("%.1f", u.targets.proposalsPerTask)}", u.proposalsPerTask >= u.targets.proposalsPerTask)
+                        val open = u.surfaceOpenRate ?: 0.0
+                        UptakeStat("Surfaced applied", "${(open * 100).roundToInt()}%", "target ${(u.targets.surfaceOpenRate * 100).roundToInt()}%", open >= u.targets.surfaceOpenRate)
+                    }
+                }
+            }
+        }
+
         // Usage over time
         item {
             InsightCard("Usage over time") {
@@ -271,6 +289,21 @@ private fun StatBox(label: String, value: String, sub: String?, accent: Color) {
         if (sub != null) {
             Text(sub, style = MaterialTheme.typography.labelSmall, color = LumiOnSurfaceTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+@Composable
+private fun UptakeStat(label: String, value: String, sub: String, ok: Boolean) {
+    Column(
+        modifier = Modifier
+            .width(108.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(LumiBackground)
+            .padding(10.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = LumiOnSurfaceSecondary)
+        Text(value, style = MaterialTheme.typography.titleLarge, color = if (ok) LumiSuccess else LumiWarning)
+        Text(if (ok) "$sub ✓" else sub, style = MaterialTheme.typography.labelSmall, color = LumiOnSurfaceTertiary)
     }
 }
 
