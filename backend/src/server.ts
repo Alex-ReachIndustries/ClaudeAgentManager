@@ -19,6 +19,7 @@ import totpRouter from "./routes/totp.js";
 import knowledgeRouter from "./routes/knowledge.js";
 import { warmEmbeddings } from "./knowledge/embeddings.js";
 import { startEmbedder } from "./knowledge/embedder.js";
+import { seedBaselineIfEmpty } from "./knowledge/baseline-seed.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
 import { archiveInactiveAgents, getAgent, getDb, getFileByIdOnly, touchAgentHeartbeat, updateAgent, nudgeStalledAgents } from "./db.js";
 import { initPush } from "./push.js";
@@ -148,6 +149,11 @@ const server = app.listen(PORT, () => {
 
   // Initialize MQTT bridge (non-blocking — continues if broker unavailable)
   initMqtt();
+
+  // Knowledge Hub: on a FRESH install (empty hub), seed a small general baseline so
+  // agents have something to find + the how-to-use-the-hub entry to bootstrap the habit.
+  // Idempotent — no-op on a hub that already has entries.
+  seedBaselineIfEmpty();
 
   // Knowledge Hub: warm the embedding model in the background and start the
   // background embedder that vectorizes stale entries/profiles.
