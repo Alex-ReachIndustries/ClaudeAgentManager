@@ -1,0 +1,9 @@
+{
+  "name": "claudemanager-launcher",
+  "private": true,
+  "description": "Host-side agent launcher — spawns/manages Claude terminal sessions.",
+  "main": "launcher.js",
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  }
+}

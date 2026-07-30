@@ -34,6 +34,19 @@ const os = require('os');
 // Platform detection — auto from process.platform, or override with LAUNCHER_MODE=linux
 const IS_LINUX = process.platform === 'linux' || process.env.LAUNCHER_MODE === 'linux';
 
+// node-pty (ConPTY-backed) replaces the visible wt.exe-tab spawn on Windows — claude.exe
+// runs with no visible window. Windows-only: guard the require behind IS_LINUX so a Linux
+// deployment (tmux path, untouched) never needs node-pty installed at all.
+let pty = null;
+if (!IS_LINUX) {
+  try {
+    pty = require('node-pty');
+  } catch (err) {
+    log(`FATAL: node-pty failed to load (${err.message}) — Windows agent spawning requires it. Run 'npm install' in launcher/.`);
+    throw err;
+  }
+}
+
 function discoverServerUrl() {
   if (process.argv.includes('--server')) {
     return process.argv[process.argv.indexOf('--server') + 1];
@@ -94,16 +107,10 @@ function sanitizeFlagValue(value, label) {
   if (value == null) return null;
   const str = String(value);
   if (!/^[a-zA-Z0-9._-]+$/.test(str)) {
-    log(`SECURITY: rejected unsafe ${label} value for batch interpolation: ${JSON.stringify(str)}`);
+    log(`SECURITY: rejected unsafe ${label} value for CLI argv: ${JSON.stringify(str)}`);
     return null;
   }
   return str;
-}
-
-function buildSafeCliFlag(flagName, rawValue) {
-  if (rawValue == null) return '';
-  const safe = sanitizeFlagValue(rawValue, flagName);
-  return safe ? ` --${flagName} ${safe}` : '';
 }
 
 function log(msg) {
@@ -260,89 +267,56 @@ function resolveClaudeExe() {
   throw new Error(`resolveClaudeExe: could not find claude.exe. Tried: ${triedList}`);
 }
 
-// PID tracking helpers (Windows). The stored agent PID has historically been the
-// wrapping cmd.exe/wt.exe terminal PID, not claude.exe itself — terminateAgent relies
-// on /T tree-kill to reach claude.exe indirectly, but liveness checks against that PID
-// can't tell "claude.exe crashed, terminal window still open" from "still alive".
-//
-// Win32_Process (queried via PowerShell/WMI below) exposes CommandLine but NOT a
-// process's environment block, so a CLAUDE_AGENT_ID env var alone isn't queryable this
-// way. We still inject it into the batch file (see launchNewAgent/launchResumeAgent)
-// for any future direct-env consumer, but PID *resolution* here keys off substrings
-// that actually appear in CommandLine: `--resume <agentId>` for resumed agents, or the
-// spawning batch file's unique name (found on the wrapping cmd.exe, then walked to its
-// claude.exe child) for brand-new agents where no session id is known yet.
-function psEscapeLikePattern(str) {
-  // Escape for safe interpolation inside a single-quoted PowerShell string and a -like pattern.
-  return String(str).replace(/'/g, "''").replace(/`/g, '``').replace(/\$/g, '`$').replace(/[\[\]]/g, '`$&');
+// --- ConPTY / node-pty hidden launcher (Windows) ---------------------------------
+// Replaces the visible wt.exe-tab spawn entirely: claude.exe runs under a launcher-owned
+// pseudo-console with no visible window. This also obsoletes the WMI PID-correlation hack
+// that used to exist here — pty.pid IS claude.exe's real PID directly, no correlation
+// needed. agentId -> pty.IPty, populated once the owning agent's id is known (immediately
+// for resumes; after registration for brand-new agents, which don't pre-know their id).
+const ptyProcesses = new Map();
+
+const PTY_OUTPUT_FLUSH_MS = 500;
+const PTY_OUTPUT_MAX_BUFFER = 64 * 1024; // cap so a never-registered agent can't leak memory
+
+// Wires a spawned pty's stdout/stderr stream to POST /api/agents/:id/terminal, buffering
+// until the owning agent's id is known (setAgentId) and throttling afterward (coalesce
+// into ~500ms flushes rather than one POST per byte). Returns { setAgentId }.
+function wirePtyOutput(ptyProcess) {
+  let agentId = null;
+  let buffer = '';
+  let flushTimer = null;
+
+  function flush() {
+    flushTimer = null;
+    if (!agentId || !buffer) return;
+    const chunk = buffer;
+    buffer = '';
+    postJSON(`${SERVER_URL}/api/agents/${agentId}/terminal`, { output: chunk })
+      .catch((err) => log(`Failed to post terminal output for ${agentId}: ${err.message}`));
+  }
+
+  ptyProcess.onData((data) => {
+    buffer += data;
+    if (buffer.length > PTY_OUTPUT_MAX_BUFFER) {
+      buffer = buffer.slice(-PTY_OUTPUT_MAX_BUFFER); // keep the tail — more useful than the head
+    }
+    if (!flushTimer) flushTimer = setTimeout(flush, PTY_OUTPUT_FLUSH_MS);
+  });
+
+  return {
+    setAgentId(id) {
+      agentId = id;
+      if (buffer) flush(); // push whatever accumulated pre-registration immediately
+    },
+  };
 }
 
-function findClaudeExePidByCommandLineSubstring(substring) {
-  try {
-    const pattern = psEscapeLikePattern(substring);
-    const psCmd = `(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -like '*${pattern}*' } | Select-Object -First 1 -ExpandProperty ProcessId)`;
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psCmd], { encoding: 'utf8' });
-    const out = (result.stdout || '').trim();
-    if (result.status === 0 && /^\d+$/.test(out)) return parseInt(out, 10);
-  } catch (err) {
-    log(`findClaudeExePidByCommandLineSubstring: query failed: ${err.message}`);
-  }
-  return null;
-}
-
-function findClaudeExeChildOfCmdMatching(substring) {
-  try {
-    const pattern = psEscapeLikePattern(substring);
-    const psCmd = `$p = Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*${pattern}*' } | Select-Object -First 1; if ($p) { (Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.ProcessId) AND Name='claude.exe'" | Select-Object -First 1 -ExpandProperty ProcessId) }`;
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psCmd], { encoding: 'utf8' });
-    const out = (result.stdout || '').trim();
-    if (result.status === 0 && /^\d+$/.test(out)) return parseInt(out, 10);
-  } catch (err) {
-    log(`findClaudeExeChildOfCmdMatching: query failed: ${err.message}`);
-  }
-  return null;
-}
-
-async function pollForPid(finderFn, timeoutMs = 10000, intervalMs = 500) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const pid = finderFn();
-    if (pid) return pid;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return null;
-}
-
-// Resolves the real claude.exe PID for a just-resumed agent (agent id already known)
-// and corrects the backend's stored pid. Fire-and-forget from the caller.
-async function correctResumedAgentPid(agentId) {
-  const realPid = await pollForPid(() => findClaudeExePidByCommandLineSubstring(`--resume ${agentId}`));
-  if (!realPid) {
-    log(`Could not resolve real claude.exe PID for resumed agent ${agentId} within 10s — leaving terminal PID as-is`);
-    return;
-  }
-  log(`Resolved real claude.exe PID ${realPid} for resumed agent ${agentId} (was tracked as terminal PID)`);
-  try {
-    await patchJSON(`${SERVER_URL}/api/agents/${agentId}`, { pid: realPid });
-  } catch (err) {
-    log(`Failed to patch corrected pid for ${agentId}: ${err.message}`);
-  }
-}
-
-// Resolves the real claude.exe PID for a brand-new agent (no session id known yet —
-// Windows doesn't pre-generate one, see launchNewAgent) by matching the wrapping cmd.exe
-// process to this launch's unique batch file name, then waits for the agent to register
-// (same cwd+spawnTime correlation as deliverPromptWhenRegistered) to know which backend
-// record to correct. Fire-and-forget from the caller.
-async function correctNewAgentPid(cwd, batchFile) {
+// Waits for a brand-new agent (no pre-known session id on Windows) to register, matched
+// by cwd + not-before spawnTime — same correlation deliverPromptWhenRegistered uses.
+// Attaches the already-spawned pty to the resolved agent: stores it in ptyProcesses,
+// starts live output forwarding, and PATCHes the real pid (pty.pid) to the backend.
+async function attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder) {
   const spawnTime = Date.now();
-  const realPid = await pollForPid(() => findClaudeExeChildOfCmdMatching(path.basename(batchFile)));
-  if (!realPid) {
-    log(`Could not resolve real claude.exe PID for new agent at "${cwd}" within 10s — leaving terminal PID as self-reported`);
-    return;
-  }
-  log(`Resolved real claude.exe PID ${realPid} for new agent at "${cwd}" (was tracked as terminal PID)`);
-
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
   const deadline = spawnTime + 120000;
   while (Date.now() < deadline) {
@@ -353,95 +327,24 @@ async function correctNewAgentPid(cwd, batchFile) {
       const fresh = list.find((a) => {
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
         const registeredAt = new Date(a.created_at).getTime();
-        return agentCwd === normCwd && registeredAt >= spawnTime - 3000 && a.pid !== realPid;
+        return agentCwd === normCwd && registeredAt >= spawnTime - 3000 && a.pid !== ptyProcess.pid;
       });
       if (fresh) {
-        await patchJSON(`${SERVER_URL}/api/agents/${fresh.id}`, { pid: realPid });
-        log(`Corrected pid for new agent ${fresh.id} to real claude.exe PID ${realPid}`);
+        ptyProcesses.set(fresh.id, ptyProcess);
+        outputForwarder.setAgentId(fresh.id);
+        ptyProcess.onExit(({ exitCode, signal }) => {
+          log(`PTY for agent ${fresh.id} (pid ${ptyProcess.pid}) exited (code ${exitCode}, signal ${signal})`);
+          ptyProcesses.delete(fresh.id);
+        });
+        await patchJSON(`${SERVER_URL}/api/agents/${fresh.id}`, { pid: ptyProcess.pid });
+        log(`Attached PTY (pid ${ptyProcess.pid}) to newly-registered agent ${fresh.id}`);
         return;
       }
     } catch (err) {
-      log(`pid-correction registration poll failed: ${err.message}`);
+      log(`attachNewAgentPtyOnceRegistered poll failed: ${err.message}`);
     }
   }
-  log(`Gave up waiting for new agent at "${normCwd}" to register for pid correction`);
-}
-
-// Resolves an absolute path to wt.exe (Windows Terminal). Checked in order:
-// `where wt.exe` -> hardcoded per-user WindowsApps install path. Cached once resolved;
-// if resolution fails once, cached as "unresolvable" so every launch doesn't re-shell out.
-let _cachedWtExe = null;
-let _wtExeUnresolvable = false;
-function resolveWtExe() {
-  if (_cachedWtExe) return _cachedWtExe;
-  if (_wtExeUnresolvable) return null;
-
-  const candidates = [];
-  try {
-    const whereResult = spawnSync('where', ['wt.exe'], { encoding: 'utf8' });
-    if (whereResult.status === 0 && whereResult.stdout) {
-      const firstLine = whereResult.stdout.split(/\r?\n/).map(l => l.trim()).find(Boolean);
-      if (firstLine) candidates.push({ path: firstLine, via: 'where wt.exe' });
-    }
-  } catch (err) {
-    log(`resolveWtExe: 'where wt.exe' failed: ${err.message}`);
-  }
-  const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || USER_HOME, 'AppData', 'Local');
-  candidates.push({ path: path.join(localAppData, 'Microsoft', 'WindowsApps', 'wt.exe'), via: 'hardcoded WindowsApps' });
-
-  for (const c of candidates) {
-    if (pathExistsRobust(c.path)) {
-      log(`resolveWtExe: using "${c.path}" (via ${c.via})`);
-      _cachedWtExe = c.path;
-      return _cachedWtExe;
-    }
-  }
-
-  const triedList = candidates.map(c => `${c.path} (${c.via})`).join(', ') || '(no candidates produced)';
-  log(`resolveWtExe: could not resolve wt.exe. Tried: ${triedList}. Terminal spawns will fall back to a plain conhost window.`);
-  _wtExeUnresolvable = true;
-  return null;
-}
-
-// Spawns a terminal for a launch/resume batch file. Tries wt.exe first (grouped into
-// wtWindow if given); falls back to a bare conhost window (cmd.exe /k) if wt.exe can't
-// be resolved, or if the wt.exe spawn itself errors (missing DLL, corrupted install, etc.)
-// so an agent can still launch even when Windows Terminal is unusable — it just won't be
-// grouped into the named window tab set in that case.
-function spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile) {
-  const wtExe = resolveWtExe();
-
-  function spawnConhostFallback(reason) {
-    log(`spawnWindowsTerminal: falling back to conhost (cmd.exe /k) — ${reason}`);
-    const proc = spawn('cmd.exe', ['/k', batchFile], {
-      detached: true,
-      stdio: 'ignore',
-      cwd,
-    });
-    proc.on('error', (err) => log(`spawnWindowsTerminal: conhost fallback ALSO failed: ${err.message}`));
-    proc.unref();
-    return proc;
-  }
-
-  if (!wtExe) {
-    return spawnConhostFallback('wt.exe unresolvable');
-  }
-
-  const wtArgs = wtWindow
-    ? ['-w', wtWindow, 'new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile]
-    : ['new-tab', '--title', tabTitle, '-d', cwd, 'cmd', '/k', batchFile];
-
-  try {
-    const proc = spawn(wtExe, wtArgs, { detached: true, stdio: 'ignore' });
-    proc.on('error', (err) => {
-      log(`spawnWindowsTerminal: wt.exe spawn error: ${err.message}`);
-      spawnConhostFallback(`wt.exe spawn errored: ${err.message}`);
-    });
-    proc.unref();
-    return proc;
-  } catch (err) {
-    return spawnConhostFallback(`wt.exe spawn threw: ${err.message}`);
-  }
+  log(`Gave up waiting for new agent at "${normCwd}" to register for PTY attachment`);
 }
 
 function resolveFolder(folderPath) {
@@ -733,33 +636,36 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
     return;
   }
 
-  // Windows: write the prompt to a sidecar .txt file and read it into a batch variable
-  // via `set /P` rather than embedding it as command-line text. This sidesteps cmd.exe
-  // batch expansion entirely (%, !, ^, embedded quotes all break differently depending on
-  // delayed-expansion state) since the value is read as one literal line, not parsed.
+  // Windows: spawn claude.exe directly under a launcher-owned ConPTY — no visible window,
+  // no wt.exe, no batch file. Args go straight into argv (node-pty doesn't shell through
+  // cmd.exe), so the prompt needs none of the sidecar-file/escaping machinery the old
+  // batch approach needed — the whole class of %/!/^/" batch-quoting issues doesn't apply
+  // here. model/effort are still sanitized: they're still going into a real argv, and an
+  // unvalidated value there could still do something unintended to the claude.exe invocation.
   const claudeExe = resolveClaudeExe();
-  const batchFile = path.join(os.tmpdir(), `claude-launch-${Date.now()}.bat`);
-  const promptFile = path.join(os.tmpdir(), `claude-launch-prompt-${Date.now()}.txt`);
-  // set /P reads the sidecar line correctly even if it contains %, !, or ^, but a literal
-  // embedded " still breaks the *receiving* command's quoting once %LAUNCH_PROMPT% is
-  // re-wrapped in quotes (verified: %/!/^ round-trip intact, embedded " does not). These
-  // prompts are plain instructional text, so swap " for ' rather than leave that case unhandled.
-  fs.writeFileSync(promptFile, initialPrompt.replace(/"/g, "'"), 'utf8');
-  const winModelFlag = buildSafeCliFlag('model', spawnMeta && spawnMeta.model ? resolveModel(spawnMeta.model) : null);
-  const winEffortFlag = buildSafeCliFlag('effort', spawnMeta && spawnMeta.effort ? spawnMeta.effort : null);
-  // CLAUDE_AGENT_ID here is a launcher-only tracking tag, NOT Claude's own session id
-  // (Windows new-agent launches don't pre-generate that — see comment above). Exists for
-  // env-based tooling; our own PID resolution below keys off the batch file name instead
-  // since WMI can't see environment variables (see correctNewAgentPid).
-  const trackingId = pregenUuid || randomUUID();
-  fs.writeFileSync(batchFile, `@echo off\nset CLAUDE_AGENT_ID=${trackingId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winModelFlag}${winEffortFlag} "%LAUNCH_PROMPT%"\n`, 'utf8');
+  const winModelValue = sanitizeFlagValue(spawnMeta && spawnMeta.model ? resolveModel(spawnMeta.model) : null, 'model');
+  const winEffortValue = sanitizeFlagValue(spawnMeta && spawnMeta.effort ? spawnMeta.effort : null, 'effort');
+  const args = ['--permission-mode', 'bypassPermissions', '--dangerously-skip-permissions'];
+  if (winModelValue) args.push('--model', winModelValue);
+  if (winEffortValue) args.push('--effort', winEffortValue);
+  args.push(initialPrompt);
 
-  const proc = spawnWindowsTerminal(wtWindow, tabTitle, cwd, batchFile);
-  // Clean up batch file + prompt sidecar after agent starts
-  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
-  log(`Spawned terminal for new agent via ${batchFile}`);
-  correctNewAgentPid(cwd, batchFile).catch((err) => log(`correctNewAgentPid failed: ${err.message}`));
-  return proc;
+  // trackingId is a launcher-only tag (env var), NOT Claude's own session id — Windows
+  // new-agent launches still don't pre-generate that (see comment above); the real agent
+  // id is discovered via registration polling in attachNewAgentPtyOnceRegistered below.
+  const trackingId = pregenUuid || randomUUID();
+  const ptyProcess = pty.spawn(claudeExe, args, {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 40,
+    cwd,
+    env: { ...process.env, CLAUDE_AGENT_ID: trackingId },
+  });
+  const outputForwarder = wirePtyOutput(ptyProcess);
+  log(`Spawned hidden ConPTY (pid ${ptyProcess.pid}) for new agent in ${cwd}`);
+  attachNewAgentPtyOnceRegistered(cwd, ptyProcess, outputForwarder)
+    .catch((err) => log(`attachNewAgentPtyOnceRegistered failed: ${err.message}`));
+  return ptyProcess;
 }
 
 async function launchResumeAgent(agentId, folderPath, wtWindow) {
@@ -833,28 +739,53 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     return;
   }
 
-  // Windows: write resume command to a temp batch file (avoids wt.exe arg parsing issues).
-  // Prompt goes through a sidecar .txt + `set /P` for the same reason as launchNewAgent
-  // (sidesteps cmd.exe batch expansion of %, !, ^, embedded quotes entirely).
+  // Windows: spawn claude.exe directly under a launcher-owned ConPTY — no visible window,
+  // no wt.exe, no batch file. Agent id is already known here, so the pty can be attached
+  // to it immediately (no registration-wait needed, unlike launchNewAgent).
   const claudeExe = resolveClaudeExe();
-  const batchFile = path.join(os.tmpdir(), `claude-resume-${Date.now()}.bat`);
-  const promptFile = path.join(os.tmpdir(), `claude-resume-prompt-${Date.now()}.txt`);
-  fs.writeFileSync(promptFile, 'run /session-resume and then await instructions'.replace(/"/g, "'"), 'utf8');
-  const winAgentModelFlag = buildSafeCliFlag('model', agentModelRaw ? resolveModel(agentModelRaw) : null);
-  const winAgentEffortFlag = buildSafeCliFlag('effort', agentEffortRaw);
-  // CLAUDE_AGENT_ID mirrors the real session id here (unlike launchNewAgent, it's already
-  // known) — for env-based tooling. Our own PID resolution still keys off `--resume
-  // <agentId>` in claude.exe's CommandLine since WMI can't see environment variables.
-  fs.writeFileSync(batchFile, `@echo off\nset CLAUDE_AGENT_ID=${agentId}\nset /P LAUNCH_PROMPT=<"${promptFile}"\n"${claudeExe}" --permission-mode bypassPermissions --dangerously-skip-permissions${winAgentModelFlag}${winAgentEffortFlag} --resume ${agentId} "%LAUNCH_PROMPT%"\n`, 'utf8');
+  const winAgentModelValue = sanitizeFlagValue(agentModelRaw ? resolveModel(agentModelRaw) : null, 'model');
+  const winAgentEffortValue = sanitizeFlagValue(agentEffortRaw, 'effort');
+  const args = ['--permission-mode', 'bypassPermissions', '--dangerously-skip-permissions'];
+  if (winAgentModelValue) args.push('--model', winAgentModelValue);
+  if (winAgentEffortValue) args.push('--effort', winAgentEffortValue);
+  args.push('--resume', agentId, 'run /session-resume and then await instructions');
 
-  const proc = spawnWindowsTerminal(resolvedWtWindow, tabTitle, cwd, batchFile);
-  setTimeout(() => { try { fs.unlinkSync(batchFile); } catch {} try { fs.unlinkSync(promptFile); } catch {} }, 30000);
-  log(`Spawned terminal for resume agent ${agentId} via ${batchFile}`);
-  correctResumedAgentPid(agentId).catch((err) => log(`correctResumedAgentPid failed: ${err.message}`));
-  return proc;
+  const ptyProcess = pty.spawn(claudeExe, args, {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 40,
+    cwd,
+    env: { ...process.env, CLAUDE_AGENT_ID: agentId },
+  });
+  const outputForwarder = wirePtyOutput(ptyProcess);
+  outputForwarder.setAgentId(agentId);
+  ptyProcesses.set(agentId, ptyProcess);
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    log(`PTY for agent ${agentId} (pid ${ptyProcess.pid}) exited (code ${exitCode}, signal ${signal})`);
+    ptyProcesses.delete(agentId);
+  });
+  log(`Spawned hidden ConPTY (pid ${ptyProcess.pid}) for resume agent ${agentId} in ${cwd}`);
+  patchJSON(`${SERVER_URL}/api/agents/${agentId}`, { pid: ptyProcess.pid })
+    .catch((err) => log(`Failed to patch pid for resumed agent ${agentId}: ${err.message}`));
+  return ptyProcess;
 }
 
 function sendSignalToTerminal(pid, signal, agentId) {
+  // PTY-owned agent (Windows): write directly to its pseudo-console. No window activation,
+  // no SendKeys — this is the whole point of owning the pty (replaces the old AppActivate
+  // + SendKeys approach, which needed to steal focus and was the visible/janky part).
+  if (!IS_LINUX && agentId && ptyProcesses.has(agentId)) {
+    const ptyProcess = ptyProcesses.get(agentId);
+    const keys = signal === 'ctrl-c' ? '\x03' : '\r';
+    log(`Sending ${signal} directly to PTY for agent ${agentId.substring(0, 8)} (pid ${ptyProcess.pid})`);
+    try {
+      ptyProcess.write(keys);
+    } catch (err) {
+      log(`Failed to write signal to PTY for ${agentId}: ${err.message}`);
+    }
+    return;
+  }
+
   // Try: PID -> parent PID -> find claude.exe by agent UUID in command line
   log(`Sending ${signal} to terminal PID ${pid}${agentId ? ` (agent ${agentId.substring(0,8)})` : ''}`);
 
@@ -931,6 +862,19 @@ function sendSignalToTerminal(pid, signal, agentId) {
 }
 
 function sendTextToTerminal(pid, text, agentId) {
+  // PTY-owned agent (Windows): write directly to its pseudo-console — same reasoning as
+  // sendSignalToTerminal above.
+  if (!IS_LINUX && agentId && ptyProcesses.has(agentId)) {
+    const ptyProcess = ptyProcesses.get(agentId);
+    log(`Typing "${text}" directly into PTY for agent ${agentId.substring(0, 8)} (pid ${ptyProcess.pid})`);
+    try {
+      ptyProcess.write(text + '\r');
+    } catch (err) {
+      log(`Failed to write text to PTY for ${agentId}: ${err.message}`);
+    }
+    return;
+  }
+
   log(`Typing "${text}" into terminal PID ${pid}${agentId ? ` (agent ${agentId.substring(0,8)})` : ''}`);
 
   if (IS_LINUX) {
@@ -990,7 +934,29 @@ function sendTextToTerminal(pid, text, agentId) {
   }
 }
 
-function terminateAgent(pid) {
+function terminateAgent(pid, agentId) {
+  // PTY-owned agent (Windows): graceful-before-forceful mirrors the old taskkill logic
+  // (1G), just against the pty directly instead of a process tree via taskkill.
+  if (!IS_LINUX && agentId && ptyProcesses.has(agentId)) {
+    const ptyProcess = ptyProcesses.get(agentId);
+    log(`Terminating PTY-owned agent ${agentId.substring(0, 8)} (pid ${ptyProcess.pid}) — graceful then forceful`);
+    try {
+      ptyProcess.write('\x03'); // Ctrl-C first, give claude.exe a chance to exit cleanly
+    } catch (err) {
+      log(`Failed to write Ctrl-C to PTY for ${agentId}: ${err.message}`);
+    }
+    setTimeout(() => {
+      if (isPidRunning(ptyProcess.pid)) {
+        log(`PTY pid ${ptyProcess.pid} still alive 5s after Ctrl-C — force-killing`);
+        try { ptyProcess.kill(); } catch (err) { log(`Failed to force-kill PTY: ${err.message}`); }
+      } else {
+        log(`PTY pid ${ptyProcess.pid} exited gracefully — no force-kill needed`);
+      }
+      ptyProcesses.delete(agentId);
+    }, 5000);
+    return;
+  }
+
   log(`Terminating terminal process with PID: ${pid}`);
 
   if (IS_LINUX) {
@@ -1107,7 +1073,7 @@ async function processPendingRequests() {
               terminateAgent(req.target_pid);
             }
           } else if (req.target_pid) {
-            terminateAgent(req.target_pid);
+            terminateAgent(req.target_pid, agentId);
           } else {
             log(`Terminate request #${req.id} has no target_pid or agent_id — skipping`);
           }
@@ -1199,7 +1165,7 @@ async function processPendingRequests() {
             } catch {}
             if (terminatePid && isPidRunning(terminatePid)) {
               log(`Terminating PID ${terminatePid} before resume of agent ${agentId}`);
-              terminateAgent(terminatePid);
+              terminateAgent(terminatePid, agentId);
               await new Promise(r => setTimeout(r, 1500));
             } else {
               log(`No live PID to terminate for agent ${agentId} — resuming directly`);
@@ -1624,17 +1590,17 @@ async function schedulePoll() {
   setTimeout(schedulePoll, POLL_INTERVAL);
 }
 
-// Guarded so this file can be `require()`d (e.g. by test harnesses exercising
-// individual functions like resolveClaudeExe/resolveWtExe) without starting a second
-// poller that would race the live PM2-managed launcher process for pending requests.
+// Guarded so this file can be `require()`d (e.g. by test harnesses exercising individual
+// functions like resolveClaudeExe/wirePtyOutput) without starting a second poller that
+// would race the live PM2-managed launcher process for pending requests.
 if (require.main === module) {
   schedulePoll();
 }
 
 module.exports = {
-  resolveClaudeExe, resolveWtExe, spawnWindowsTerminal, resolveFolder,
+  resolveClaudeExe, resolveFolder,
   ensureWorkspaceTrusted, resolveModel, terminateAgent, isPidRunning,
-  sanitizeFlagValue, buildSafeCliFlag,
-  findClaudeExePidByCommandLineSubstring, findClaudeExeChildOfCmdMatching, pollForPid,
-  launchNewAgent, launchResumeAgent, correctNewAgentPid, correctResumedAgentPid,
+  sanitizeFlagValue,
+  launchNewAgent, launchResumeAgent,
+  ptyProcesses, wirePtyOutput, sendSignalToTerminal, sendTextToTerminal,
 };
