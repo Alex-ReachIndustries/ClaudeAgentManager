@@ -111,6 +111,20 @@ function log(msg) {
   console.log(`[${ts}] ${msg}`);
 }
 
+// The backend stores timestamps as naive SQLite datetime strings ("YYYY-MM-DD HH:MM:SS",
+// no timezone suffix) which ARE UTC, but new Date(str) parses a space-separated (non-ISO)
+// string as LOCAL time on this engine — confirmed live (2026-07-31) that on a UTC+1 machine
+// this silently shifts every parsed timestamp back by exactly the local UTC offset, which
+// made correctNewAgentPid's own registration-match check permanently fail (registeredAt
+// always ~1h "earlier" than spawnTime) and mis-report every single successful registration
+// as a hang, triggering unnecessary retries every time. Same fix scripts/watchdog.js's own
+// parseTimestamp already uses — always force explicit UTC by appending Z if missing.
+function parseServerTimestamp(ts) {
+  if (!ts) return 0;
+  const str = ts.endsWith('Z') ? ts : ts + 'Z';
+  return new Date(str).getTime();
+}
+
 async function fetchJSON(urlStr) {
   return new Promise((resolve, reject) => {
     const mod = urlStr.startsWith('https') ? https : http;
@@ -367,7 +381,7 @@ async function correctNewAgentPid(cwd, batchFile, respawnFn, attempt = 1) {
       // fine (confirmed live 2026-07-30 re-checking several "gave up" runs directly).
       const fresh = list.find((a) => {
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
-        const registeredAt = new Date(a.created_at).getTime();
+        const registeredAt = parseServerTimestamp(a.created_at);
         return agentCwd === normCwd && registeredAt >= spawnTime - 5000;
       });
       if (fresh) {
@@ -742,7 +756,7 @@ async function deliverPromptWhenRegistered(cwd, prompt) {
         if (a.status === 'archived') return false;
         if (promptDeliveredAgentIds.has(a.id)) return false;
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
-        const registeredAt = new Date(a.created_at).getTime();
+        const registeredAt = parseServerTimestamp(a.created_at);
         // Only match agents that registered after this spawn started (3s grace for clock skew)
         return agentCwd === normCwd && registeredAt >= spawnTime - 3000;
       });
