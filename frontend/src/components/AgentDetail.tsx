@@ -119,7 +119,10 @@ function AgentDetail() {
     setShowMenu(false);
     setTerminating(true);
     try {
-      await createLaunchRequest('terminate', '', undefined, undefined, agent.pid);
+      // resume_agent_id (id) is REQUIRED by the backend for terminate requests, and lets the
+      // launcher do a precise tmux-window kill on Linux (falling back to target_pid). Omitting
+      // it made every web terminate 400 silently. wt_window scopes the tmux session.
+      await createLaunchRequest('terminate', '', id, agent.wt_window || undefined, agent.pid);
       refetch();
     } catch (err) {
       console.error('Terminate failed:', err);

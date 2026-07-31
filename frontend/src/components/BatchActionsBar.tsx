@@ -45,7 +45,9 @@ function BatchActionsBar({ selected, agents, onClear, onRefetch }: BatchActionsB
     try {
       const withPid = selectedAgents.filter(a => a.pid);
       await Promise.all(withPid.map(a =>
-        createLaunchRequest('terminate', '', undefined, undefined, a.pid)
+        // resume_agent_id (a.id) is required by the backend for terminate; without it every
+        // request 400s. Pass wt_window so the launcher can target the right tmux session.
+        createLaunchRequest('terminate', '', a.id, a.wt_window || undefined, a.pid)
       ));
       onClear();
       onRefetch();
