@@ -45,7 +45,7 @@ import { onAgentStatusChange } from "../workflow-engine.js";
 import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition, getCompactReminder, getFullRulesHeader, getRetryHeader } from "../injections.js";
 import { hybridSearch } from "../knowledge/search.js";
 import { embeddingsReady } from "../knowledge/embeddings.js";
-import { logAccess } from "../knowledge/store.js";
+import { logAccess, getEntry } from "../knowledge/store.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -288,14 +288,35 @@ async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<
       top_score: Number(hits[0].sim.toFixed(4)),
       result_ids: hits.map((h) => h.id),
     });
-    const lines = hits.map((h) => {
-      const snip = (h.snippet || "").replace(/\s+/g, " ").trim().slice(0, 180);
-      return `• [${h.id}] ${h.title}${snip ? `: ${snip}` : ""}`;
+    // Context-library push: INLINE the actual entry body into the delivery instead of a
+    // title+snippet pointer that the agent had to GET separately. The pointer form had a
+    // ~7% open rate — agents rarely made the extra call, so the knowledge never landed.
+    // Inlining the content makes the read automatic: the standard is in front of them while
+    // they work, no fetch step. Each inlined entry is logged as a genuine 'view' (the body
+    // was delivered to and read by the agent), which is a stronger signal than a pointer.
+    const BODY_CHARS = 700;
+    const blocks = hits.map((h) => {
+      const full = getEntry(h.id);
+      // Strip a leading frontmatter block if present, then collapse whitespace.
+      let body = String((full && full.body) || h.snippet || "")
+        .replace(/^---\n[\s\S]*?\n---\n?/, "")
+        .trim();
+      const truncated = body.length > BODY_CHARS;
+      if (truncated) body = body.slice(0, BODY_CHARS).replace(/\s+\S*$/, "") + " …";
+      // Log the inline delivery as a read for this specific entry.
+      logAccess({
+        action: "view",
+        agent: agentId,
+        query: query.slice(0, 500),
+        result_count: 1,
+        top_score: Number(h.sim.toFixed(4)),
+        result_ids: [h.id],
+      });
+      return `▸ [${h.id}] ${h.title}\n${body}${truncated ? `\n(full text: GET $AGENT_URL/api/kb/${h.id}?agent=$CLAUDE_AGENT_ID)` : ""}`;
     });
-    // Framed as an applicable STANDARD, not a hedged "here's some knowledge, verify it"
-    // footnote — the hedge was training agents to skip it. High threshold above means when
-    // this fires it IS a strong match, so "apply it" is the right posture.
-    return `\n\n📌 APPLY — your team's Knowledge Hub has a standard for what you're about to do. Follow it and cite the [id]; if it's wrong or stale, propose an edit rather than ignoring it:\n${lines.join("\n")}\nFull text: GET $AGENT_URL/api/kb/<id>?agent=$CLAUDE_AGENT_ID. Genuinely not a fit? /kb <question>, and propose what's missing.`;
+    // Framed as an applicable STANDARD, with the content inlined so there is nothing to fetch.
+    // High threshold above means when this fires it IS a strong match, so "apply it" is right.
+    return `\n\n📌 APPLY — your team's Knowledge Hub has standard(s) for what you're about to do (included below so you don't have to look them up). Follow and cite the [id]; if one is wrong or stale, propose an edit rather than ignoring it:\n\n${blocks.join("\n\n")}\n\nNeed more? /kb <question>. Missing something? Propose it.`;
   } catch {
     return "";
   }
