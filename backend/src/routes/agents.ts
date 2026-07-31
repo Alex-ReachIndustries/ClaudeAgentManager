@@ -841,11 +841,19 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema, flagNonCo
 
                 const wtWindow = meta.wt_window || (launchReq.wt_window as string | null) || null;
 
+                // Deterministic identity name: prefer an explicit base_title from the spawn meta
+                // (project pool agents send e.g. "AIGroupPortal - Sonnet A"); otherwise derive it
+                // from the ROLE's predefined display name (e.g. "Shortcut Manager"). Without this,
+                // a role-spawned agent keeps whatever title it self-picked at session-connect
+                // before it knew its role (a janky inherited dev name). Null for a custom role →
+                // COALESCE leaves the agent's self-title as the fallback.
+                const roleBaseTitle = (meta.base_title as string | null) || resolveRoleLabel(meta.role) || null;
+
                 if (meta.project_id) {
                   // Link the agent to the project and store its task + model/effort from launch metadata.
-                  // base_title from metadata locks the agent's permanent identity name (e.g. "AIGroupPortal - Sonnet A").
+                  // base_title locks the agent's permanent identity name (e.g. "AIGroupPortal - Sonnet A").
                   db.prepare("UPDATE agents SET project_id = ?, role = ?, parent_agent_id = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort), base_title = COALESCE(?, base_title), title = COALESCE(?, title) WHERE id = ?")
-                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, meta.base_title || null, meta.base_title || null, id);
+                    .run(meta.project_id, meta.role || null, meta.parent_agent_id || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, roleBaseTitle, roleBaseTitle, id);
 
                   if (meta.role === "PM") {
                     updateProject(meta.project_id, { pm_agent_id: id });
@@ -861,9 +869,10 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema, flagNonCo
                     logger.info({ agentId: id, projectId: meta.project_id }, "Sent sub-agent task as message");
                   }
                 } else {
-                  // Standalone agent (not part of a project) — store role/task in DB
-                  db.prepare("UPDATE agents SET role = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort) WHERE id = ?")
-                    .run(meta.role || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, id);
+                  // Standalone agent (not part of a project) — store role/task in DB and name it
+                  // from its role (roleBaseTitle) so it doesn't keep the janky self-picked title.
+                  db.prepare("UPDATE agents SET role = ?, task = ?, wt_window = ?, model = COALESCE(?, model), effort = COALESCE(?, effort), base_title = COALESCE(?, base_title), title = COALESCE(?, title) WHERE id = ?")
+                    .run(meta.role || null, meta.prompt || null, wtWindow, meta.model || null, meta.effort || null, roleBaseTitle, roleBaseTitle, id);
 
                   if (meta.prompt) {
                     addMessage(id, meta.prompt as string);
