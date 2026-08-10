@@ -29,10 +29,31 @@ until curl -s http://localhost:3001/api/health >/dev/null 2>&1; do
 done
 echo "[$(date -u +%H:%M:%S)] Backend healthy."
 
-# PM2 is no longer used — launcher runs in launcher/ via systemd or npm.
-# Resurrect any old PM2 processes if PM2 happens to be installed.
-if command -v pm2 &>/dev/null; then
+# Agent watchdog — use the best supervisor available for this OS.
+#
+# Linux: a systemd USER service (claude-watchdog.service) is the native answer — it gives
+# Restart=always, journal logging, and starts at boot via the lingering user manager. The
+# unit must be WantedBy=default.target, NOT xdg-desktop-autostart.target: with lingering
+# there is no desktop session at boot, so that target is never reached and the unit would
+# silently never start.
+# Elsewhere (e.g. Windows): fall back to PM2, which is what those hosts use.
+#
+# This used to be PM2-only and guarded by `command -v pm2`, so on any host without PM2 the
+# watchdog silently never ran at all — no safety net, and nobody noticed (2026-08-10: two
+# agents sat deaf after a reboot with no watchdog running to recover them).
+if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
+  if systemctl --user list-unit-files claude-watchdog.service &>/dev/null; then
+    systemctl --user start claude-watchdog.service 2>/dev/null \
+      && echo "[$(date -u +%H:%M:%S)] Watchdog: systemd user service running." \
+      || echo "[$(date -u +%H:%M:%S)] WARNING: could not start claude-watchdog.service."
+  else
+    echo "[$(date -u +%H:%M:%S)] WARNING: claude-watchdog.service not installed — no watchdog. Install it from docs/ or run: node scripts/watchdog.js"
+  fi
+elif command -v pm2 &>/dev/null; then
   pm2 resurrect 2>/dev/null || true
+  echo "[$(date -u +%H:%M:%S)] Watchdog: PM2 resurrect issued."
+else
+  echo "[$(date -u +%H:%M:%S)] WARNING: no supervisor available (no systemd user service, no PM2) — the agent watchdog is NOT running."
 fi
 
 # Start screen interaction service (Linux with X11 only)

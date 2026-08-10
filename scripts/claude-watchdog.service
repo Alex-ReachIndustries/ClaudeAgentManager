@@ -1,0 +1,26 @@
+[Unit]
+Description=ClaudeManager Agent Watchdog (detects dead agents, recovers them)
+# Needs the backend reachable; claude-manager.service brings up Docker + the launcher.
+After=network-online.target docker.service claude-manager.service
+Wants=network-online.target
+# Crash-loop rate limit (these belong in [Unit], not [Service]).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=HOME=/home/%i
+WorkingDirectory=/home/%i/Research/ClaudeManager
+ExecStart=/usr/bin/node /home/%i/Research/ClaudeManager/scripts/watchdog.js
+# Long-running supervisor: always bring it back, but rate-limit restarts so a crash-loop
+# cannot hammer the backend or trigger recovery storms.
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# MUST be default.target, NOT xdg-desktop-autostart.target: with a lingering user manager
+# (loginctl enable-linger) there is no desktop session at boot, so xdg-desktop-autostart
+# .target is never reached and the unit would silently never start after a reboot.
+WantedBy=default.target
