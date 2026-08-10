@@ -180,6 +180,55 @@ async function getClaudeProcesses() {
   }
 }
 
+// Linux: resolve an agent's OWN claude pid by matching `--resume <agentId>` in argv.
+//
+// This is the authoritative liveness signal and must be preferred over the stored pid.
+// The stored pid cannot be trusted: agents self-report it at session-connect, and a buggy
+// derivation (`pgrep -n -x claude` = newest claude process) made every agent on the host
+// report the SAME pid — catastrophic here, because this watchdog's death test is
+// "PID gone AND no update for N min". While that one shared pid stayed alive, no silent
+// agent was EVER detected or recovered (observed 2026-08-10 after a reboot: two agents sat
+// deaf with undelivered messages and the watchdog never noticed). Matching on the agent's
+// own id is immune to that: it answers "is THIS agent's process alive?", not "is SOME
+// claude process alive?".
+function findClaudePidByResumeId(agentId) {
+  if (!IS_LINUX || !agentId) return null;
+  try {
+    const result = spawnSync('pgrep', ['-x', 'claude', '-a'], { encoding: 'utf8', timeout: 5000 });
+    if (result.status !== 0) return null;
+    for (const line of (result.stdout || '').split('\n')) {
+      if (!line.includes(agentId)) continue;
+      const pid = parseInt(line.trim().split(/\s+/)[0], 10);
+      if (!isNaN(pid)) return pid;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// Linux: is there a live tmux window for this agent? The launcher names each agent's window
+// by the first 8 chars of its UUID, so this is identity-based too (and is the launcher's own
+// liveness ground truth). Used as a safety net before declaring an agent dead, so an agent
+// launched without `--resume` in argv isn't misjudged. A window whose pane is dead does not
+// count as alive.
+function isTmuxWindowAliveForAgent(agentId) {
+  if (!IS_LINUX || !agentId) return false;
+  try {
+    const shortId = String(agentId).substring(0, 8);
+    const result = spawnSync('tmux',
+      ['list-panes', '-a', '-F', '#{window_name} #{pane_dead}'],
+      { encoding: 'utf8', timeout: 5000 });
+    if (result.status !== 0) return false;
+    return (result.stdout || '').split('\n').some((line) => {
+      const [name, dead] = line.trim().split(/\s+/);
+      return name === shortId && dead === '0';
+    });
+  } catch {
+    return false;
+  }
+}
+
 // Windows only: before declaring an agent dead because its stored PID is gone, check
 // whether a claude.exe process for this EXACT agent exists under a different PID —
 // e.g. it was resumed/restarted by something other than the watchdog's own recovery
@@ -283,8 +332,35 @@ async function checkAgents() {
     if (!canActOnAgent(agent.id, agent.last_update_at)) continue;
 
     // Is the process alive?
+    //
+    // Prefer identity (does a claude process carry THIS agent's `--resume <id>`?) over the
+    // stored pid, which agents self-report and which has historically been wrong/shared
+    // across every agent on the host — see findClaudePidByResumeId. Identity answers the
+    // question we actually care about; the stored pid only answers "is some pid alive".
     let processAlive = false;
-    if (pid) {
+    const ownPid = findClaudePidByResumeId(agent.id);
+    if (ownPid !== null) {
+      // Authoritative: this agent's own process exists. Correct a wrong stored pid so
+      // terminate/liveness elsewhere stops targeting another agent's process.
+      processAlive = true;
+      if (ownPid !== pid) {
+        logAgent(agent.id, `Correcting stored pid ${pid || 'none'} -> own pid ${ownPid} (matched --resume)`);
+        try {
+          await fetchJSON(`${SERVER_URL}/api/agents/${agent.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ pid: ownPid }),
+          });
+        } catch (err) {
+          logAgent(agent.id, `Failed to correct pid: ${err.message}`);
+        }
+      }
+    } else if (IS_LINUX) {
+      // No process carries this agent's id. Before declaring it dead, fall back to tmux
+      // window liveness (the launcher's own ground truth) rather than the untrustworthy
+      // stored pid — this covers an agent started without `--resume` in argv. Only when
+      // it has neither its own process nor a live window is it genuinely dead.
+      processAlive = isTmuxWindowAliveForAgent(agent.id);
+    } else if (pid) {
       processAlive = claudePids.has(pid);
       if (!processAlive) {
         // Double-check with direct PID lookup
