@@ -1,0 +1,13 @@
+[Unit]
+Description=Ensure the ClaudeManager service stack is running
+Documentation=file:///home/%i/Research/ClaudeManager/scripts/ensure-stack.sh
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/home/%i
+WorkingDirectory=/home/%i/Research/ClaudeManager
+ExecStart=/home/%i/Research/ClaudeManager/scripts/ensure-stack.sh
+StandardOutput=journal
+StandardError=journal

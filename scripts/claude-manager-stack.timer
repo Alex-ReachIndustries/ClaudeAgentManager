@@ -1,0 +1,16 @@
+[Unit]
+Description=Periodically ensure the ClaudeManager service stack is running
+Documentation=file:///home/%i/Research/ClaudeManager/scripts/ensure-stack.sh
+
+[Timer]
+# Shortly after boot, then every 2 minutes. Persistent=false: if the machine was off we do
+# not want a burst of catch-up runs, just the next scheduled check.
+OnBootSec=90s
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=claude-manager-stack.service
+
+[Install]
+# timers.target is reached by the lingering user manager (unlike xdg-desktop-autostart.target),
+# so this survives a reboot with no desktop session.
+WantedBy=timers.target
