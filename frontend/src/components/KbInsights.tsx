@@ -199,14 +199,19 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
                     {([
                       { label: 'Searches / task', val: data.uptake.searches_per_task, tgt: data.uptake.targets.searches_per_task, fmt: (n: number) => n.toFixed(2) },
                       { label: 'Proposals / task', val: data.uptake.proposals_per_task, tgt: data.uptake.targets.proposals_per_task, fmt: (n: number) => n.toFixed(2) },
-                      { label: 'Surfaced applied', val: data.uptake.surface_open_rate ?? 0, tgt: data.uptake.targets.surface_open_rate, fmt: (n: number) => `${Math.round(n * 100)}%` },
+                      // Push side of the context library: entry bodies inlined straight into task
+                      // deliveries. No target — more is not automatically better, it tracks how much
+                      // relevant knowledge reached agents without them having to go looking.
+                      { label: 'Delivered / task', val: data.uptake.delivered_per_task, tgt: null, fmt: (n: number) => n.toFixed(2) },
                     ] as const).map((m) => {
-                      const ok = m.val >= m.tgt;
+                      // A null target means "observation only" — show it neutrally rather than
+                      // grading it, so a metric with no goal can't read as a failing red number.
+                      const ok = m.tgt != null && m.val >= m.tgt;
                       return (
                         <div key={m.label} className="bg-dark-950 border border-dark-800 rounded-lg px-3 py-2">
                           <div className="text-[10px] text-dark-500 mb-1">{m.label}</div>
-                          <div className={`text-lg font-semibold ${ok ? 'text-green-400' : 'text-amber-400'}`}>{m.fmt(m.val)}</div>
-                          <div className="text-[10px] text-dark-600">target {m.fmt(m.tgt)}{ok ? ' ✓' : ''}</div>
+                          <div className={`text-lg font-semibold ${m.tgt == null ? 'text-dark-200' : ok ? 'text-green-400' : 'text-amber-400'}`}>{m.fmt(m.val)}</div>
+                          <div className="text-[10px] text-dark-600">{m.tgt == null ? 'no target — push volume' : `target ${m.fmt(m.tgt)}${ok ? ' ✓' : ''}`}</div>
                         </div>
                       );
                     })}

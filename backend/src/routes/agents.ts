@@ -303,13 +303,21 @@ async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<
         .trim();
       const truncated = body.length > BODY_CHARS;
       if (truncated) body = body.slice(0, BODY_CHARS).replace(/\s+\S*$/, "") + " …";
-      // Log the inline delivery as a read for this specific entry.
+      // Log the inline delivery under its OWN action, with entry_id set.
+      //
+      // It used to be logged as "view" with only result_ids — which was wrong twice over:
+      // it masqueraded as the agent choosing to open something (it didn't; we pushed it),
+      // and because the surface->open correlation joins on entry_id, these rows were
+      // invisible to it, so surface_open_rate read ~0 and looked like total failure.
+      // A distinct action keeps the push measurable (uptake.delivered_per_task) without
+      // ever inflating the agent-initiated numbers.
       logAccess({
-        action: "view",
+        action: "inline",
         agent: agentId,
         query: query.slice(0, 500),
         result_count: 1,
         top_score: Number(h.sim.toFixed(4)),
+        entry_id: h.id,
         result_ids: [h.id],
       });
       return `▸ [${h.id}] ${h.title}\n${body}${truncated ? `\n(full text: GET $AGENT_URL/api/kb/${h.id}?agent=$CLAUDE_AGENT_ID)` : ""}`;
@@ -1383,10 +1391,12 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
       if (lastFreshIdx >= 0) {
         const lf = rawMessages[lastFreshIdx];
         if (typeof lf.content === "string" && lf.content.trim().length >= 40) {
-          // Attribute with the friendly title so surface rows match view rows
-          // (GET /kb/:id resolves the caller's session id to the same title).
-          const agentName = (agent.base_title as string) || (agent.title as string) || id;
-          kbHint = await buildKnowledgeHint(lf.content, agentName);
+          // Attribute by the agent's UUID, not its display title. Titles are unstable and
+          // agent-chosen, which fragmented the access log badly: the same agent appeared as
+          // "<uuid>", "94b3599b (frontend dev)", "AIGroupPortal - PM" vs "AIGroupPortal-PM",
+          // "Cam (Desktop)" vs "Cam" — so no join on agent identity could ever be trusted.
+          // The UUID is stable for the life of the agent; resolve it to a title at read time.
+          kbHint = await buildKnowledgeHint(lf.content, id);
         }
       }
 

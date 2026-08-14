@@ -378,7 +378,7 @@ export interface KbAnalytics {
   days: number;
   logging_since: string | null;
   surfacing?: { surfaces: number; entries_surfaced: number; entries_opened: number; open_rate: number | null };
-  uptake?: { tasks: number; substantive_outputs: number; searches_per_task: number; proposals_per_task: number; searches_per_output: number; surface_open_rate: number | null; targets: { searches_per_task: number; proposals_per_task: number; surface_open_rate: number } };
+  uptake?: { tasks: number; substantive_outputs: number; searches_per_task: number; proposals_per_task: number; searches_per_output: number; delivered_per_task: number; surface_open_rate: number | null; targets: { searches_per_task: number; proposals_per_task: number } };
   knowledge_wanted?: { open: number; top: { id: number; query: string; times: number; last_seen: string }[] };
   window_totals: { search: number; view: number; related: number; propose: number; surface?: number };
   all_time_totals: { search: number; view: number; related: number; propose: number; surface?: number };

@@ -616,7 +616,7 @@ export function stats(): Record<string, unknown> {
 // ─── Access audit ────────────────────────────────────────────────────────────
 
 export interface AccessLogInput {
-  action: "search" | "view" | "related" | "propose" | "surface";
+  action: "search" | "view" | "related" | "propose" | "surface" | "inline";
   agent?: string | null;
   query?: string | null;
   type_filter?: string | null;
@@ -722,11 +722,11 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   const byAction = db.prepare(
     "SELECT action, COUNT(*) c FROM kb_access_log WHERE ts >= datetime('now', ?) GROUP BY action"
   ).all(since) as { action: string; c: number }[];
-  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0 };
+  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0, inline: 0 };
   for (const r of byAction) windowTotals[r.action] = r.c;
 
   const allTime = db.prepare("SELECT action, COUNT(*) c FROM kb_access_log GROUP BY action").all() as { action: string; c: number }[];
-  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0 };
+  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0, inline: 0 };
   for (const r of allTime) allTimeTotals[r.action] = r.c;
 
   // Daily time series (one row per day, counts per action).
@@ -853,9 +853,17 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
     substantive_outputs: work.outputs || 0,
     searches_per_task: ratio(windowTotals.search || 0, work.tasks || 0),
     proposals_per_task: ratio(windowTotals.propose || 0, work.tasks || 0),
+    // Knowledge PUSHED into task deliveries (entry bodies inlined by buildKnowledgeHint).
+    // This is the push side of the context library: how much relevant knowledge actually
+    // reached an agent's context without it having to go looking.
+    delivered_per_task: ratio(windowTotals.inline || 0, work.tasks || 0),
     searches_per_output: ratio(windowTotals.search || 0, work.outputs || 0),
     surface_open_rate: openRate,
-    targets: { searches_per_task: 2, proposals_per_task: 0.3, surface_open_rate: 0.3 },
+    // surface_open_rate is deliberately NOT a target any more. Since we inline entry bodies
+    // straight into task deliveries, an agent rarely needs to open anything — a low open rate
+    // is now the EXPECTED outcome of the push model, not a failure. The honest uptake dials
+    // are the two agent-initiated ratios above; open rate is kept only as an observation.
+    targets: { searches_per_task: 2, proposals_per_task: 0.3 },
   };
 
   return {
