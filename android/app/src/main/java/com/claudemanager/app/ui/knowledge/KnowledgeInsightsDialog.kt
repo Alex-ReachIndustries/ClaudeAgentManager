@@ -187,8 +187,10 @@ private fun InsightsContent(a: KbAnalytics) {
                     ) {
                         UptakeStat("Searches / task", String.format("%.2f", u.searchesPerTask), "target ${String.format("%.1f", u.targets.searchesPerTask)}", u.searchesPerTask >= u.targets.searchesPerTask)
                         UptakeStat("Proposals / task", String.format("%.2f", u.proposalsPerTask), "target ${String.format("%.1f", u.targets.proposalsPerTask)}", u.proposalsPerTask >= u.targets.proposalsPerTask)
-                        val open = u.surfaceOpenRate ?: 0.0
-                        UptakeStat("Surfaced applied", "${(open * 100).roundToInt()}%", "target ${(u.targets.surfaceOpenRate * 100).roundToInt()}%", open >= u.targets.surfaceOpenRate)
+                        // Push side of the context library: entry bodies inlined straight into task
+                        // deliveries. No target — a low "open rate" is the expected outcome of
+                        // pushing content, so grading it red was misleading.
+                        UptakeStat("Delivered / task", String.format("%.2f", u.deliveredPerTask), "no target — push volume", true)
                     }
                 }
             }

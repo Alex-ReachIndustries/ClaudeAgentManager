@@ -378,7 +378,6 @@ data class KbNeverAccessed(
 data class KbUptakeTargets(
     @SerializedName("searches_per_task") val searchesPerTask: Double = 2.0,
     @SerializedName("proposals_per_task") val proposalsPerTask: Double = 0.3,
-    @SerializedName("surface_open_rate") val surfaceOpenRate: Double = 0.3,
 )
 
 /** Uptake measured against work volume — the honest measure (ratios, not vanity counts). */
@@ -388,6 +387,7 @@ data class KbUptake(
     @SerializedName("searches_per_task") val searchesPerTask: Double = 0.0,
     @SerializedName("proposals_per_task") val proposalsPerTask: Double = 0.0,
     @SerializedName("searches_per_output") val searchesPerOutput: Double = 0.0,
+    @SerializedName("delivered_per_task") val deliveredPerTask: Double = 0.0,
     @SerializedName("surface_open_rate") val surfaceOpenRate: Double? = null,
     @SerializedName("targets") val targets: KbUptakeTargets = KbUptakeTargets(),
 )
