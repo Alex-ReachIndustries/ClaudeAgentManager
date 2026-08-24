@@ -43,9 +43,15 @@ echo "[$(date -u +%H:%M:%S)] Backend healthy."
 # agents sat deaf after a reboot with no watchdog running to recover them).
 if [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
   if systemctl --user list-unit-files claude-watchdog.service &>/dev/null; then
-    systemctl --user start claude-watchdog.service 2>/dev/null \
-      && echo "[$(date -u +%H:%M:%S)] Watchdog: systemd user service running." \
-      || echo "[$(date -u +%H:%M:%S)] WARNING: could not start claude-watchdog.service."
+    # --no-block is REQUIRED: this script IS claude-manager.service (Type=oneshot), and
+    # claude-watchdog.service has After=claude-manager.service. A blocking start therefore
+    # deadlocks — systemd queues the watchdog job behind this unit finishing activation,
+    # while this unit waits on the systemctl call (2026-08-24: post-reboot hang, no agents
+    # resumed until the stuck systemctl was killed by hand). --no-block just enqueues the
+    # job; it runs the moment this script exits and the unit goes active.
+    systemctl --user start --no-block claude-watchdog.service 2>/dev/null \
+      && echo "[$(date -u +%H:%M:%S)] Watchdog: systemd start queued (runs when this unit finishes activating)." \
+      || echo "[$(date -u +%H:%M:%S)] WARNING: could not queue claude-watchdog.service start."
   else
     echo "[$(date -u +%H:%M:%S)] WARNING: claude-watchdog.service not installed — no watchdog. Install it from docs/ or run: node scripts/watchdog.js"
   fi
