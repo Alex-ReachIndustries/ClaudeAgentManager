@@ -19,24 +19,25 @@ function UsageChart({ series }: { series: KbAnalytics['timeseries'] }) {
   if (!series.length) {
     return <div className="text-xs text-dark-500 py-8 text-center">No activity recorded in this window yet.</div>;
   }
-  const max = Math.max(1, ...series.map((d) => d.search + d.view + d.related + d.propose));
+  const max = Math.max(1, ...series.map((d) => d.search + d.view + d.related + d.propose + d.inline));
   // Cap the number of bars shown so long windows stay readable.
   const bars = series.slice(-45);
   return (
     <div>
       <div className="flex items-end gap-[2px] h-32">
         {bars.map((d) => {
-          const total = d.search + d.view + d.related + d.propose;
+          const total = d.search + d.view + d.related + d.propose + d.inline;
           const h = (total / max) * 100;
           const seg = (v: number) => (total ? (v / total) * h : 0);
           return (
             <div
               key={d.date}
               className="flex-1 flex flex-col justify-end group relative min-w-[3px]"
-              title={`${d.date}\nsearches ${d.search} · views ${d.view} · related ${d.related} · proposals ${d.propose}`}
+              title={`${d.date}\nsearches ${d.search} · delivered inline ${d.inline} · opened ${d.view} · related ${d.related} · proposals ${d.propose}`}
             >
               <div style={{ height: `${seg(d.propose)}%` }} className="bg-amber-500/80 w-full" />
               <div style={{ height: `${seg(d.related)}%` }} className="bg-lumi-700 w-full" />
+              <div style={{ height: `${seg(d.inline)}%` }} className="bg-lumi-600 w-full" />
               <div style={{ height: `${seg(d.view)}%` }} className="bg-lumi-500 w-full" />
               <div style={{ height: `${seg(d.search)}%` }} className="bg-green-500 w-full rounded-t-sm" />
             </div>
@@ -49,7 +50,8 @@ function UsageChart({ series }: { series: KbAnalytics['timeseries'] }) {
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] text-dark-500">
         <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-sm bg-green-500" /> searches</span>
-        <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-sm bg-lumi-500" /> views</span>
+        <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-sm bg-lumi-600" /> delivered inline</span>
+        <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-sm bg-lumi-500" /> opened</span>
         <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-sm bg-lumi-700" /> related</span>
         <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-sm bg-amber-500/80" /> proposals</span>
       </div>
@@ -177,7 +179,7 @@ export default function KbInsights({ onClose }: { onClose: () => void }) {
                   sub={`${data.all_time_totals.search} all-time`} />
                 <StatCard icon={<Target size={12} />} label="Hit rate" value={pct(data.search.hit_rate)}
                   sub={`${data.search.misses} found nothing`} />
-                <StatCard icon={<Eye size={12} />} label="Entry reads" value={data.window_totals.view + data.window_totals.related} />
+                <StatCard icon={<Eye size={12} />} label="Entry reads" value={data.window_totals.inline + data.window_totals.view + data.window_totals.related} sub={`${data.window_totals.inline} pushed inline · ${data.window_totals.view + data.window_totals.related} opened`} />
                 <StatCard icon={<Plus size={12} />} label="Contributions" value={data.window_totals.propose} />
                 <StatCard icon={<Users size={12} />} label="Active agents" value={activeAgents} />
                 {data.surfacing && (

@@ -733,10 +733,10 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   const rawSeries = db.prepare(
     "SELECT date(ts) d, action, COUNT(*) c FROM kb_access_log WHERE ts >= datetime('now', ?) GROUP BY date(ts), action ORDER BY d"
   ).all(since) as { d: string; action: string; c: number }[];
-  const seriesMap = new Map<string, { date: string; search: number; view: number; related: number; propose: number }>();
+  const seriesMap = new Map<string, { date: string; search: number; view: number; related: number; propose: number; inline: number }>();
   for (const r of rawSeries) {
     let day = seriesMap.get(r.d);
-    if (!day) { day = { date: r.d, search: 0, view: 0, related: 0, propose: 0 }; seriesMap.set(r.d, day); }
+    if (!day) { day = { date: r.d, search: 0, view: 0, related: 0, propose: 0, inline: 0 }; seriesMap.set(r.d, day); }
     if (r.action in day) (day as Record<string, number | string>)[r.action] = r.c;
   }
   const timeseries = [...seriesMap.values()];
@@ -779,14 +779,14 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   const topEntries = db.prepare(
     `SELECT a.entry_id, e.title, e.status, COUNT(*) views, MAX(a.ts) last_at
      FROM kb_access_log a LEFT JOIN knowledge_entries e ON e.id = a.entry_id
-     WHERE a.action IN ('view','related') AND a.entry_id IS NOT NULL AND a.ts >= datetime('now', ?)
+     WHERE a.action IN ('view','related','inline') AND a.entry_id IS NOT NULL AND a.ts >= datetime('now', ?)
      GROUP BY a.entry_id ORDER BY views DESC, last_at DESC LIMIT 25`
   ).all(since) as unknown[];
 
   const byAgent = db.prepare(
     `SELECT COALESCE(agent,'(unknown)') agent,
             SUM(CASE WHEN action='search' THEN 1 ELSE 0 END) searches,
-            SUM(CASE WHEN action='view' THEN 1 ELSE 0 END) views,
+            SUM(CASE WHEN action IN ('view','inline') THEN 1 ELSE 0 END) views,
             SUM(CASE WHEN action='related' THEN 1 ELSE 0 END) related,
             SUM(CASE WHEN action='propose' THEN 1 ELSE 0 END) proposals,
             COUNT(*) total, MAX(ts) last_at
@@ -798,12 +798,12 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   const neverAccessed = db.prepare(
     `SELECT COUNT(*) c FROM knowledge_entries e
      WHERE e.status='approved' AND e.hit_count = 0
-       AND NOT EXISTS (SELECT 1 FROM kb_access_log a WHERE a.entry_id = e.id AND a.action IN ('view','related'))`
+       AND NOT EXISTS (SELECT 1 FROM kb_access_log a WHERE a.entry_id = e.id AND a.action IN ('view','related','inline'))`
   ).get() as { c: number };
   const neverAccessedSample = db.prepare(
     `SELECT e.id, e.title, e.created_at FROM knowledge_entries e
      WHERE e.status='approved' AND e.hit_count = 0
-       AND NOT EXISTS (SELECT 1 FROM kb_access_log a WHERE a.entry_id = e.id AND a.action IN ('view','related'))
+       AND NOT EXISTS (SELECT 1 FROM kb_access_log a WHERE a.entry_id = e.id AND a.action IN ('view','related','inline'))
      ORDER BY e.created_at ASC LIMIT 20`
   ).all() as unknown[];
 

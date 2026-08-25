@@ -380,9 +380,9 @@ export interface KbAnalytics {
   surfacing?: { surfaces: number; entries_surfaced: number; entries_opened: number; open_rate: number | null };
   uptake?: { tasks: number; substantive_outputs: number; searches_per_task: number; proposals_per_task: number; searches_per_output: number; delivered_per_task: number; surface_open_rate: number | null; targets: { searches_per_task: number; proposals_per_task: number } };
   knowledge_wanted?: { open: number; top: { id: number; query: string; times: number; last_seen: string }[] };
-  window_totals: { search: number; view: number; related: number; propose: number; surface?: number };
+  window_totals: { search: number; view: number; related: number; propose: number; surface?: number; inline: number };
   all_time_totals: { search: number; view: number; related: number; propose: number; surface?: number };
-  timeseries: { date: string; search: number; view: number; related: number; propose: number }[];
+  timeseries: { date: string; search: number; view: number; related: number; propose: number; inline: number }[];
   search: { total: number; hits: number; misses: number; hit_rate: number | null; avg_latency_ms: number | null };
   gaps: { query: string; times: number; last_at: string }[];
   weak: { query: string; times: number; avg_top_score: number; last_at: string }[];
