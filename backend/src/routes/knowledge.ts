@@ -33,17 +33,18 @@ const KB_HIT_MIN_SIM = Number.parseFloat(process.env.KB_HIT_MIN_SIM || "0.55");
 // Best-effort attribution of the calling agent for the audit log. Agents pass their
 // identity via ?agent= (the /kb command sends $CLAUDE_AGENT_ID) or an X-Agent-Id
 // header; unattributed callers (e.g. the dashboard) are logged as NULL / "(unknown)".
-// If the value is a known agent session id, resolve it to the friendly title so the
-// analytics read as names, not UUIDs.
+//
+// Store the RAW id — do NOT resolve it to the agent's title here. This used to write the
+// friendly title "so the analytics read as names, not UUIDs", but titles are unstable and
+// agent-chosen, so writing them fragmented the log badly: one agent appeared as "<uuid>",
+// "94b3599b (frontend dev)", "AIGroupPortal - PM" vs "AIGroupPortal-PM", "Cam (Desktop)" vs
+// "Cam", and once as "C". Nothing could be joined on identity — including the search-nudge
+// check, which looked up a UUID and never matched a title-keyed row, so the nudge fired at
+// agents that HAD just searched. The id is stable for the life of the agent; analytics
+// resolve it to a display name at READ time instead (see accessAnalytics by_agent).
 function callerAgent(req: Request): string | null {
   const raw = String(req.query.agent ?? req.header("x-agent-id") ?? req.header("x-agent") ?? "").trim();
-  if (!raw) return null;
-  try {
-    const row = getDb().prepare("SELECT base_title, title FROM agents WHERE id = ?").get(raw) as
-      { base_title?: string; title?: string } | undefined;
-    if (row) return (row.base_title || row.title || raw).trim() || raw;
-  } catch { /* fall through to raw value */ }
-  return raw;
+  return raw || null;
 }
 
 // ─── Schemas ───────────────────────────────────────────────────────────────

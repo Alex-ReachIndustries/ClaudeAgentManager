@@ -45,7 +45,7 @@ import { onAgentStatusChange } from "../workflow-engine.js";
 import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition, getCompactReminder, getFullRulesHeader, getRetryHeader } from "../injections.js";
 import { hybridSearch } from "../knowledge/search.js";
 import { embeddingsReady } from "../knowledge/embeddings.js";
-import { logAccess, getEntry } from "../knowledge/store.js";
+import { logAccess, getEntry, lastSearchAt } from "../knowledge/store.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -1397,6 +1397,22 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
           // "Cam (Desktop)" vs "Cam" — so no join on agent identity could ever be trusted.
           // The UUID is stable for the life of the agent; resolve it to a title at read time.
           kbHint = await buildKnowledgeHint(lf.content, id);
+
+          // SEARCH NUDGE — the pull side of the context library.
+          //
+          // Contributing holds at target because the completion gate sits at a moment every
+          // agent must pass through; searching has no such forcing function and decays
+          // (searches/task fell 1.82 -> 0.25 over 11 days while proposals held). This adds the
+          // missing checkpoint at the front of a task.
+          //
+          // Deliberately ADAPTIVE, not a blanket rule: it fires only for an agent that has not
+          // run its own search in the last 6 hours. Nagging an agent that already consults the
+          // hub would train everyone to skim past it, and would invite token searches performed
+          // to satisfy a checker rather than to learn something — which would corrupt the very
+          // metric we judge uptake by.
+          if (!lastSearchAt(id, 6)) {
+            kbHint += "\n\n🔎 SEARCH FIRST — you have not queried the Knowledge Hub in the last 6 hours. Anything inlined above is only what WE matched; run your own /kb <question> for the specific components, technologies and risks this task touches BEFORE you plan. A ~10ms search regularly saves an hour of rediscovering a gotcha we already wrote down. If the hub genuinely has nothing, that is a gap worth proposing.";
+          }
         }
       }
 

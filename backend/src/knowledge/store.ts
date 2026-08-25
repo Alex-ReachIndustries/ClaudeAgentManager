@@ -630,6 +630,22 @@ export interface AccessLogInput {
 }
 
 /** Record one KB access. Best-effort: any failure is swallowed so it never breaks a request. */
+/**
+ * When did this agent last run its OWN search? Used to nudge only agents who have stopped
+ * pulling, rather than nagging everyone on every task.
+ *
+ * Returns null if the agent has never searched (or not within the lookback).
+ */
+export function lastSearchAt(agent: string, withinHours = 6): string | null {
+  if (!agent) return null;
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT MAX(ts) t FROM kb_access_log
+     WHERE action='search' AND agent = ? AND ts >= datetime('now', ?)`
+  ).get(agent, `-${withinHours} hours`) as { t: string | null } | undefined;
+  return row?.t ?? null;
+}
+
 export function logAccess(a: AccessLogInput): void {
   try {
     const db = getDb();
@@ -784,14 +800,18 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   ).all(since) as unknown[];
 
   const byAgent = db.prepare(
-    `SELECT COALESCE(agent,'(unknown)') agent,
-            SUM(CASE WHEN action='search' THEN 1 ELSE 0 END) searches,
-            SUM(CASE WHEN action IN ('view','inline') THEN 1 ELSE 0 END) views,
-            SUM(CASE WHEN action='related' THEN 1 ELSE 0 END) related,
-            SUM(CASE WHEN action='propose' THEN 1 ELSE 0 END) proposals,
-            COUNT(*) total, MAX(ts) last_at
-     FROM kb_access_log WHERE ts >= datetime('now', ?)
-     GROUP BY COALESCE(agent,'(unknown)') ORDER BY total DESC LIMIT 50`
+    // Resolve the agent id to its display name at READ time, and GROUP BY that label so the
+    // historical split (rows written as titles before 2026-08-25, rows written as ids after)
+    // merges back into one row per agent instead of showing the same agent twice.
+    `SELECT COALESCE(NULLIF(TRIM(COALESCE(ag.base_title, ag.title, '')), ''), l.agent, '(unknown)') agent,
+            SUM(CASE WHEN l.action='search' THEN 1 ELSE 0 END) searches,
+            SUM(CASE WHEN l.action IN ('view','inline') THEN 1 ELSE 0 END) views,
+            SUM(CASE WHEN l.action='related' THEN 1 ELSE 0 END) related,
+            SUM(CASE WHEN l.action='propose' THEN 1 ELSE 0 END) proposals,
+            COUNT(*) total, MAX(l.ts) last_at
+     FROM kb_access_log l LEFT JOIN agents ag ON ag.id = l.agent
+     WHERE l.ts >= datetime('now', ?)
+     GROUP BY 1 ORDER BY total DESC LIMIT 50`
   ).all(since) as unknown[];
 
   // Dead weight — approved entries never opened (all-time), candidates to improve or retire.
@@ -847,6 +867,27 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
        (SELECT COUNT(*) FROM messages WHERE (source='user' OR source IS NULL) AND created_at >= datetime('now', ?)) tasks,
        (SELECT COUNT(*) FROM updates WHERE type='text' AND timestamp >= datetime('now', ?)) outputs`
   ).get(since, since) as { tasks: number; outputs: number };
+  // CITATION RATE — the application signal. Delivery is not use: we can push an entry into
+  // an agent's context and still have no idea whether it changed anything. The one trace an
+  // agent leaves when knowledge actually informed its work is the "KB:" record line the
+  // completion gate asks for. Measured with the EXACT regexes agents.ts enforces, so the
+  // metric and the gate can never drift apart. (Population note: the gate fires only on
+  // status='idle' completions, but updates has no status column — this counts all
+  // substantive type='text' updates, a slight superset, so treat it as a floor.)
+  const KB_RECORD_EXPLICIT = /\bKB\s*[:\-]/i;
+  const KB_RECORD_LOOSE = /\b(propos(e|ed|al)|knowledge hub|\/kb\b|kb[_-]?check|wanted_id|no(thing)? reusable)\b/i;
+  const completionRows = db.prepare(
+    "SELECT content, summary FROM updates WHERE type='text' AND timestamp >= datetime('now', ?)"
+  ).all(since) as { content: string | null; summary: string | null }[];
+  let substantiveCompletions = 0;
+  let citedCompletions = 0;
+  for (const row of completionRows) {
+    const body = `${row.content ?? ""}\n${row.summary ?? ""}`;
+    if (body.trim().length < 200) continue;
+    substantiveCompletions++;
+    if (KB_RECORD_EXPLICIT.test(body) || KB_RECORD_LOOSE.test(body)) citedCompletions++;
+  }
+
   const ratio = (n: number, d: number) => (d > 0 ? Number((n / d).toFixed(2)) : 0);
   const uptake = {
     tasks: work.tasks || 0,
@@ -863,7 +904,9 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
     // straight into task deliveries, an agent rarely needs to open anything — a low open rate
     // is now the EXPECTED outcome of the push model, not a failure. The honest uptake dials
     // are the two agent-initiated ratios above; open rate is kept only as an observation.
-    targets: { searches_per_task: 2, proposals_per_task: 0.3 },
+    substantive_completions: substantiveCompletions,
+    citation_rate: substantiveCompletions ? Number((citedCompletions / substantiveCompletions).toFixed(3)) : null,
+    targets: { searches_per_task: 2, proposals_per_task: 0.3, citation_rate: 0.5 },
   };
 
   return {
