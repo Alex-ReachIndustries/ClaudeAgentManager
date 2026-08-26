@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically reap leaked agent CDP test browsers
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Unit=claude-reap-browsers.service
+
+[Install]
+# timers.target is reached by the lingering user manager (unlike xdg-desktop-autostart.target).
+WantedBy=timers.target
