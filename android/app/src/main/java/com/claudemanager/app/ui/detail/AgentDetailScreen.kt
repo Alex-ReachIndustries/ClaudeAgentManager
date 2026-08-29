@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -471,6 +472,9 @@ fun AgentDetailScreen(
                                 otherAgents = state.otherAgents,
                                 isSharingFile = state.isSharingFile,
                                 predefinedRoles = state.predefinedRoles,
+                                terminalLines = state.terminalLines,
+                                onSendSignal = viewModel::sendSignal,
+                                onSendInput = viewModel::sendInput,
                                 onFileClick = { fileId ->
                                     val file = state.files.find { it.id == fileId }
                                     val filename = file?.filename ?: "download"
@@ -513,6 +517,9 @@ private fun InfoTab(
     otherAgents: List<Agent>,
     isSharingFile: Boolean,
     predefinedRoles: List<PredefinedRole>,
+    terminalLines: List<String> = emptyList(),
+    onSendSignal: (String) -> Unit = {},
+    onSendInput: (String) -> Unit = {},
     onFileClick: (Long) -> Unit,
     onShareFile: (Long, String) -> Unit,
     onLoadOtherAgents: () -> Unit,
@@ -533,6 +540,15 @@ private fun InfoTab(
                 .fillMaxWidth()
                 .weight(1f)
         )
+        TerminalSection(
+            lines = terminalLines,
+            canControl = agent?.isLive == true && agent.pid != null,
+            onSendSignal = onSendSignal,
+            onSendInput = onSendInput,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+        )
         FilesPanel(
             files = files,
             onFileClick = onFileClick,
@@ -544,6 +560,78 @@ private fun InfoTab(
                 .fillMaxWidth()
                 .weight(1f)
         )
+    }
+}
+
+/**
+ * Live terminal output + interactive controls, shown as a section within the Info tab.
+ * Reuses [TerminalPanel] for the scrollable output; the input row and Ctrl+C/Enter
+ * signal buttons only render when the agent is live and has a known PID.
+ */
+@Composable
+private fun TerminalSection(
+    lines: List<String>,
+    canControl: Boolean,
+    onSendSignal: (String) -> Unit,
+    onSendInput: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var inputText by remember { mutableStateOf("") }
+
+    Column(
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "Terminal",
+            style = MaterialTheme.typography.titleSmall,
+            color = LumiOnSurfaceSecondary
+        )
+        TerminalPanel(
+            lines = lines,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        )
+        if (canControl) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Type input…", style = MaterialTheme.typography.bodySmall) },
+                    singleLine = true
+                )
+                IconButton(
+                    onClick = {
+                        if (inputText.isNotBlank()) {
+                            onSendInput(inputText)
+                            inputText = ""
+                        }
+                    }
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = "Send input")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onSendSignal("ctrl-c") }) {
+                    Text("Ctrl+C")
+                }
+                TextButton(onClick = { onSendSignal("enter") }) {
+                    Text("Enter")
+                }
+            }
+        } else {
+            Text(
+                text = "Terminal control is only available while the agent is live.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LumiOnSurfaceTertiary
+            )
+        }
     }
 }
 
