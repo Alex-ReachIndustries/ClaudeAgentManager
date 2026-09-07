@@ -79,9 +79,17 @@ const MODEL_DEFAULTS = {
   'claude-opus-4-8':  'claude-opus-5',
   'claude-sonnet-4-5': 'claude-sonnet-5',
   'claude-sonnet-4-6': 'claude-sonnet-5',
-  // Canonical model IDs carry NO date suffix — they are complete as written. We shipped the
-  // dated snapshot for haiku, so map it forward too or stored DB rows keep respawning it.
+  // Haiku 4.5 predates the 4.6 generation, so BOTH forms are valid: the dated snapshot
+  // 'claude-haiku-4-5-20251001' is the pinned Claude API ID and 'claude-haiku-4-5' is its
+  // alias. We use the alias (verified working) and map the dated form onto it so stored rows
+  // converge on one value.
   'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
+  // FABLE VERSION GATE — the current top model per Anthropic's docs is Fable 5.1
+  // ('claude-fable-5-1'), but Claude Code 2.1.247 REJECTS it: "does not support this model;
+  // version 2.1.251 or newer is required". Verified by launching it. So the aliases point at
+  // 'claude-fable-5' (legacy but available, and verified working today). 'claude-fable-5-1'
+  // deliberately passes through unmapped, so it starts working the moment Claude Code is
+  // updated — at which point flip the two aliases above to it.
 };
 
 function resolveModel(model) {
