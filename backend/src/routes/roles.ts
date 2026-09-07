@@ -313,7 +313,7 @@ POST {SERVER}/api/projects
   "folder_path": "<your CWD>",
   "max_concurrent": 5,
   "pm_effort": "high",
-  "pm_model": "claude-opus-4-6"
+  "pm_model": "claude-opus-5"
 }
 \`\`\`
 

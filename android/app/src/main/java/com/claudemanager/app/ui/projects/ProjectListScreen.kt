@@ -445,9 +445,10 @@ private fun CreateProjectDialog(
     var agentModel by remember { mutableStateOf("claude-sonnet-5") }
     val effortOptions = listOf("low", "medium", "high")
     val modelOptions = listOf(
-        "claude-haiku-4-5-20251001" to "Haiku 4.5",
+        "claude-haiku-4-5" to "Haiku 4.5",
         "claude-sonnet-5" to "Sonnet 5",
-        "claude-opus-5" to "Opus 5"
+        "claude-opus-5" to "Opus 5",
+        "claude-fable-5" to "Fable 5"
     )
 
     val textFieldColors = OutlinedTextFieldDefaults.colors(

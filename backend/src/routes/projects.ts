@@ -699,12 +699,24 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
 
     const agentFolderPath = folder_path || (project.folder_path as string) || "";
 
-    // Enforce MAX constraints: PM may request equal or lower effort/model than project max
+    // Enforce MAX constraints: PM may request equal or lower effort/model than project max.
+    //
+    // modelOrder used to hold FAMILY names ("haiku","sonnet","opus") while maxModel held a full
+    // model ID, so indexOf(maxModel) was always -1 and the comparison was meaningless: a family
+    // request lost to -1 and was silently downgraded, while two full IDs compared -1 <= -1 and
+    // anything was allowed. Compare capability TIERS instead, derived from either form.
     const effortOrder = ["low", "medium", "high"];
-    const modelOrder = ["haiku", "sonnet", "opus"];
+    const MODEL_TIERS = ["haiku", "sonnet", "opus", "fable"];
+    const modelTier = (m?: string | null): number => {
+      if (!m) return -1;
+      const s = String(m).toLowerCase();
+      // Search highest tier first so "claude-fable-5" cannot match a lower family substring.
+      for (let i = MODEL_TIERS.length - 1; i >= 0; i--) if (s.includes(MODEL_TIERS[i])) return i;
+      return -1;
+    };
 
     const maxEffort = (project.agent_effort as string) || "high";
-    const maxModel = (project.agent_model as string) || "claude-sonnet-4-6";
+    const maxModel = (project.agent_model as string) || "claude-sonnet-5";
 
     const resolvedEffort = requestedEffort
       ? effortOrder.indexOf(requestedEffort) <= effortOrder.indexOf(maxEffort)
@@ -712,8 +724,9 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
         : maxEffort
       : maxEffort;
 
+    // Unknown tier on either side (-1) falls back to maxModel — never silently grant more.
     const resolvedModel = requestedModel
-      ? modelOrder.indexOf(requestedModel) <= modelOrder.indexOf(maxModel)
+      ? modelTier(requestedModel) >= 0 && modelTier(requestedModel) <= modelTier(maxModel)
         ? requestedModel
         : maxModel
       : maxModel;

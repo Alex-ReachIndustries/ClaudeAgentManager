@@ -63,20 +63,25 @@ const USER_HOME = os.homedir();
 // To upgrade: update the values here. DB records storing old versions auto-upgrade on next spawn.
 const MODEL_DEFAULTS = {
   // Short family aliases (preferred for new agents stored in DB)
+  'fable':   'claude-fable-5',
   'opus':    'claude-opus-5',
   'sonnet':  'claude-sonnet-5',
-  'haiku':   'claude-haiku-4-5-20251001',
+  'haiku':   'claude-haiku-4-5',
   // claude- prefixed family aliases
+  'claude-fable':  'claude-fable-5',
   'claude-opus':   'claude-opus-5',
   'claude-sonnet': 'claude-sonnet-5',
-  'claude-haiku':  'claude-haiku-4-5-20251001',
-  // Legacy pinned versions — auto-upgrade to latest (Opus 5 / Sonnet 5)
+  'claude-haiku':  'claude-haiku-4-5',
+  // Legacy pinned versions — auto-upgrade to the current release in that family.
   'claude-opus-4-5':  'claude-opus-5',
   'claude-opus-4-6':  'claude-opus-5',
   'claude-opus-4-7':  'claude-opus-5',
   'claude-opus-4-8':  'claude-opus-5',
   'claude-sonnet-4-5': 'claude-sonnet-5',
   'claude-sonnet-4-6': 'claude-sonnet-5',
+  // Canonical model IDs carry NO date suffix — they are complete as written. We shipped the
+  // dated snapshot for haiku, so map it forward too or stored DB rows keep respawning it.
+  'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
 };
 
 function resolveModel(model) {

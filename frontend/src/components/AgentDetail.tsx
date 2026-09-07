@@ -462,9 +462,10 @@ function AgentDetail() {
                   onChange={e => setModelInput(e.target.value)}
                   className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm text-dark-200 focus:outline-none focus:border-dark-600"
                 >
-                  <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                  <option value="claude-haiku-4-5">Haiku 4.5</option>
                   <option value="claude-sonnet-5">Sonnet 5</option>
                   <option value="claude-opus-5">Opus 5</option>
+                <option value="claude-fable-5">Fable 5</option>
                 </select>
               </div>
             </div>

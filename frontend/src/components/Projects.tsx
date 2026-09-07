@@ -372,9 +372,10 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
               <label className="block text-xs text-dark-400 mb-1">PM Model</label>
               <select value={pmModel} onChange={e => setPmModel(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-haiku-4-5">Haiku 4.5</option>
                 <option value="claude-sonnet-5">Sonnet 5</option>
                 <option value="claude-opus-5">Opus 5</option>
+                <option value="claude-fable-5">Fable 5</option>
               </select>
             </div>
             <div>
@@ -390,9 +391,10 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
               <label className="block text-xs text-dark-400 mb-1">Agent Model</label>
               <select value={agentModel} onChange={e => setAgentModel(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-haiku-4-5">Haiku 4.5</option>
                 <option value="claude-sonnet-5">Sonnet 5</option>
                 <option value="claude-opus-5">Opus 5</option>
+                <option value="claude-fable-5">Fable 5</option>
               </select>
             </div>
           </div>
