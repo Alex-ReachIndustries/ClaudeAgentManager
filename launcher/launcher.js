@@ -63,12 +63,12 @@ const USER_HOME = os.homedir();
 // To upgrade: update the values here. DB records storing old versions auto-upgrade on next spawn.
 const MODEL_DEFAULTS = {
   // Short family aliases (preferred for new agents stored in DB)
-  'fable':   'claude-fable-5',
+  'fable':   'claude-fable-5-1',
   'opus':    'claude-opus-5',
   'sonnet':  'claude-sonnet-5',
   'haiku':   'claude-haiku-4-5',
   // claude- prefixed family aliases
-  'claude-fable':  'claude-fable-5',
+  'claude-fable':  'claude-fable-5-1',
   'claude-opus':   'claude-opus-5',
   'claude-sonnet': 'claude-sonnet-5',
   'claude-haiku':  'claude-haiku-4-5',
@@ -84,12 +84,10 @@ const MODEL_DEFAULTS = {
   // alias. We use the alias (verified working) and map the dated form onto it so stored rows
   // converge on one value.
   'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
-  // FABLE VERSION GATE — the current top model per Anthropic's docs is Fable 5.1
-  // ('claude-fable-5-1'), but Claude Code 2.1.247 REJECTS it: "does not support this model;
-  // version 2.1.251 or newer is required". Verified by launching it. So the aliases point at
-  // 'claude-fable-5' (legacy but available, and verified working today). 'claude-fable-5-1'
-  // deliberately passes through unmapped, so it starts working the moment Claude Code is
-  // updated — at which point flip the two aliases above to it.
+  // Fable 5.1 is the current top model. It requires Claude Code >= 2.1.251 (2.1.247 returned
+  // 400 "does not support this model"); we run 2.1.263, verified by launching it. The
+  // superseded 'claude-fable-5' maps forward like the other legacy pins.
+  'claude-fable-5': 'claude-fable-5-1',
 };
 
 function resolveModel(model) {

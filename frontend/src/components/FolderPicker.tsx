@@ -32,7 +32,7 @@ const MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
   { value: 'claude-sonnet-5', label: 'Sonnet 5' },
   { value: 'claude-opus-5', label: 'Opus 5' },
-  { value: 'claude-fable-5', label: 'Fable 5' },
+  { value: 'claude-fable-5-1', label: 'Fable 5.1' },
 ];
 
 function FolderPicker({ isOpen, onClose, onSelect }: FolderPickerProps) {

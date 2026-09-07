@@ -465,7 +465,7 @@ function AgentDetail() {
                   <option value="claude-haiku-4-5">Haiku 4.5</option>
                   <option value="claude-sonnet-5">Sonnet 5</option>
                   <option value="claude-opus-5">Opus 5</option>
-                <option value="claude-fable-5">Fable 5</option>
+                <option value="claude-fable-5-1">Fable 5.1</option>
                 </select>
               </div>
             </div>
