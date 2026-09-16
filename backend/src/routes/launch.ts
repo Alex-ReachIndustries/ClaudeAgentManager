@@ -43,13 +43,35 @@ router.post("/", launchLimiter, validate(launchRequestSchema), (req: Request, re
       return;
     }
 
-    const { target_pid, role, task, effort, model, wt_window } = req.body;
+    const { target_pid, role, task, effort, model, project_id } = req.body;
+    let { wt_window } = req.body;
+
+    // A project agent belongs in its project's window group. Derive it from the project rather
+    // than making every caller know the convention (projects.ts uses the project name as the
+    // group). Without this, an agent spawned with project_id but no wt_window lands in a
+    // separate tmux session from its PM — and unlike title or project_id, the agent cannot
+    // correct that about itself afterwards, because wt_window picks the session at spawn time.
+    if (project_id && !wt_window) {
+      try {
+        const proj = getDb().prepare("SELECT name FROM projects WHERE id = ?").get(project_id) as { name?: string } | undefined;
+        if (proj?.name) wt_window = proj.name;
+      } catch { /* fall through — a missing project just means no derived group */ }
+    }
+
     const request = createLaunchRequest(type, folder_path || "", resume_agent_id, target_pid, wt_window);
 
-    // If role/task/effort/model provided (from Android new-agent UI), store as metadata for the launcher
-    if ((role || task || effort || model) && request.id) {
+    // Store spawn metadata for the launcher. project_id is what attaches the agent to a project
+    // (the claim handler below reads it back out of this meta and writes it onto the agent).
+    if ((role || task || effort || model || project_id) && request.id) {
       const db = getDb();
-      const meta = JSON.stringify({ role: role || null, prompt: task || null, effort: effort || null, model: model || null });
+      const meta = JSON.stringify({
+        project_id: project_id || undefined,
+        role: role || null,
+        prompt: task || null,
+        effort: effort || null,
+        model: model || null,
+        ...(wt_window ? { wt_window } : {}),
+      });
       db.prepare("UPDATE launch_requests SET agent_id = ? WHERE id = ?").run(meta, request.id);
     }
 

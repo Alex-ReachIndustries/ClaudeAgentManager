@@ -82,6 +82,12 @@ export const launchRequestSchema = z.object({
   resume_agent_id: z.string().max(100).optional(),
   target_pid: z.number().int().positive().optional(),
   wt_window: z.string().max(200).nullable().optional(),
+  // Attach the spawned agent to a project. The linking machinery downstream already honours
+  // project_id in the stored meta; this route simply had no way to express it, so an agent
+  // created here could never join a project (2026-09-16: a replacement agent came up with a
+  // null project_id and outside its PM's window group, and nothing about that was fixable by
+  // the agent itself — wt_window decides the tmux session at spawn time).
+  project_id: z.string().max(100).optional(),
   role: z.string().max(65_536).optional(),
   task: z.string().max(65_536).optional(),
   effort: z.enum(["low", "medium", "high"]).optional(),
