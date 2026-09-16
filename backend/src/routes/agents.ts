@@ -523,7 +523,7 @@ Replies must be posted as updates — user reads from dashboard, not terminal.
 Spawn via API: \`POST /api/projects/{project_id}/spawn-agent\`
 
 ## Polling
-**Background bash watcher** polls every 15s (\`GET /api/agents/{id}/messages?status=pending&deliver=true\`). Exits on message → process → **restart immediately**.
+**Message watcher — start it with the Monitor tool**, never Bash run_in_background (a background bash task only notifies you when the process EXITS, and the loop below never exits, so it would consume your messages without ever waking you). It polls \`GET /api/agents/{id}/messages?status=pending&deliver=true\`. Set \`timeout_ms\` to the max (1800000); **every monitor dies after 30 minutes and you must re-arm it on the expiry notice** — there is no persistent option. That poll is also your liveness heartbeat, so a lapsed watcher gets you AUTO-ARCHIVED after 30 minutes even though your process is alive.
 
 ## Agent Manager: ${U}
 - Health: GET ${U}/api/health
@@ -604,14 +604,18 @@ If \`role\` or \`project_id\` set: execute assigned task immediately. Skip step 
 
 ## 7. Start message watcher
 \`\`\`bash
-# Run in background (run_in_background: true, timeout: 600000)
+# START WITH THE Monitor TOOL (timeout_ms: 1800000) — NOT Bash run_in_background.
+# A background bash task only notifies you when the process EXITS; this loop never
+# exits, so run_in_background would poll and consume messages without ever waking you.
+# Re-arm on every expiry notice: monitors die after 30 min and none are persistent.
 while true; do
   resp=$(curl -s -H "Authorization: Bearer $API_KEY" "$AGENT_URL/api/agents/$SESSION_UUID/messages?status=pending&deliver=true" 2>/dev/null)
   if [ -n "$resp" ] && [ "$resp" != "[]" ]; then
     echo "$resp"
-    break
+    sleep 15
+  else
+    sleep 5
   fi
-  sleep 5
 done
 \`\`\`
 
