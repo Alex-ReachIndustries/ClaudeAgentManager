@@ -39,6 +39,14 @@ const ACTION_COOLDOWN = 5 * 60 * 1000;         // 5 min cooldown between actions
 const MAX_RECOVERY_ATTEMPTS = 3;               // max 3 auto-recoveries (not 5)
 const POST_RESTART_GRACE = 3 * 60 * 1000;      // 3 min grace after restart
 
+// Deaf-agent detection. An agent can be alive, heartbeating and reporting "idle" while its
+// message watcher is not waking it — five agents hit this in three days and every one needed a
+// human to notice. Two distinct faults, told apart by where the message is stuck:
+//   status='pending'   for a long time -> NOTHING is polling (no watcher at all)
+//   status='delivered' + never acked   -> something polls but does not wake the agent
+const DEAF_THRESHOLD = 12 * 60 * 1000;         // 12 min stuck before we call it deaf
+const DEAF_ALERT_COOLDOWN = 30 * 60 * 1000;    // per-agent, so we alert once not every minute
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -48,6 +56,9 @@ const actionCooldowns = new Map();
 
 // Track recently restarted agents: agentId -> { restartedAt }
 const recentRestarts = new Map();
+
+// Per-agent deaf-alert cooldown: agentId -> timestamp of last alert
+const deafAlerts = new Map();
 
 let shuttingDown = false;
 
@@ -401,6 +412,82 @@ async function checkAgents() {
 }
 
 /**
+ * Detect agents that are alive but not receiving their messages.
+ *
+ * SAFETY: never poll with `deliver=true` here. That flag atomically marks messages delivered,
+ * so a watchdog using it would consume the very messages the agent is waiting for and make the
+ * problem worse while hiding it.
+ */
+async function checkDeafAgents() {
+  if (shuttingDown) return;
+
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch {
+    return;
+  }
+
+  const camId = (agents.find((a) => a.role === 'cam-linux' || a.title === 'Cam') || {}).id || null;
+
+  for (const agent of agents) {
+    if (!isActiveStatus(agent.status)) continue;
+
+    const lastAlert = deafAlerts.get(agent.id) || 0;
+    if (Date.now() - lastAlert < DEAF_ALERT_COOLDOWN) continue;
+
+    let messages;
+    try {
+      const d = await fetchJSON(`${SERVER_URL}/api/agents/${agent.id}/messages`);
+      messages = Array.isArray(d) ? d : (d.data || []);
+    } catch {
+      continue;
+    }
+
+    // Ignore system-sourced messages: they are deliberately never delivered to the watcher.
+    // And ignore anything already acknowledged — an agent can ack via the update-response path
+    // without delivered_at ever being set, which is NOT a fault (it looked like one to me once).
+    const real = messages.filter((m) => m.source !== 'system' && !m.acknowledged_at);
+
+    const oldest = (list) => list.reduce((acc, m) => {
+      const t = parseTimestamp(m.delivered_at || m.created_at);
+      return t && (!acc || t < acc) ? t : acc;
+    }, 0);
+
+    const stuckPending = real.filter((m) => m.status === 'pending');
+    const stuckDelivered = real.filter((m) => m.status === 'delivered' && m.delivered_at);
+
+    let fault = null;
+    const pendingAge = stuckPending.length ? Date.now() - oldest(stuckPending) : 0;
+    const deliveredAge = stuckDelivered.length ? Date.now() - oldest(stuckDelivered) : 0;
+
+    if (pendingAge > DEAF_THRESHOLD) {
+      fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
+    } else if (deliveredAge > DEAF_THRESHOLD) {
+      fault = `WATCHER NOT WAKING IT — ${stuckDelivered.length} message(s) delivered but unacked, oldest ${Math.round(deliveredAge / 60000)}m. Something polls (so it looks healthy) but the agent is never re-invoked: typically a shell/nohup/run_in_background watcher instead of the Monitor tool.`;
+    }
+
+    if (!fault) continue;
+
+    deafAlerts.set(agent.id, Date.now());
+    logAgent(agent.id, `DEAF: ${fault}`);
+
+    // Tell Cam, who can reach a deaf agent over tmux — the only channel that still works.
+    // Post directly to Cam's message queue rather than using /relay, which is agent-to-agent
+    // and would have Cam relaying to itself.
+    if (camId && camId !== agent.id) {
+      try {
+        await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
+          content: `[WATCHDOG] ${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)}) appears DEAF.\n\n${fault}\n\nIt reports status='${agent.status}' and looks healthy from the API — that is the point, every remote signal reads fine. Check its pane watcher line (monitor vs shell) and recover over tmux.`,
+          priority: 'high',
+        });
+      } catch { /* alerting must never break the watchdog */ }
+    }
+  }
+}
+
+/**
  * Handle a confirmed dead agent — attempt recovery via resume.
  */
 async function handleDeadAgent(agent) {
@@ -537,6 +624,7 @@ async function start() {
 
   // Start monitoring
   activeIntervals.push(setInterval(checkAgents, CHECK_INTERVAL));
+  activeIntervals.push(setInterval(checkDeafAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
 
   // First check after 10s (let things settle)
