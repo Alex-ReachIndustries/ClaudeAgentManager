@@ -45,6 +45,11 @@ const POST_RESTART_GRACE = 3 * 60 * 1000;      // 3 min grace after restart
 //   status='pending'   for a long time -> NOTHING is polling (no watcher at all)
 //   status='delivered' + never acked   -> something polls but does not wake the agent
 const DEAF_THRESHOLD = 12 * 60 * 1000;         // 12 min stuck before we call it deaf
+// A single delivered-but-unacked message at ~12 minutes is usually just a long turn: the agent
+// has the message and acks when the turn ends. On 2026-09-23 the AIGroupPortal PM tripped that
+// five times while busy, and every real deaf case (Sonnet B: 3 stuck at 13m, 5 at 43m) had
+// several messages piling up. So a lone delivered message needs to wait longer before it counts.
+const DEAF_LONE_MESSAGE_THRESHOLD = 25 * 60 * 1000;
 const DEAF_ALERT_COOLDOWN = 30 * 60 * 1000;    // per-agent, so we alert once not every minute
 
 // Wedged-agent detection. On 2026-09-21 the account hit its usage limit and Claude Code put a
@@ -479,7 +484,8 @@ async function checkDeafAgents() {
 
     if (pendingAge > DEAF_THRESHOLD) {
       fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
-    } else if (deliveredAge > DEAF_THRESHOLD) {
+    } else if ((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
+            || deliveredAge > DEAF_LONE_MESSAGE_THRESHOLD) {
       fault = `WATCHER NOT WAKING IT — ${stuckDelivered.length} message(s) delivered but unacked, oldest ${Math.round(deliveredAge / 60000)}m. Something polls (so it looks healthy) but the agent is never re-invoked: typically a shell/nohup/run_in_background watcher instead of the Monitor tool.`;
     }
 
