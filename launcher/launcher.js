@@ -652,6 +652,26 @@ function isTmuxWindowAlive(agentId, sessionName) {
   return result.stdout.split('\n').some(name => name.trim() === shortId);
 }
 
+// Linux: every tmux session holding a window for this agent. An agent's window is named by its
+// short UUID and is unique per agent, but it is NOT guaranteed to live in the session its DB row
+// records: a resume or restart sent with a different wt_window lands it elsewhere. Checking only
+// the recorded session made the launcher (a) skip the kill on terminate-resume and spawn a second
+// copy, and (b) have reconcile "resume" an agent that was alive in another session — two processes
+// on one --resume id, racing each other for the same messages (2026-09-23, Cam).
+function findAgentSessions(agentId) {
+  if (!agentId) return [];
+  const shortId = agentId.substring(0, 8);
+  const result = spawnSync('tmux', ['list-windows', '-a', '-F', '#{session_name}:#{window_name}'],
+    { encoding: 'utf8', stdio: 'pipe' });
+  if (result.status !== 0) return [];
+  const sessions = [];
+  for (const line of (result.stdout || '').split('\n').filter(Boolean)) {
+    const i = line.lastIndexOf(':');
+    if (line.substring(i + 1).trim() === shortId) sessions.push(line.substring(0, i));
+  }
+  return sessions;
+}
+
 // Linux: kill a specific agent's tmux window by its short UUID.
 // Returns true if the window was killed successfully.
 function killTmuxWindow(agentId, sessionName) {
@@ -969,8 +989,9 @@ async function launchResumeAgent(agentId, folderPath, wtWindow) {
     // Dedup guard: if a tmux window for this agent already exists, don't spawn another.
     // This catches races where the PM or pool recovery creates multiple resume requests
     // before the first agent registers — tmux state is ground truth on Linux.
-    if (isTmuxWindowAlive(agentId, session)) {
-      log(`Agent ${agentId} already has live tmux window in "${session}" — skipping duplicate launch`);
+    const liveIn = findAgentSessions(agentId);
+    if (liveIn.length) {
+      log(`Agent ${agentId} already has live tmux window in "${liveIn.join('", "')}" — skipping duplicate launch`);
       return;
     }
 
@@ -1283,8 +1304,9 @@ async function processPendingRequests() {
               if (!agentWtWindow && agent && agent.wt_window) agentWtWindow = agent.wt_window;
             } catch {}
             const session = agentWtWindow || 'ungrouped';
-            if (isTmuxWindowAlive(agentId, session)) {
-              log(`Agent ${agentId} already has live tmux window in "${session}" — skipping resume`);
+            const liveIn = findAgentSessions(agentId);
+            if (liveIn.length) {
+              log(`Agent ${agentId} already has live tmux window in "${liveIn.join('", "')}" — skipping resume`);
             } else {
               if (wtWin) {
                 const last = wtWindowLastLaunch.get(wtWin) || 0;
@@ -1341,13 +1363,15 @@ async function processPendingRequests() {
               const agent = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}`);
               if (!agentWtWindow && agent && agent.wt_window) agentWtWindow = agent.wt_window;
             } catch {}
-            const session = agentWtWindow || 'ungrouped';
-            if (isTmuxWindowAlive(agentId, session)) {
-              log(`Killing tmux window for agent ${agentId} in "${session}" before resume`);
-              killTmuxWindow(agentId, session);
+            const liveIn = findAgentSessions(agentId);
+            if (liveIn.length) {
+              for (const sess of liveIn) {
+                log(`Killing tmux window for agent ${agentId} in "${sess}" before resume`);
+                killTmuxWindow(agentId, sess);
+              }
               await new Promise(r => setTimeout(r, 500));
             } else {
-              log(`No live tmux window for agent ${agentId} in "${session}" — resuming directly`);
+              log(`No live tmux window for agent ${agentId} in any session — resuming directly`);
             }
           } else {
             // Windows: PID-based kill
@@ -1719,6 +1743,9 @@ async function reconcileTmuxAgents() {
       if (!LIVE_FOR_RECONCILE.includes(agent.status)) continue;
       const shortId = agent.id.substring(0, 8);
       const sessionWindows = tmuxWindowsBySession.get(agent.wt_window) || new Set();
+      const liveElsewhere = [...tmuxWindowsBySession.entries()]
+        .some(([sess, wins]) => sess !== agent.wt_window && wins.has(shortId));
+      if (!sessionWindows.has(shortId) && liveElsewhere) continue; // alive, just not where the DB says
       if (!sessionWindows.has(shortId)) {
         log(`Reconcile: agent ${shortId} (${agent.status}) missing from tmux "${agent.wt_window}" — queuing resume`);
         try {
