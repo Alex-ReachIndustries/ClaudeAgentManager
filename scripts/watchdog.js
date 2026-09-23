@@ -495,9 +495,16 @@ async function checkDeafAgents() {
       try {
         await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
           content: `[WATCHDOG] ${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)}) appears DEAF.\n\n${fault}\n\nIt reports status='${agent.status}' and looks healthy from the API — that is the point, every remote signal reads fine. Check its pane watcher line (monitor vs shell) and recover over tmux.`,
-          priority: 'high',
+          // priority is a 0-10 integer: the string 'high' was rejected with a 400 and swallowed by
+          // the catch below, so no watchdog alert was delivered from 2026-09-18 to 09-23.
+          // source must be set: it defaults to 'user', which would stamp the alert as a
+          // GENUINE USER MESSAGE (authoritative). 'agent' + a peer name marks it as an
+          // informational relay; 'system' would never be delivered at all.
+          priority: 8,
+          source: 'agent',
+          source_peer_name: 'watchdog',
         });
-      } catch { /* alerting must never break the watchdog */ }
+      } catch (err) { log(`Alert to Cam FAILED (${err.message}) — alerting must never break the watchdog, but it must not fail silently either`); }
     }
   }
 }
@@ -585,9 +592,16 @@ async function checkWedgedAgents() {
       try {
         await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
           content: `[WATCHDOG] ${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)}) ${what}`,
-          priority: 'high',
+          // priority is a 0-10 integer: the string 'high' was rejected with a 400 and swallowed by
+          // the catch below, so no watchdog alert was delivered from 2026-09-18 to 09-23.
+          // source must be set: it defaults to 'user', which would stamp the alert as a
+          // GENUINE USER MESSAGE (authoritative). 'agent' + a peer name marks it as an
+          // informational relay; 'system' would never be delivered at all.
+          priority: 8,
+          source: 'agent',
+          source_peer_name: 'watchdog',
         });
-      } catch { /* alerting must never break the watchdog */ }
+      } catch (err) { log(`Alert to Cam FAILED (${err.message}) — alerting must never break the watchdog, but it must not fail silently either`); }
     }
   }
 }
