@@ -64,19 +64,19 @@ const USER_HOME = os.homedir();
 const MODEL_DEFAULTS = {
   // Short family aliases (preferred for new agents stored in DB)
   'fable':   'claude-fable-5-1',
-  'opus':    'claude-opus-5',
+  'opus':    'claude-opus-5-5',
   'sonnet':  'claude-sonnet-5',
   'haiku':   'claude-haiku-4-5',
   // claude- prefixed family aliases
   'claude-fable':  'claude-fable-5-1',
-  'claude-opus':   'claude-opus-5',
+  'claude-opus':   'claude-opus-5-5',
   'claude-sonnet': 'claude-sonnet-5',
   'claude-haiku':  'claude-haiku-4-5',
   // Legacy pinned versions — auto-upgrade to the current release in that family.
-  'claude-opus-4-5':  'claude-opus-5',
-  'claude-opus-4-6':  'claude-opus-5',
-  'claude-opus-4-7':  'claude-opus-5',
-  'claude-opus-4-8':  'claude-opus-5',
+  'claude-opus-4-5':  'claude-opus-5-5',
+  'claude-opus-4-6':  'claude-opus-5-5',
+  'claude-opus-4-7':  'claude-opus-5-5',
+  'claude-opus-4-8':  'claude-opus-5-5',
   'claude-sonnet-4-5': 'claude-sonnet-5',
   'claude-sonnet-4-6': 'claude-sonnet-5',
   // Haiku 4.5 predates the 4.6 generation, so BOTH forms are valid: the dated snapshot
@@ -88,6 +88,11 @@ const MODEL_DEFAULTS = {
   // 400 "does not support this model"); we run 2.1.263, verified by launching it. The
   // superseded 'claude-fable-5' maps forward like the other legacy pins.
   'claude-fable-5': 'claude-fable-5-1',
+  // Opus 5.5 supersedes Opus 5 (which is now listed as legacy). $4/$20 vs $5/$25, thinking
+  // always on, and its default effort is 'medium' rather than 'high' — so an agent that
+  // relied on the old default will think less unless effort is set explicitly. Verified
+  // against Claude Code 2.1.280 by launching it.
+  'claude-opus-5': 'claude-opus-5-5',
 };
 
 function resolveModel(model) {

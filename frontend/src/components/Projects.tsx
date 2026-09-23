@@ -245,7 +245,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
   const [error, setError] = useState<string | null>(null);
   const [pmRole, setPmRole] = useState('');
   const [pmEffort, setPmEffort] = useState('high');
-  const [pmModel, setPmModel] = useState('claude-opus-5');
+  const [pmModel, setPmModel] = useState('claude-opus-5-5');
   const [agentEffort, setAgentEffort] = useState('high');
   const [agentModel, setAgentModel] = useState('claude-sonnet-5');
 
@@ -374,7 +374,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
                 <option value="claude-haiku-4-5">Haiku 4.5</option>
                 <option value="claude-sonnet-5">Sonnet 5</option>
-                <option value="claude-opus-5">Opus 5</option>
+                <option value="claude-opus-5-5">Opus 5.5</option>
                 <option value="claude-fable-5-1">Fable 5.1</option>
               </select>
             </div>
@@ -393,7 +393,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
                 <option value="claude-haiku-4-5">Haiku 4.5</option>
                 <option value="claude-sonnet-5">Sonnet 5</option>
-                <option value="claude-opus-5">Opus 5</option>
+                <option value="claude-opus-5-5">Opus 5.5</option>
                 <option value="claude-fable-5-1">Fable 5.1</option>
               </select>
             </div>
