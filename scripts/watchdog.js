@@ -47,6 +47,18 @@ const POST_RESTART_GRACE = 3 * 60 * 1000;      // 3 min grace after restart
 const DEAF_THRESHOLD = 12 * 60 * 1000;         // 12 min stuck before we call it deaf
 const DEAF_ALERT_COOLDOWN = 30 * 60 * 1000;    // per-agent, so we alert once not every minute
 
+// Wedged-agent detection. On 2026-09-21 the account hit its usage limit and Claude Code put a
+// blocking menu in every session. Nobody answered it for ~41 hours: no session could poll, so no
+// heartbeats, and the 30-minute archive sweep archived agents one by one. The deaf check above
+// saw nothing, because it keys off stuck messages and with the whole fleet down nobody was
+// sending any. Two signals that need no message traffic:
+//   - the usage-limit menu on screen: unambiguous, so answer it (option 2, "continue
+//     automatically", which is the least committal choice and resolves itself once the limit lifts)
+//   - a live claude process whose heartbeat has gone stale: the watcher poll IS the heartbeat,
+//     so this means nothing is polling. Alert well before the archive sweep's 30 minutes.
+const STALE_HEARTBEAT = 15 * 60 * 1000;
+const WEDGE_ALERT_COOLDOWN = 30 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -59,6 +71,9 @@ const recentRestarts = new Map();
 
 // Per-agent deaf-alert cooldown: agentId -> timestamp of last alert
 const deafAlerts = new Map();
+
+// Per-agent wedge-alert cooldown: agentId -> timestamp of last alert
+const wedgeAlerts = new Map();
 
 let shuttingDown = false;
 
@@ -488,6 +503,96 @@ async function checkDeafAgents() {
 }
 
 /**
+ * Linux: the tmux target ("session:window") for an agent, searched across ALL sessions. An agent
+ * is not guaranteed to live in the session its DB row records.
+ */
+function findAgentTmuxTarget(agentId) {
+  if (!IS_LINUX || !agentId) return null;
+  const shortId = String(agentId).substring(0, 8);
+  try {
+    const r = spawnSync('tmux', ['list-windows', '-a', '-F', '#{session_name}:#{window_name}'],
+      { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return null;
+    return (r.stdout || '').split('\n').find((l) => l.endsWith(':' + shortId)) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True if the visible pane is showing Claude Code's usage-limit menu. Only the visible screen is
+ * checked (no scrollback) and the menu's own confirm line must be present, so an old copy
+ * scrolled above a live prompt does not count.
+ */
+function paneShowsUsageLimitMenu(target) {
+  try {
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return false;
+    const tail = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-12).join('\n');
+    return tail.includes('Stop and wait for limit to reset')
+      && /2\.\s*Wait here, then continue automatically/.test(tail)
+      && tail.includes('Enter to confirm');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find agents that are alive but wedged: showing the usage-limit menu, or not heartbeating.
+ */
+async function checkWedgedAgents() {
+  if (shuttingDown || !IS_LINUX) return;
+
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch {
+    return;
+  }
+  const camId = (agents.find((a) => a.role === 'cam-linux' || a.title === 'Cam') || {}).id || null;
+
+  for (const agent of agents) {
+    if (agent.status === 'archived') continue;
+    if (!findClaudePidByResumeId(agent.id)) continue; // dead agents are checkAgents' job
+
+    const target = findAgentTmuxTarget(agent.id);
+    let action = null;
+
+    if (target && paneShowsUsageLimitMenu(target)) {
+      spawnSync('tmux', ['send-keys', '-t', target, '2'], { timeout: 5000 });
+      spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 5000 });
+      action = `was stuck on the usage-limit menu — chose "Wait here, then continue automatically" for it (${target}).`;
+      logAgent(agent.id, `WEDGED: usage-limit menu answered with option 2 in ${target}`);
+    }
+
+    const age = Date.now() - parseTimestamp(agent.last_update_at);
+    const stale = age > STALE_HEARTBEAT;
+    const lastAlert = wedgeAlerts.get(agent.id) || 0;
+    const coolingDown = Date.now() - lastAlert < WEDGE_ALERT_COOLDOWN;
+
+    // Always answer the menu (above); only the log line and the alert are rate-limited.
+    if (!action && !stale) continue;
+    if (coolingDown) continue;
+    if (!action) {
+      logAgent(agent.id, `WEDGED: process alive but no heartbeat for ${Math.round(age / 60000)}m`);
+    }
+    wedgeAlerts.set(agent.id, Date.now());
+
+    if (camId && camId !== agent.id) {
+      const what = action
+        || `has a live process but no heartbeat for ${Math.round(age / 60000)} minutes. Its watcher poll is its heartbeat, so nothing is polling for it; the archive sweep will take it at 30 minutes. Check its pane (${target || 'window not found'}) for a blocking prompt or a dead watcher.`;
+      try {
+        await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
+          content: `[WATCHDOG] ${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)}) ${what}`,
+          priority: 'high',
+        });
+      } catch { /* alerting must never break the watchdog */ }
+    }
+  }
+}
+
+/**
  * Handle a confirmed dead agent — attempt recovery via resume.
  */
 async function handleDeadAgent(agent) {
@@ -625,6 +730,7 @@ async function start() {
   // Start monitoring
   activeIntervals.push(setInterval(checkAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkDeafAgents, CHECK_INTERVAL));
+  activeIntervals.push(setInterval(checkWedgedAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
 
   // First check after 10s (let things settle)
