@@ -625,6 +625,23 @@ async function checkWedgedAgents() {
     }
     wedgeAlerts.set(agent.id, Date.now());
 
+    // A live agent with a stale heartbeat has usually just outlived its Monitor: a turn longer than
+    // the Monitor's 30-minute cap leaves it unwatched, and it can't re-arm until the turn ends. Queue
+    // a message for the agent itself. It reads it when the turn finishes (pendingMessages in its next
+    // update response), and while it sits pending it also stops the backend's 30-minute archive sweep
+    // (which skips agents with pending messages) from archiving an agent that is actively working.
+    // Not sent for prompt/menu cases — those need a person, not a reminder.
+    if (!action && stale && agent.id !== camId) {
+      try {
+        await postJSON(`${SERVER_URL}/api/agents/${agent.id}/messages`, {
+          content: `[WATCHDOG] You have not heartbeated for ${Math.round(age / 60000)} minutes, so your message watcher is not polling — most likely your Monitor hit its 30-minute limit during a long turn. No need to stop what you are doing. When your current turn ends, re-arm it with the Monitor tool (timeout_ms 1800000, deliver=true URL from session-connect step 7) and check your pane footer says 'monitor'.`,
+          priority: 8,
+          source: 'agent',
+          source_peer_name: 'watchdog',
+        });
+      } catch (err) { log(`Re-arm reminder to ${agent.id.slice(0, 8)} FAILED (${err.message})`); }
+    }
+
     if (camId && camId !== agent.id) {
       const what = action
         || `has a live process but no heartbeat for ${Math.round(age / 60000)} minutes. Its watcher poll is its heartbeat, so nothing is polling for it; the archive sweep will take it at 30 minutes. Check its pane (${target || 'window not found'}) for a blocking prompt or a dead watcher.`;
