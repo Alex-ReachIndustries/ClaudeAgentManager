@@ -9,19 +9,28 @@ tmux kill-session -t $S 2>/dev/null
 tmux new-session -d -s $S -n deadbeef "printf '$MENU'; read x; echo GOT:\$x; sleep 30"
 tmux new-window -t $S -n cafebabe "printf '  \xe2\x9a\xa0 Usage limit reached \xc2\xb7 continuing shortly \xc2\xb7 esc to cancel\n'; sleep 30"
 tmux new-window -t $S -n feedf00d "printf '$MENU'; for i in \$(seq 1 60); do echo line \$i; done; printf '\xe2\x9d\xaf \n'; sleep 30"
+PERM='     Bash command\n       \xe2\x94\x82 rmdir /tmp/x\n     \xe2\x94\x82 Dangerous rmdir operation on working directory or its ancestor:\n     \xe2\x94\x82 /home/demo\n     Do you want to proceed?\n     \xe2\x9d\xaf 1. Yes\n       2. No\n     Esc to cancel \xc2\xb7 Tab to amend\n'
+tmux new-window -t $S -n baddcafe "printf '$PERM'; read x; echo GOT:\$x; sleep 30"
 sleep 1
 node -e "
 const {spawnSync}=require('child_process'); const IS_LINUX=true;
 $(sed -n '/^function findAgentTmuxTarget/,/^}/p' scripts/watchdog.js)
 $(sed -n '/^function paneShowsUsageLimitMenu/,/^}/p' scripts/watchdog.js)
+$(sed -n '/^function panePermissionPrompt/,/^}/p' scripts/watchdog.js)
 const cases=[['live usage-limit menu','deadbeef',true],['already answered: continuing shortly','cafebabe',false],['old menu scrolled above a live prompt','feedf00d',false]];
 let pass=0;
 for(const [n,id,want] of cases){const t=findAgentTmuxTarget(id+'-x');const got=t?paneShowsUsageLimitMenu(t):null;const ok=got===want;if(ok)pass++;console.log((ok?'PASS':'FAIL')+'  '+n);}
 const t=findAgentTmuxTarget('deadbeef-x'); spawnSync('tmux',['send-keys','-t',t,'2']); spawnSync('tmux',['send-keys','-t',t,'Enter']);
-process.exitCode = pass===cases.length ? 0 : 1;
+const pp=findAgentTmuxTarget('baddcafe-x'); const why=panePermissionPrompt(pp);
+let extra=0;
+if(why && why.includes('Dangerous rmdir')){console.log('PASS  permission prompt detected');extra++;}else console.log('FAIL  permission prompt not detected');
+if(!paneShowsUsageLimitMenu(pp)){console.log('PASS  permission prompt is never treated as the usage-limit menu');extra++;}else console.log('FAIL  permission prompt matched the usage-limit menu');
+if(panePermissionPrompt(findAgentTmuxTarget('deadbeef-x'))===null){console.log('PASS  usage-limit menu is not a permission prompt');extra++;}else console.log('FAIL  usage-limit menu read as permission prompt');
+process.exitCode = (pass===cases.length && extra===3) ? 0 : 1;
 "
 rc=$?
 sleep 1
 if tmux capture-pane -p -t $S:deadbeef | grep -q 'GOT:2'; then echo "PASS  answer delivered option 2"; else echo "FAIL  answer not delivered"; rc=1; fi
+if tmux capture-pane -p -t $S:baddcafe | grep -q 'GOT:'; then echo "FAIL  keys were sent to a permission prompt"; rc=1; else echo "PASS  no keys sent to the permission prompt"; fi
 tmux kill-session -t $S
 exit $rc

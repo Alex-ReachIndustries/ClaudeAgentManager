@@ -551,6 +551,29 @@ function paneShowsUsageLimitMenu(target) {
 }
 
 /**
+ * The permission question an agent is blocked on, if one is on screen. Claude Code asks this
+ * even under bypassPermissions for actions it classes as dangerous (e.g. rmdir of the agent's own
+ * working directory). An unattended agent then sits there until its monitor expires and it goes
+ * deaf. The watchdog NEVER answers these — they are decisions, often about deleting data — it only
+ * reports them so a person can decide quickly.
+ */
+function panePermissionPrompt(target) {
+  try {
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return null;
+    const lines = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-14);
+    const tail = lines.join('\n');
+    if (!tail.includes('Do you want to proceed?') || !/1\.\s*Yes/.test(tail) || !/2\.\s*No/.test(tail)) return null;
+    // The line(s) just above the question describe what is being asked.
+    const q = lines.findIndex((l) => l.includes('Do you want to proceed?'));
+    const why = lines.slice(Math.max(0, q - 3), q).map((l) => l.replace(/^[\s│]+/, '').trim()).filter(Boolean).join(' ');
+    return why || 'an unspecified action';
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Find agents that are alive but wedged: showing the usage-limit menu, or not heartbeating.
  */
 async function checkWedgedAgents() {
@@ -579,6 +602,14 @@ async function checkWedgedAgents() {
       logAgent(agent.id, `WEDGED: usage-limit menu answered with option 2 in ${target}`);
     }
 
+    let prompt = null;
+    if (!action && target) {
+      prompt = panePermissionPrompt(target);
+      if (prompt) {
+        action = `is waiting at a permission prompt: "${prompt}" — Do you want to proceed? It has NOT been answered (the watchdog never answers these). Check what it is asking in ${target} and decide.`;
+      }
+    }
+
     const age = Date.now() - parseTimestamp(agent.last_update_at);
     const stale = age > STALE_HEARTBEAT;
     const lastAlert = wedgeAlerts.get(agent.id) || 0;
@@ -587,7 +618,9 @@ async function checkWedgedAgents() {
     // Always answer the menu (above); only the log line and the alert are rate-limited.
     if (!action && !stale) continue;
     if (coolingDown) continue;
-    if (!action) {
+    if (prompt) {
+      logAgent(agent.id, `WEDGED: waiting at permission prompt: ${prompt}`);
+    } else if (!action) {
       logAgent(agent.id, `WEDGED: process alive but no heartbeat for ${Math.round(age / 60000)}m`);
     }
     wedgeAlerts.set(agent.id, Date.now());
