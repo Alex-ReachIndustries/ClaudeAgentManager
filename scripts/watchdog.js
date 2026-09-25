@@ -484,8 +484,14 @@ async function checkDeafAgents() {
 
     if (pendingAge > DEAF_THRESHOLD) {
       fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
-    } else if ((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
-            || deliveredAge > DEAF_LONE_MESSAGE_THRESHOLD) {
+    } else if (((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
+            || deliveredAge > DEAF_LONE_MESSAGE_THRESHOLD)
+            // An agent mid-turn has simply not reached its messages yet; a deaf agent is by
+            // definition idle, because nothing woke it. Waiting until the turn ends removes every
+            // long-turn false alarm and still catches real deafness, which shows up as idle with
+            // messages waiting. (The 'pending' branch above is unaffected: a mid-turn agent with
+            // nothing polling at all is real, and the stale-heartbeat check handles it.)
+            && !paneTurnInProgress(findAgentTmuxTarget(agent.id))) {
       fault = `WATCHER NOT WAKING IT — ${stuckDelivered.length} message(s) delivered but unacked, oldest ${Math.round(deliveredAge / 60000)}m. Something polls (so it looks healthy) but the agent is never re-invoked: typically a shell/nohup/run_in_background watcher instead of the Monitor tool.`;
     }
 
@@ -512,6 +518,23 @@ async function checkDeafAgents() {
         });
       } catch (err) { log(`Alert to Cam FAILED (${err.message}) — alerting must never break the watchdog, but it must not fail silently either`); }
     }
+  }
+}
+
+/**
+ * True if the agent's visible pane shows a turn in progress: Claude Code's live status line,
+ * e.g. "Perusing… (4s · …)" or "Tomfoolering… (20m 18s · …)". A finished turn shows
+ * "Cogitated for 16s · done 11:50" instead, which does not match.
+ */
+function paneTurnInProgress(target) {
+  if (!target) return false;
+  try {
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return false;
+    const tail = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-12).join('\n');
+    return /\u2026\s*\(\d+[ms]/.test(tail);
+  } catch {
+    return false;
   }
 }
 
