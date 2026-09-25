@@ -482,7 +482,11 @@ async function checkDeafAgents() {
     const pendingAge = stuckPending.length ? Date.now() - oldest(stuckPending) : 0;
     const deliveredAge = stuckDelivered.length ? Date.now() - oldest(stuckDelivered) : 0;
 
-    if (pendingAge > DEAF_THRESHOLD) {
+    // Mid-turn with nothing polling is the 'outlived its Monitor' case. checkWedgedAgents already
+    // alerts on it (stale heartbeat) and queues the agent a re-arm reminder, so alerting here
+    // too only doubles the noise. Once the turn ends it is idle, and this fires if still needed.
+    const midTurn = paneTurnInProgress(findAgentTmuxTarget(agent.id));
+    if (pendingAge > DEAF_THRESHOLD && !midTurn) {
       fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
     } else if (((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
             || deliveredAge > DEAF_LONE_MESSAGE_THRESHOLD)
@@ -491,7 +495,7 @@ async function checkDeafAgents() {
             // long-turn false alarm and still catches real deafness, which shows up as idle with
             // messages waiting. (The 'pending' branch above is unaffected: a mid-turn agent with
             // nothing polling at all is real, and the stale-heartbeat check handles it.)
-            && !paneTurnInProgress(findAgentTmuxTarget(agent.id))) {
+            && !midTurn) {
       fault = `WATCHER NOT WAKING IT — ${stuckDelivered.length} message(s) delivered but unacked, oldest ${Math.round(deliveredAge / 60000)}m. Something polls (so it looks healthy) but the agent is never re-invoked: typically a shell/nohup/run_in_background watcher instead of the Monitor tool.`;
     }
 
