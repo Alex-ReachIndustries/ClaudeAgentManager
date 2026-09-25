@@ -485,7 +485,13 @@ async function checkDeafAgents() {
     // Mid-turn with nothing polling is the 'outlived its Monitor' case. checkWedgedAgents already
     // alerts on it (stale heartbeat) and queues the agent a re-arm reminder, so alerting here
     // too only doubles the noise. Once the turn ends it is idle, and this fires if still needed.
-    const midTurn = paneTurnInProgress(findAgentTmuxTarget(agent.id));
+    const paneTarget = findAgentTmuxTarget(agent.id);
+    const midTurn = paneTurnInProgress(paneTarget);
+    // Messages that arrived during a turn are handled just after it ends. Checking in that
+    // window mistakes normal lag for deafness (Sonnet C, 2026-09-25: flagged the same minute
+    // its turn ended, drained its queue unaided 80s later). Give it a few minutes first.
+    const sinceTurn = paneMinutesSinceTurnEnded(paneTarget);
+    const justFinished = sinceTurn !== null && sinceTurn < 5;
     if (pendingAge > DEAF_THRESHOLD && !midTurn) {
       fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
     } else if (((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
@@ -495,7 +501,7 @@ async function checkDeafAgents() {
             // long-turn false alarm and still catches real deafness, which shows up as idle with
             // messages waiting. (The 'pending' branch above is unaffected: a mid-turn agent with
             // nothing polling at all is real, and the stale-heartbeat check handles it.)
-            && !midTurn) {
+            && !midTurn && !justFinished) {
       fault = `WATCHER NOT WAKING IT — ${stuckDelivered.length} message(s) delivered but unacked, oldest ${Math.round(deliveredAge / 60000)}m. Something polls (so it looks healthy) but the agent is never re-invoked: typically a shell/nohup/run_in_background watcher instead of the Monitor tool.`;
     }
 
@@ -539,6 +545,27 @@ function paneTurnInProgress(target) {
     return /\u2026\s*\(\d+[ms]/.test(tail);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Minutes since the agent's last turn ended, from Claude Code's "… · done HH:MM" line, or null if
+ * there isn't one on screen. HH:MM is local time; a time later than now means it was yesterday.
+ */
+function paneMinutesSinceTurnEnded(target, now = new Date()) {
+  if (!target) return null;
+  try {
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return null;
+    const hits = [...(r.stdout || '').matchAll(/\bdone (\d{1,2}):(\d{2})\b/g)];
+    if (!hits.length) return null;
+    const [, hh, mm] = hits[hits.length - 1];
+    const t = new Date(now);
+    t.setHours(Number(hh), Number(mm), 0, 0);
+    if (t > now) t.setDate(t.getDate() - 1);
+    return (now - t) / 60000;
+  } catch {
+    return null;
   }
 }
 
