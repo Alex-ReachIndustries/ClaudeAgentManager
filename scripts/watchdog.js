@@ -492,6 +492,8 @@ async function checkDeafAgents() {
     // its turn ended, drained its queue unaided 80s later). Give it a few minutes first.
     const sinceTurn = paneMinutesSinceTurnEnded(paneTarget);
     const justFinished = sinceTurn !== null && sinceTurn < 5;
+    // Waiting out a usage limit is not deafness: it drains its queue itself once the limit resets.
+    if (paneWaitingOnUsageLimit(paneTarget)) continue;
     if (pendingAge > DEAF_THRESHOLD && !midTurn) {
       fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
     } else if (((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
@@ -605,6 +607,25 @@ function paneShowsUsageLimitMenu(target) {
 }
 
 /**
+ * True if the agent is sitting out a usage limit: Claude Code's "Usage limit reached · continuing
+ * shortly" footer, shown after option 2 is chosen. It resumes by itself when the limit resets, and
+ * until then it cannot poll or answer anything. Alerting on it, or queueing it reminders, only
+ * floods queues: the fleet-wide limit of 2026-09-29/30 left ~500 alerts for Cam and 27 reminders
+ * for one agent, none of them actionable.
+ */
+function paneWaitingOnUsageLimit(target) {
+  if (!target) return false;
+  try {
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return false;
+    const tail = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-4).join('\n');
+    return /Usage limit reached · continuing shortly/.test(tail);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The permission question an agent is blocked on, if one is on screen. Claude Code asks this
  * even under bypassPermissions for actions it classes as dangerous (e.g. rmdir of the agent's own
  * working directory). An unattended agent then sits there until its monitor expires and it goes
@@ -624,6 +645,21 @@ function panePermissionPrompt(target) {
     return why || 'an unspecified action';
   } catch {
     return null;
+  }
+}
+
+/**
+ * True if the agent already has an unacked re-arm reminder from the watchdog. One is enough: it
+ * reads it when its turn ends, and adding another every cooldown only stacks up duplicates.
+ */
+async function hasUnackedReminder(agentId) {
+  try {
+    const d = await fetchJSON(`${SERVER_URL}/api/agents/${agentId}/messages`);
+    const msgs = Array.isArray(d) ? d : (d.data || []);
+    return msgs.some((m) => !m.acknowledged_at && m.source_peer_name === 'watchdog'
+      && String(m.content || '').includes('You have not heartbeated'));
+  } catch {
+    return false; // can't tell: better one duplicate than a missed reminder
   }
 }
 
@@ -671,6 +707,8 @@ async function checkWedgedAgents() {
 
     // Always answer the menu (above); only the log line and the alert are rate-limited.
     if (!action && !stale) continue;
+    // A stale heartbeat while it waits out a usage limit is expected, and it resumes unaided.
+    if (!action && paneWaitingOnUsageLimit(target)) continue;
     if (coolingDown) continue;
     if (prompt) {
       logAgent(agent.id, `WEDGED: waiting at permission prompt: ${prompt}`);
@@ -685,7 +723,7 @@ async function checkWedgedAgents() {
     // update response), and while it sits pending it also stops the backend's 30-minute archive sweep
     // (which skips agents with pending messages) from archiving an agent that is actively working.
     // Not sent for prompt/menu cases — those need a person, not a reminder.
-    if (!action && stale && agent.id !== camId) {
+    if (!action && stale && agent.id !== camId && !(await hasUnackedReminder(agent.id))) {
       try {
         await postJSON(`${SERVER_URL}/api/agents/${agent.id}/messages`, {
           content: `[WATCHDOG] You have not heartbeated for ${Math.round(age / 60000)} minutes, so your message watcher is not polling — most likely your Monitor hit its 30-minute limit during a long turn. No need to stop what you are doing. When your current turn ends, re-arm it with the Monitor tool (timeout_ms 1800000, deliver=true URL from session-connect step 7) and check your pane footer says 'monitor'.`,
