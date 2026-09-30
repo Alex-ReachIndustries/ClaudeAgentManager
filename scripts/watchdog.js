@@ -468,7 +468,11 @@ async function checkDeafAgents() {
     // Ignore system-sourced messages: they are deliberately never delivered to the watcher.
     // And ignore anything already acknowledged — an agent can ack via the update-response path
     // without delivered_at ever being set, which is NOT a fault (it looked like one to me once).
-    const real = messages.filter((m) => m.source !== 'system' && !m.acknowledged_at);
+    // Also ignore the watchdog's own re-arm reminders: checkWedgedAgents queues one precisely when an
+    // agent is not polling and has already alerted on it, so counting it here reported every stale
+    // agent twice (the "1 message(s) still 'pending'" alerts of 2026-09-30 were all reminders).
+    const real = messages.filter((m) => m.source !== 'system' && !m.acknowledged_at
+      && m.source_peer_name !== 'watchdog');
 
     const oldest = (list) => list.reduce((acc, m) => {
       const t = parseTimestamp(m.delivered_at || m.created_at);
@@ -618,8 +622,19 @@ function paneWaitingOnUsageLimit(target) {
   try {
     const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
     if (r.status !== 0) return false;
-    const tail = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-4).join('\n');
-    return /Usage limit reached · continuing shortly/.test(tail);
+    // The wording varies: a footer ("Usage limit reached · continuing shortly"), a transcript line
+    // ("● Usage limit reached · continuing automatically at 2pm") and a tool-result line ("You've
+    // hit your session limit · resets 2pm"). The footer-only match missed the 2026-09-30 10:31-14:00
+    // limit and let ~90 alerts through. So: waiting if the latest limit line on screen is a
+    // 'reached' one. Resuming prints "Usage limit reset · continuing automatically" after it.
+    const lines = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-40);
+    let reached = -1;
+    let reset = -1;
+    lines.forEach((l, i) => {
+      if (/Usage limit reached|hit your (session|usage) limit/.test(l)) reached = i;
+      if (/Usage limit reset/.test(l)) reset = i;
+    });
+    return reached >= 0 && reached > reset;
   } catch {
     return false;
   }

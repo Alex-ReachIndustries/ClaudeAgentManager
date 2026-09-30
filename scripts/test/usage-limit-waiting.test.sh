@@ -7,8 +7,10 @@ S=cmtest-waiting
 FOOT='\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf \n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n'
 tmux kill-session -t $S 2>/dev/null
 tmux new-session -d -s $S -n aaaa0001 "printf '$FOOT  \xe2\x9a\xa0 Usage limit reached \xc2\xb7 continuing shortly \xc2\xb7 esc to cancel\n  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on\n'; sleep 30"
-tmux new-window -t $S -n aaaa0002 "printf 'Usage limit reached \xc2\xb7 continuing shortly\n'; for i in \$(seq 1 20); do echo work \$i; done; printf '$FOOT  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on \xc2\xb7 1 monitor\n'; sleep 30"
+tmux new-window -t $S -n aaaa0002 "printf 'Usage limit reached \xc2\xb7 continuing shortly\n\xe2\x97\x8f Usage limit reset \xc2\xb7 continuing automatically\n'; for i in \$(seq 1 20); do echo work \$i; done; printf '$FOOT  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on \xc2\xb7 1 monitor\n'; sleep 30"
 tmux new-window -t $S -n aaaa0003 "printf '\xe2\x97\x8f Fixing the rate limit handling in the API client\n$FOOT  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on \xc2\xb7 1 monitor\n'; sleep 30"
+tmux new-window -t $S -n aaaa0005 "printf '\xe2\x97\x8f Usage limit reached \xc2\xb7 continuing automatically at 2pm \xc2\xb7 esc or type to cancel\n  \xe2\x8e\xbf  You\x27ve hit your session limit \xc2\xb7 resets 2pm (Europe/London)\n$FOOT  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on\n'; sleep 30"
+tmux new-window -t $S -n aaaa0006 "printf '\xe2\x8e\xbf  You\x27ve hit your session limit \xc2\xb7 resets 2pm\n\xe2\x97\x8f Usage limit reset \xc2\xb7 continuing automatically\n\xe2\x9c\xbb Working\xe2\x80\xa6 (12s)\n$FOOT  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on\n'; sleep 30"
 tmux new-window -t $S -n aaaa0004 "printf '$FOOT  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on \xc2\xb7 1 shell\n'; sleep 30"
 sleep 1
 node -e "
@@ -17,7 +19,9 @@ $(sed -n '/^function findAgentTmuxTarget/,/^}/p' scripts/watchdog.js)
 $(sed -n '/^function paneWaitingOnUsageLimit/,/^}/p' scripts/watchdog.js)
 const cases=[
   ['waiting out a usage limit','aaaa0001',true],
-  ['old banner scrolled away, now working','aaaa0002',false],
+  ['limit reset, now working','aaaa0002',false],
+  ['new wording: transcript line, continuing automatically at 2pm','aaaa0005',true],
+  ['new wording, then reset','aaaa0006',false],
   ['agent merely talking about rate limits','aaaa0003',false],
   ['ordinary idle pane','aaaa0004',false],
   ['no pane at all',null,false]];
