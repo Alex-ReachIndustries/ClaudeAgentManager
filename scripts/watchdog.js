@@ -76,6 +76,14 @@ const recentRestarts = new Map();
 
 // Per-agent deaf-alert cooldown: agentId -> timestamp of last alert
 const deafAlerts = new Map();
+// Auto-nudge (approved by Alex 2026-10-02): an idle agent with a healthy Monitor whose event did
+// not wake it (KB 455 fault 5, a Claude Code turn-end race). Two agreeing checks >=55s apart,
+// then one typed line, at most once per AUTO_NUDGE_COOLDOWN per agent.
+const AUTO_NUDGE_COOLDOWN = 30 * 60 * 1000;
+const AUTO_NUDGE_CONFIRM_GAP = 55 * 1000;
+const AUTO_NUDGE_MIN_IDLE_MIN = 5;
+const nudgeCandidates = new Map(); // agentId -> { since, ids }
+const lastNudges = new Map();      // agentId -> timestamp
 
 // Per-agent wedge-alert cooldown: agentId -> timestamp of last alert
 const wedgeAlerts = new Map();
@@ -455,7 +463,9 @@ async function checkDeafAgents() {
     if (!isActiveStatus(agent.status)) continue;
 
     const lastAlert = deafAlerts.get(agent.id) || 0;
-    if (Date.now() - lastAlert < DEAF_ALERT_COOLDOWN) continue;
+    const alertCoolingDown = Date.now() - lastAlert < DEAF_ALERT_COOLDOWN;
+    // The auto-nudge needs every agent checked each minute (its two sightings are a minute apart),
+    // so the alert cooldown is applied at the alert, not here.
 
     let messages;
     try {
@@ -497,7 +507,12 @@ async function checkDeafAgents() {
     const sinceTurn = paneMinutesSinceTurnEnded(paneTarget);
     const justFinished = sinceTurn !== null && sinceTurn < 5;
     // Waiting out a usage limit is not deafness: it drains its queue itself once the limit resets.
-    if (paneWaitingOnUsageLimit(paneTarget)) continue;
+    if (paneWaitingOnUsageLimit(paneTarget)) { nudgeCandidates.delete(agent.id); continue; }
+
+    if (paneTarget && await maybeAutoNudge(agent, camId, paneTarget, stuckDelivered, deliveredAge, midTurn, sinceTurn)) {
+      deafAlerts.set(agent.id, Date.now()); // the nudge report replaces the deaf alert
+      continue;
+    }
     if (pendingAge > DEAF_THRESHOLD && !midTurn) {
       fault = `NO WATCHER POLLING — ${stuckPending.length} message(s) still 'pending', oldest ${Math.round(pendingAge / 60000)}m. Nothing is calling the deliver endpoint, so its Monitor has expired and was never re-armed.`;
     } else if (((stuckDelivered.length >= 2 && deliveredAge > DEAF_THRESHOLD)
@@ -511,7 +526,7 @@ async function checkDeafAgents() {
       fault = `WATCHER NOT WAKING IT — ${stuckDelivered.length} message(s) delivered but unacked, oldest ${Math.round(deliveredAge / 60000)}m. Something polls (so it looks healthy) but the agent is never re-invoked: typically a shell/nohup/run_in_background watcher instead of the Monitor tool.`;
     }
 
-    if (!fault) continue;
+    if (!fault || alertCoolingDown) continue;
 
     deafAlerts.set(agent.id, Date.now());
     logAgent(agent.id, `DEAF: ${fault}`);
@@ -535,6 +550,54 @@ async function checkDeafAgents() {
       } catch (err) { log(`Alert to Cam FAILED (${err.message}) — alerting must never break the watchdog, but it must not fail silently either`); }
     }
   }
+}
+
+/**
+ * Run the auto-nudge check for one agent and, when two sightings agree, type one line into its
+ * pane naming the unacked message ids. Returns true if it nudged. Never answers a prompt or menu:
+ * those block it (paneShowsUsageLimitMenu / panePermissionPrompt), as does any doubt.
+ */
+async function maybeAutoNudge(agent, camId, paneTarget, stuckDelivered, deliveredAge, midTurn, sinceTurn) {
+  const ids = stuckDelivered.map((m) => m.id);
+  const claudePid = findClaudePidByResumeId(agent.id);
+  const decision = autoNudgeDecision({
+    isCam: agent.id === camId,
+    midTurn,
+    sinceTurn,
+    oldestDeliveredAgeMs: deliveredAge,
+    healthyMonitor: agentHasHealthyMonitor(agent.id, claudePid),
+    blocked: paneShowsUsageLimitMenu(paneTarget) || !!panePermissionPrompt(paneTarget),
+    ids,
+    lastNudgeAt: lastNudges.get(agent.id) || 0,
+    candidate: nudgeCandidates.get(agent.id) || null,
+    now: Date.now(),
+  });
+  if (decision.action !== 'nudge') {
+    if (decision.candidate) nudgeCandidates.set(agent.id, decision.candidate);
+    else nudgeCandidates.delete(agent.id);
+    return false;
+  }
+
+  nudgeCandidates.delete(agent.id);
+  lastNudges.set(agent.id, Date.now());
+  // Leading separator: the input box may already hold text (the launcher's rate-limit line has
+  // been seen there), and send-keys appends to it.
+  const text = ` — watchdog: you have ${ids.length} delivered-but-unacked message(s) (ids ${ids.join(', ')}). Your Monitor fired but you were not woken. Fetch messages?status=delivered, ack and act.`;
+  spawnSync('tmux', ['send-keys', '-t', paneTarget, '-l', text], { timeout: 5000 });
+  spawnSync('tmux', ['send-keys', '-t', paneTarget, 'Enter'], { timeout: 5000 });
+  logAgent(agent.id, `AUTO-NUDGE: typed a read-your-messages line into ${paneTarget} for ids ${ids.join(', ')}`);
+
+  if (camId && camId !== agent.id) {
+    try {
+      await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
+        content: `[WATCHDOG] AUTO-NUDGED ${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)}): idle ${Math.round(sinceTurn)}m with a healthy Monitor but ${ids.length} unacked message(s) (ids ${ids.join(', ')}, oldest ${Math.round(deliveredAge / 60000)}m). Typed one read-your-messages line into ${paneTarget}. No action needed unless it is still unacked in 10 minutes.`,
+        priority: 5,
+        source: 'agent',
+        source_peer_name: 'watchdog',
+      });
+    } catch (err) { log(`Auto-nudge report to Cam FAILED (${err.message})`); }
+  }
+  return true;
 }
 
 /**
@@ -608,6 +671,51 @@ function paneShowsUsageLimitMenu(target) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Pure decision for the auto-nudge. Returns { action: 'none' | 'arm' | 'nudge', candidate }.
+ * 'arm' records the first sighting; 'nudge' needs a second sighting at least confirmGap later
+ * with at least one of the same messages still unacked. Every safeguard must hold each time.
+ */
+function autoNudgeDecision(f) {
+  const ok = !f.isCam && !f.midTurn && f.sinceTurn !== null && f.sinceTurn >= AUTO_NUDGE_MIN_IDLE_MIN
+    && f.oldestDeliveredAgeMs > DEAF_THRESHOLD && f.healthyMonitor && !f.blocked
+    && f.ids.length > 0 && (f.now - (f.lastNudgeAt || 0)) >= AUTO_NUDGE_COOLDOWN;
+  if (!ok) return { action: 'none', candidate: null };
+  const c = f.candidate;
+  const overlaps = c && f.ids.some((id) => c.ids.includes(id));
+  if (overlaps && f.now - c.since >= AUTO_NUDGE_CONFIRM_GAP) return { action: 'nudge', candidate: null };
+  if (overlaps) return { action: 'none', candidate: c }; // armed, waiting for the confirm gap
+  // No sighting yet, or the one we had is stale (those messages were acked): start over.
+  return { action: 'arm', candidate: { since: f.now, ids: f.ids } };
+}
+
+/**
+ * True if a deliver=true poller for this agent is a real Monitor: a direct child of the agent's
+ * claude process whose stdout is a socket. A shell (run_in_background) writes to a file and a
+ * nohup orphan is parented by systemd; neither counts. Used to tell fault 5 (healthy Monitor,
+ * agent not woken) apart from a broken watcher, which a nudge-to-read would not fix.
+ */
+function agentHasHealthyMonitor(agentId, claudePid) {
+  if (!IS_LINUX || !agentId || !claudePid) return false;
+  try {
+    for (const pid of fs.readdirSync('/proc').filter((p) => /^\d+$/.test(p))) {
+      let cmd;
+      try { cmd = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } catch { continue; }
+      if (!cmd.includes('deliver=true') || !cmd.includes(agentId)) continue;
+      let ppid, out;
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+        ppid = parseInt(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1], 10);
+        out = fs.readlinkSync(`/proc/${pid}/fd/1`);
+      } catch { continue; }
+      if (ppid === claudePid && out.startsWith('socket:')) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 /**
