@@ -194,6 +194,24 @@ export function getEntry(id: number): Record<string, unknown> | undefined {
   return mapEntry(row);
 }
 
+/** Approved + pending entries by id, for search-by-id. No hit_count bump (search, not a read). */
+export function getEntriesByIds(ids: number[]): { id: number; title: string; body: string; status: string; tags: string[]; systems: string[] }[] {
+  if (ids.length === 0) return [];
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT id, title, body, status, tags, systems FROM knowledge_entries
+    WHERE id IN (${ids.map(() => "?").join(",")}) AND status IN ('approved','pending')
+  `).all(...ids) as Record<string, unknown>[];
+  const byId = new Map(rows.map((r) => [Number(r.id), r]));
+  return ids.filter((id) => byId.has(id)).map((id) => {
+    const r = byId.get(id)!;
+    return {
+      id, title: String(r.title ?? ""), body: String(r.body ?? ""), status: String(r.status ?? ""),
+      tags: parseArr(r.tags), systems: parseArr(r.systems),
+    };
+  });
+}
+
 /** Approved + pending entries that already have an embedding, for vector search. */
 export function listEntriesForVector(): VectorEntry[] {
   const db = getDb();

@@ -3,7 +3,7 @@
 // ~50/50. Pending entries are included but carry their status so callers can flag
 // them as unverified. Falls back to FTS-only while the embedding model is warming up.
 import { embed, embeddingsReady, cosine } from "./embeddings.js";
-import { searchFTS, listEntriesForVector, listProfilesForVector, makeSnippet, FtsHit } from "./store.js";
+import { searchFTS, listEntriesForVector, listProfilesForVector, makeSnippet, FtsHit, getEntriesByIds } from "./store.js";
 import { logger } from "../logger.js";
 
 export interface SearchResult {
@@ -39,12 +39,46 @@ function normalize(values: number[]): (v: number) => number {
   return (v: number) => (v - min) / (max - min);
 }
 
+/**
+ * Knowledge-entry ids the query explicitly references. Agents cite entries as "[455]", and
+ * search for them as "KB 154", "kb 126", "id:270", "#455" or a bare "455" — none of which
+ * semantic search can match (7 of the last 34 zero-hit searches, 2026-10-06). A bare number
+ * counts only when it is the whole query, so "port 3001" or "PR 2094" don't resolve to entries.
+ */
+export function referencedEntryIds(query: string): number[] {
+  const q = query.trim();
+  const ids: number[] = [];
+  const whole = q.match(/^#?\[?(\d{1,7})\]?$/);
+  if (whole) ids.push(Number(whole[1]));
+  // "#N" only counts as the whole query (above): in text it is usually a PR/issue ("PR #2094").
+  for (const m of q.matchAll(/(?:\b(?:kb|id|entry)\s*[-:#]?\s*|\[)(\d{1,7})\]?/gi)) ids.push(Number(m[1]));
+  return [...new Set(ids)].filter((n) => n > 0);
+}
+
 export async function hybridSearch(
   query: string,
   opts: { type?: "all" | "knowledge" | "profile"; limit?: number } = {}
 ): Promise<SearchResult[]> {
   const type = opts.type ?? "all";
   const limit = opts.limit ?? 8;
+
+  // Exact id references come first, as certain hits (sim 1 so callers' relevance checks pass).
+  const byId: SearchResult[] = type === "profile" ? [] : getEntriesByIds(referencedEntryIds(query)).map((e) => ({
+    id: e.id, type: "knowledge" as const, title: e.title, snippet: makeSnippet(e.body), status: e.status,
+    score: 1, sim: 1, kw: true, tags: e.tags, systems: e.systems,
+  }));
+  if (byId.length) {
+    const rest = (await hybridSearchInner(query, type, limit)).filter((r) => !(r.type === "knowledge" && byId.some((b) => b.id === r.id)));
+    return [...byId, ...rest].slice(0, limit);
+  }
+  return hybridSearchInner(query, type, limit);
+}
+
+async function hybridSearchInner(
+  query: string,
+  type: "all" | "knowledge" | "profile",
+  limit: number
+): Promise<SearchResult[]> {
   const acc = new Map<string, Acc>();
   const key = (t: string, id: number) => `${t}:${id}`;
 
