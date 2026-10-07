@@ -195,7 +195,7 @@ for pr in prs:
 done
 \`\`\`
 
-Set \`timeout_ms\` to the max (1800000) on this Monitor. There is no persistent option — **it dies after 30 minutes and you must re-arm it the moment the expiry notice arrives**, even if you are idle with nothing else to do. On each notification:
+Set \`timeout_ms\` to the max (1800000) on this Monitor. There is no persistent option — **it dies after 30 minutes and you must re-arm it the moment the expiry notice arrives**, even if you are idle with nothing else to do — and **never stop re-arming because it has been quiet**: hours of silent windows are normal, and an agent that stops after a few has made itself deaf to the message it is waiting for. On each notification:
 
 - **SIGNAL** — agent posted a notable dashboard update. Check their full updates and act (review, nudge, reassign).
 - **TERMINAL** — shows what the agent is actually doing in their terminal. Verify they are working on the right task.
