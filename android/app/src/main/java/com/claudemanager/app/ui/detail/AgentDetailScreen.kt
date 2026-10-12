@@ -731,12 +731,12 @@ private fun AgentMetricsPanel(
         val effortOptions = listOf("low" to "Low", "medium" to "Medium", "high" to "High")
         val modelOptions = listOf(
             "claude-haiku-4-5" to "Haiku 4.5",
-            "claude-sonnet-5" to "Sonnet 5",
+            "claude-sonnet-5-5" to "Sonnet 5.5",
             "claude-opus-5-5" to "Opus 5.5",
             "claude-fable-5-1" to "Fable 5.1"
         )
         var selectedEffort by remember(agent.effort) { mutableStateOf(agent.effort ?: "high") }
-        var selectedModel by remember(agent.model) { mutableStateOf(agent.model ?: "claude-sonnet-5") }
+        var selectedModel by remember(agent.model) { mutableStateOf(agent.model ?: "claude-sonnet-5-5") }
         var effortExpanded by remember { mutableStateOf(false) }
         var modelExpanded by remember { mutableStateOf(false) }
 

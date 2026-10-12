@@ -194,7 +194,7 @@ export const projectCreateSchema = z.object({
   pm_effort: z.enum(["low", "medium", "high"]).default("high"),
   pm_model: z.string().max(100).default("claude-opus-5-5"),
   agent_effort: z.enum(["low", "medium", "high"]).default("high"),
-  agent_model: z.string().max(100).default("claude-sonnet-5"),
+  agent_model: z.string().max(100).default("claude-sonnet-5-5"),
 });
 
 // --- Project update (POST /projects/:id/updates) ---

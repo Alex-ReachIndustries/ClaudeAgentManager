@@ -440,13 +440,13 @@ private fun CreateProjectDialog(
     var showFolderPicker by remember { mutableStateOf(false) }
     var pmRole by remember { mutableStateOf("") }
     var pmEffort by remember { mutableStateOf("high") }
-    var pmModel by remember { mutableStateOf("claude-sonnet-5") }
+    var pmModel by remember { mutableStateOf("claude-sonnet-5-5") }
     var agentEffort by remember { mutableStateOf("high") }
-    var agentModel by remember { mutableStateOf("claude-sonnet-5") }
+    var agentModel by remember { mutableStateOf("claude-sonnet-5-5") }
     val effortOptions = listOf("low", "medium", "high")
     val modelOptions = listOf(
         "claude-haiku-4-5" to "Haiku 4.5",
-        "claude-sonnet-5" to "Sonnet 5",
+        "claude-sonnet-5-5" to "Sonnet 5.5",
         "claude-opus-5-5" to "Opus 5.5",
         "claude-fable-5-1" to "Fable 5.1"
     )

@@ -41,7 +41,7 @@ function AgentDetail() {
   const [roleInput, setRoleInput] = useState('');
   const [savingRole, setSavingRole] = useState(false);
   const [effortInput, setEffortInput] = useState('high');
-  const [modelInput, setModelInput] = useState('claude-sonnet-5');
+  const [modelInput, setModelInput] = useState('claude-sonnet-5-5');
   const [savingSettings, setSavingSettings] = useState(false);
   const [wtWindowInput, setWtWindowInput] = useState('');
   const [savingWtWindow, setSavingWtWindow] = useState(false);
@@ -79,7 +79,7 @@ function AgentDetail() {
     if (agent) {
       setRoleInput(agent.role ?? '');
       setEffortInput(agent.effort ?? 'high');
-      setModelInput(agent.model ?? 'claude-sonnet-5');
+      setModelInput(agent.model ?? 'claude-sonnet-5-5');
       setWtWindowInput(agent.wt_window ?? '');
     }
   }, [agent?.role, agent?.effort, agent?.model, agent?.wt_window]);
@@ -463,7 +463,7 @@ function AgentDetail() {
                   className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5 text-sm text-dark-200 focus:outline-none focus:border-dark-600"
                 >
                   <option value="claude-haiku-4-5">Haiku 4.5</option>
-                  <option value="claude-sonnet-5">Sonnet 5</option>
+                  <option value="claude-sonnet-5-5">Sonnet 5.5</option>
                   <option value="claude-opus-5-5">Opus 5.5</option>
                 <option value="claude-fable-5-1">Fable 5.1</option>
                 </select>

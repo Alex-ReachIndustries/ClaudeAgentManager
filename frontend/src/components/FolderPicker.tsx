@@ -30,7 +30,7 @@ const EFFORT_OPTIONS = [
 
 const MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
   { value: 'claude-opus-5-5', label: 'Opus 5.5' },
   { value: 'claude-fable-5-1', label: 'Fable 5.1' },
 ];
@@ -52,7 +52,7 @@ function FolderPicker({ isOpen, onClose, onSelect }: FolderPickerProps) {
   const [customRole, setCustomRole] = useState('');
   const [task, setTask] = useState('');
   const [effort, setEffort] = useState('high');
-  const [model, setModel] = useState('claude-sonnet-5');
+  const [model, setModel] = useState('claude-sonnet-5-5');
   const [wtWindows, setWtWindows] = useState<string[]>([]);
   const [selectedWindow, setSelectedWindow] = useState('');
   const [customWindow, setCustomWindow] = useState('');
@@ -72,7 +72,7 @@ function FolderPicker({ isOpen, onClose, onSelect }: FolderPickerProps) {
     setCustomRole('');
     setSelectedRoleId('__custom__');
     setEffort('high');
-    setModel('claude-sonnet-5');
+    setModel('claude-sonnet-5-5');
     setSelectedWindow('');
     setCustomWindow('');
     Promise.all([

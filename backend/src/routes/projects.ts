@@ -716,7 +716,7 @@ router.post("/:id/spawn-agent", validate(spawnAgentSchema), (req: Request, res: 
     };
 
     const maxEffort = (project.agent_effort as string) || "high";
-    const maxModel = (project.agent_model as string) || "claude-sonnet-5";
+    const maxModel = (project.agent_model as string) || "claude-sonnet-5-5";
 
     const resolvedEffort = requestedEffort
       ? effortOrder.indexOf(requestedEffort) <= effortOrder.indexOf(maxEffort)

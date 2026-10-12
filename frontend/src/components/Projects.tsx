@@ -247,7 +247,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
   const [pmEffort, setPmEffort] = useState('high');
   const [pmModel, setPmModel] = useState('claude-opus-5-5');
   const [agentEffort, setAgentEffort] = useState('high');
-  const [agentModel, setAgentModel] = useState('claude-sonnet-5');
+  const [agentModel, setAgentModel] = useState('claude-sonnet-5-5');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -373,7 +373,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
               <select value={pmModel} onChange={e => setPmModel(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
                 <option value="claude-haiku-4-5">Haiku 4.5</option>
-                <option value="claude-sonnet-5">Sonnet 5</option>
+                <option value="claude-sonnet-5-5">Sonnet 5.5</option>
                 <option value="claude-opus-5-5">Opus 5.5</option>
                 <option value="claude-fable-5-1">Fable 5.1</option>
               </select>
@@ -392,7 +392,7 @@ function CreateProjectDialog({ onClose, onCreated, navigate }: CreateDialogProps
               <select value={agentModel} onChange={e => setAgentModel(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-dark-200 focus:outline-none focus:border-lumi-500">
                 <option value="claude-haiku-4-5">Haiku 4.5</option>
-                <option value="claude-sonnet-5">Sonnet 5</option>
+                <option value="claude-sonnet-5-5">Sonnet 5.5</option>
                 <option value="claude-opus-5-5">Opus 5.5</option>
                 <option value="claude-fable-5-1">Fable 5.1</option>
               </select>

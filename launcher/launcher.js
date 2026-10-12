@@ -65,20 +65,23 @@ const MODEL_DEFAULTS = {
   // Short family aliases (preferred for new agents stored in DB)
   'fable':   'claude-fable-5-1',
   'opus':    'claude-opus-5-5',
-  'sonnet':  'claude-sonnet-5',
+  'sonnet':  'claude-sonnet-5-5',
   'haiku':   'claude-haiku-4-5',
   // claude- prefixed family aliases
   'claude-fable':  'claude-fable-5-1',
   'claude-opus':   'claude-opus-5-5',
-  'claude-sonnet': 'claude-sonnet-5',
+  'claude-sonnet': 'claude-sonnet-5-5',
   'claude-haiku':  'claude-haiku-4-5',
   // Legacy pinned versions — auto-upgrade to the current release in that family.
   'claude-opus-4-5':  'claude-opus-5-5',
   'claude-opus-4-6':  'claude-opus-5-5',
   'claude-opus-4-7':  'claude-opus-5-5',
   'claude-opus-4-8':  'claude-opus-5-5',
-  'claude-sonnet-4-5': 'claude-sonnet-5',
-  'claude-sonnet-4-6': 'claude-sonnet-5',
+  'claude-sonnet-4-5': 'claude-sonnet-5-5',
+  'claude-sonnet-4-6': 'claude-sonnet-5-5',
+  // Sonnet 5.5 supersedes Sonnet 5; the CLI 'sonnet' alias already resolves to it
+  // (verified 2026-10-12 on Claude Code 2.1.290). Stored claude-sonnet-5 pins map forward.
+  'claude-sonnet-5': 'claude-sonnet-5-5',
   // Haiku 4.5 predates the 4.6 generation, so BOTH forms are valid: the dated snapshot
   // 'claude-haiku-4-5-20251001' is the pinned Claude API ID and 'claude-haiku-4-5' is its
   // alias. We use the alias (verified working) and map the dated form onto it so stored rows
