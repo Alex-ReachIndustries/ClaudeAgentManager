@@ -51,7 +51,11 @@ export function referencedEntryIds(query: string): number[] {
   const whole = q.match(/^#?\[?(\d{1,7})\]?$/);
   if (whole) ids.push(Number(whole[1]));
   // "#N" only counts as the whole query (above): in text it is usually a PR/issue ("PR #2094").
-  for (const m of q.matchAll(/(?:\b(?:kb|id|entry)\s*[-:#]?\s*|\[)(\d{1,7})\]?/gi)) ids.push(Number(m[1]));
+  // In running text: "KB 455", "kb591", "entry 12", "id:270" / "id #270" (a bare "id 123" is too
+  // often a frame/job id), and "[455]" only with its closing bracket — "[86.996, …]" is a coordinate.
+  for (const m of q.matchAll(/(?:\b(?:kb|entry)\s*[-:#]?\s*|\bid\s*[:#]\s*)(\d{1,7})\b|\[(\d{1,7})\](?![\d.])/gi)) {
+    ids.push(Number(m[1] ?? m[2]));
+  }
   return [...new Set(ids)].filter((n) => n > 0);
 }
 
