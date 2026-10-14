@@ -3,7 +3,7 @@
 // ~50/50. Pending entries are included but carry their status so callers can flag
 // them as unverified. Falls back to FTS-only while the embedding model is warming up.
 import { embed, embeddingsReady, cosine } from "./embeddings.js";
-import { searchFTS, listEntriesForVector, listProfilesForVector, makeSnippet, FtsHit, getEntriesByIds } from "./store.js";
+import { searchFTS, listEntriesForVector, listProfilesForVector, makeSnippet, makeRule, FtsHit, getEntriesByIds } from "./store.js";
 import { logger } from "../logger.js";
 
 export interface SearchResult {
@@ -11,7 +11,9 @@ export interface SearchResult {
   type: "knowledge" | "profile";
   title: string;
   snippet: string;
+  rule: string;       // first non-empty body line, ≤300 chars (entries are written rule-first)
   status: string;
+  idMatch?: boolean;  // true when the query referenced this entry by id (exact, certain hit)
   score: number;      // normalized 0-1 blend, for ranking/display (relative to this result set)
   sim: number;        // RAW vector cosine (absolute, comparable across queries); 0 if vector not used
   kw: boolean;        // true if this result matched the keyword (FTS) index
@@ -24,6 +26,7 @@ interface Acc {
   type: "knowledge" | "profile";
   title: string;
   snippet: string;
+  rule: string;
   status: string;
   tags: string[];
   systems: string[];
@@ -61,15 +64,18 @@ export function referencedEntryIds(query: string): number[] {
 
 export async function hybridSearch(
   query: string,
-  opts: { type?: "all" | "knowledge" | "profile"; limit?: number } = {}
+  // resolveIds:false disables id resolution — for free text that isn't a search (auto-surfacing
+  // a relayed message), where "[12]" or "KB 12" must not pull entry 12 in as a certain hit.
+  opts: { type?: "all" | "knowledge" | "profile"; limit?: number; resolveIds?: boolean } = {}
 ): Promise<SearchResult[]> {
   const type = opts.type ?? "all";
   const limit = opts.limit ?? 8;
+  if (opts.resolveIds === false) return hybridSearchInner(query, type, limit);
 
   // Exact id references come first, as certain hits (sim 1 so callers' relevance checks pass).
   const byId: SearchResult[] = type === "profile" ? [] : getEntriesByIds(referencedEntryIds(query)).map((e) => ({
-    id: e.id, type: "knowledge" as const, title: e.title, snippet: makeSnippet(e.body), status: e.status,
-    score: 1, sim: 1, kw: true, tags: e.tags, systems: e.systems,
+    id: e.id, type: "knowledge" as const, title: e.title, snippet: makeSnippet(e.body), rule: makeRule(e.body),
+    status: e.status, idMatch: true, score: 1, sim: 1, kw: true, tags: e.tags, systems: e.systems,
   }));
   if (byId.length) {
     const rest = (await hybridSearchInner(query, type, limit)).filter((r) => !(r.type === "knowledge" && byId.some((b) => b.id === r.id)));
@@ -90,7 +96,7 @@ async function hybridSearchInner(
   const ftsHits: FtsHit[] = searchFTS(query, { type, limit: Math.max(limit * 3, 24) });
   for (const h of ftsHits) {
     acc.set(key(h.type, h.id), {
-      id: h.id, type: h.type, title: h.title, snippet: h.snippet, status: h.status,
+      id: h.id, type: h.type, title: h.title, snippet: h.snippet, rule: h.rule, status: h.status,
       tags: h.tags, systems: h.systems, fts: h.ftsScore, vec: 0,
     });
   }
@@ -108,7 +114,7 @@ async function hybridSearchInner(
           if (existing) { existing.vec = Math.max(existing.vec, sim); }
           else {
             acc.set(k, {
-              id: e.id, type: "knowledge", title: e.title, snippet: makeSnippet(e.body),
+              id: e.id, type: "knowledge", title: e.title, snippet: makeSnippet(e.body), rule: makeRule(e.body),
               status: e.status, tags: e.tags, systems: e.systems, fts: 0, vec: sim,
             });
           }
@@ -122,7 +128,7 @@ async function hybridSearchInner(
           if (existing) { existing.vec = Math.max(existing.vec, sim); }
           else {
             acc.set(k, {
-              id: p.id, type: "profile", title: p.name, snippet: makeSnippet(p.summary),
+              id: p.id, type: "profile", title: p.name, snippet: makeSnippet(p.summary), rule: makeRule(p.summary),
               status: "approved", tags: [], systems: [], fts: 0, vec: sim,
             });
           }
@@ -146,7 +152,7 @@ async function hybridSearchInner(
     // Blend 50/50 when both signals exist; otherwise lean on whichever we have.
     const score = vecUsed ? 0.5 * fN + 0.5 * vN : fN;
     return {
-      id: a.id, type: a.type, title: a.title, snippet: a.snippet, status: a.status,
+      id: a.id, type: a.type, title: a.title, snippet: a.snippet, rule: a.rule, status: a.status,
       score: Number(score.toFixed(4)),
       sim: Number(a.vec.toFixed(4)), kw: a.fts > 0,
       tags: a.tags, systems: a.systems,

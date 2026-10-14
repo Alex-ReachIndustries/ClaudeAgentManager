@@ -32,7 +32,7 @@ export function initKnowledgeSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS knowledge_pending (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       entry_id INTEGER REFERENCES knowledge_entries(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL DEFAULT 'new' CHECK(kind IN ('new','edit')),
+      kind TEXT NOT NULL DEFAULT 'new' CHECK(kind IN ('new','edit','retire','verify')),
       proposed_title TEXT,
       proposed_body TEXT,
       proposed_category TEXT,
@@ -157,6 +157,36 @@ export function initKnowledgeSchema(db: Database.Database): void {
   try { db.exec("ALTER TABLE kb_wanted ADD COLUMN note TEXT"); } catch { /* column exists */ }
   try { db.exec("ALTER TABLE knowledge_pending ADD COLUMN wanted_id INTEGER"); } catch { /* column exists */ }
 
+  migratePendingKinds(db);
+
+  // Peer review of pending proposals: one vote per (proposal, agent). Two agreeing votes from
+  // distinct non-proposers decide it (see knowledge/review.ts); a human decide still overrides.
+  // No FK to knowledge_pending on purpose — that table may be rebuilt by migratePendingKinds.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kb_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pending_id INTEGER NOT NULL,
+      agent TEXT NOT NULL,
+      verdict TEXT NOT NULL CHECK(verdict IN ('approve','reject')),
+      note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(pending_id, agent)
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_reviews_pending ON kb_reviews(pending_id);
+
+    -- Review requests the distribution sweep sent, so it can rate-limit per agent
+    -- (one outstanding, none within 30 min) and never ask the same agent twice.
+    CREATE TABLE IF NOT EXISTS kb_review_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pending_id INTEGER NOT NULL,
+      agent TEXT NOT NULL,
+      message_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_review_requests_agent ON kb_review_requests(agent, created_at);
+    CREATE INDEX IF NOT EXISTS idx_kb_review_requests_pending ON kb_review_requests(pending_id);
+  `);
+
   // FTS5 shadow tables (manually kept in sync by the store layer). Contentless-external
   // rowids map 1:1 to entry/profile ids.
   try {
@@ -174,4 +204,55 @@ export function initKnowledgeSchema(db: Database.Database): void {
   }
 
   logger.info("Knowledge Hub schema ready");
+}
+
+/**
+ * Widen knowledge_pending.kind's CHECK to allow the lifecycle kinds ('retire','verify').
+ * SQLite can't alter a CHECK, so the table is rebuilt once: copy every row into a new table
+ * with the widened constraint, drop the old one, rename. Idempotent — it is a no-op as soon
+ * as the stored DDL already mentions 'retire' (fresh installs get the new DDL above).
+ */
+function migratePendingKinds(db: Database.Database): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_pending'").get() as { sql: string } | undefined;
+  if (!row || row.sql.includes("'retire'")) return;
+  const cols = (db.prepare("PRAGMA table_info(knowledge_pending)").all() as { name: string }[]).map((c) => c.name);
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE knowledge_pending_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entry_id INTEGER REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL DEFAULT 'new' CHECK(kind IN ('new','edit','retire','verify')),
+          proposed_title TEXT,
+          proposed_body TEXT,
+          proposed_category TEXT,
+          proposed_tags TEXT,
+          proposed_systems TEXT,
+          proposed_source TEXT,
+          proposing_agent TEXT,
+          rationale TEXT DEFAULT '',
+          conflict_flags TEXT NOT NULL DEFAULT '[]',
+          review_flag INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','accepted','updated','rejected')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          decided_at TEXT,
+          decided_note TEXT,
+          wanted_id INTEGER
+        );
+      `);
+      const newCols = new Set((db.prepare("PRAGMA table_info(knowledge_pending_new)").all() as { name: string }[]).map((c) => c.name));
+      const copy = cols.filter((c) => newCols.has(c)).join(", ");
+      db.exec(`
+        INSERT INTO knowledge_pending_new (${copy}) SELECT ${copy} FROM knowledge_pending;
+        DROP TABLE knowledge_pending;
+        ALTER TABLE knowledge_pending_new RENAME TO knowledge_pending;
+        CREATE INDEX IF NOT EXISTS idx_pending_status ON knowledge_pending(status);
+      `);
+    })();
+    logger.info("knowledge_pending rebuilt: kind now allows 'retire' and 'verify'");
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
 }
