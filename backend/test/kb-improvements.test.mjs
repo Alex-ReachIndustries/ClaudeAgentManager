@@ -312,7 +312,7 @@ ok(/don't exist|none of the ids/i.test(r.json?.kbReminder ?? ""), "KB: [nonexist
 const an2 = (await api("GET", "/api/kb/analytics?days=1")).json;
 ok(an2?.uptake?.citation_rate > 0 && an2?.uptake?.kb_line_rate >= an2?.uptake?.citation_rate, "analytics citation_rate counts valid KB: [ids]", an2?.uptake);
 ok(an2?.uptake?.inline_suppressed >= 1 && an2?.window_totals?.inline_suppressed >= 1, "analytics reports inline_suppressed savings");
-ok(an2?.thresholds?.hit_min_sim === 0.68 && an2?.thresholds?.weak_max_sim > 0.68, "hit floor 0.68, weak band sits above it", an2?.thresholds);
+ok(an2?.thresholds?.hit_min_sim === 0.60 && an2?.thresholds?.weak_max_sim > 0.60, "hit floor 0.60, weak band sits above it", an2?.thresholds);
 
 // ── 10. Search: rule + relevance + gap + min_sim ───────────────────────────
 section("search: rule, relevance, gap, min_sim");
