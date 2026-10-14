@@ -351,6 +351,8 @@ export interface KbSearchResult {
   type: 'knowledge' | 'profile';
   title: string;
   snippet: string;
+  rule?: string;
+  relevance?: 'strong' | 'weak';
   status: string;
   score: number;
   tags: string[];
@@ -360,6 +362,7 @@ export interface KbSearchResponse {
   query: string;
   type: string;
   embeddingsReady: boolean;
+  gap?: boolean;
   results: KbSearchResult[];
 }
 export interface KbStats {
@@ -549,9 +552,12 @@ export function subscribeKnowledgePending(
   const handler = (e: MessageEvent) => {
     try { onPending(JSON.parse(e.data)); } catch { /* ignore */ }
   };
+  // 'knowledge-decided' fires when peer review decides an item; subscribers just refresh.
   es.addEventListener('knowledge-pending', handler);
+  es.addEventListener('knowledge-decided', handler);
   return () => {
     es.removeEventListener('knowledge-pending', handler);
+    es.removeEventListener('knowledge-decided', handler);
     es.close();
   };
 }

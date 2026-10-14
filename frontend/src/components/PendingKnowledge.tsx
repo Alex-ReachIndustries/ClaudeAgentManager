@@ -145,6 +145,14 @@ function PendingCard({ row, busy, onAccept, onUpdate, onReject }: {
   const conflicts: any[] = Array.isArray(row.conflict_flags) ? row.conflict_flags : [];
   const hasConflicts = conflicts.length > 0;
   const isEdit = row.kind === 'edit';
+  // Lifecycle reviews (retire/verify) act on an existing entry and carry no proposed content.
+  const isLifecycle = row.kind === 'retire' || row.kind === 'verify';
+  const kind = String(row.kind ?? 'new');
+  const kindClass = isEdit ? 'bg-blue-600/20 text-blue-300'
+    : kind === 'retire' ? 'bg-red-600/20 text-red-300'
+    : kind === 'verify' ? 'bg-yellow-600/20 text-yellow-300'
+    : 'bg-green-600/20 text-green-300';
+  const reviews: any[] = Array.isArray(row.reviews) ? row.reviews : [];
   const title = row.proposed_title ?? row.current_title ?? '(untitled)';
 
   return (
@@ -153,10 +161,8 @@ function PendingCard({ row, busy, onAccept, onUpdate, onReject }: {
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
-              isEdit ? 'bg-blue-600/20 text-blue-300' : 'bg-green-600/20 text-green-300'
-            }`}>
-              {isEdit ? 'edit' : 'new'}
+            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${kindClass}`}>
+              {kind}{isLifecycle && row.entry_id ? ` #${row.entry_id}` : ''}
             </span>
             {row.review_flag ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-yellow-900/40 border border-yellow-700/50 text-yellow-300">
@@ -198,6 +204,18 @@ function PendingCard({ row, busy, onAccept, onUpdate, onReject }: {
       {/* Rationale */}
       {row.rationale && (
         <p className="text-sm text-dark-400 italic mb-3 leading-relaxed">"{row.rationale}"</p>
+      )}
+
+      {/* Peer-review votes */}
+      {reviews.length > 0 && (
+        <div className="mb-3 text-xs text-dark-400">
+          <span className="font-semibold text-dark-300">Peer review:</span>{' '}
+          {reviews.map((r, i) => (
+            <span key={`${r.agent}-${i}`} className={r.verdict === 'approve' ? 'text-green-400' : 'text-red-400'}>
+              {i > 0 ? ' · ' : ''}{r.verdict === 'approve' ? '✓' : '✗'} {String(r.agent).slice(0, 12)}{r.note ? ` — ${r.note}` : ''}
+            </span>
+          ))}
+        </div>
       )}
 
       {/* Conflicts */}
