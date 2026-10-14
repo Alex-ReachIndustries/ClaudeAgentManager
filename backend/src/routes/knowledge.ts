@@ -33,9 +33,10 @@ const router: Router = express.Router();
 // bge-small-en-v1.5; override via env if the embedding model changes.
 
 // Proposal size gate. Entries are read inline in agents' contexts, so they must stay short
-// and lead with the rule.
+// and lead with the rule. Aim for ≤2500 chars; the hard cap is a little higher so a dense
+// entry is never forced to drop a command, path or number just to fit (KB_MAX_BODY).
 const MAX_TITLE = 120;
-const MAX_BODY = 2500;
+const MAX_BODY = Number.parseInt(process.env.KB_MAX_BODY || "3500", 10);
 const MAX_FIRST_LINE = 300;
 
 // Best-effort attribution of the calling agent for the audit log. Agents pass their

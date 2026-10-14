@@ -121,8 +121,8 @@ ok(JSON.stringify(citedEntryIds("see [12] and KB 40, kb#7, KB9")) === JSON.strin
 section("proposal gate: size");
 let r = await api("POST", "/api/kb/propose", { kind: "new", title: "x".repeat(121), body: "Rule.\nWhy.", agent: A });
 ok(r.status === 400 && r.json?.field === "title" && r.json?.limit === 120, "title > 120 → 400 field=title", r);
-r = await api("POST", "/api/kb/propose", { kind: "new", title: "Long body test", body: "Rule line.\n" + "y".repeat(2500), agent: A });
-ok(r.status === 400 && r.json?.field === "body" && r.json?.limit === 2500 && !!r.json?.hint, "body > 2500 → 400 field=body with hint", r);
+r = await api("POST", "/api/kb/propose", { kind: "new", title: "Long body test", body: "Rule line.\n" + "y".repeat(3500), agent: A });
+ok(r.status === 400 && r.json?.field === "body" && r.json?.limit === 3500 && !!r.json?.hint, "body > 3500 → 400 field=body with hint", r);
 r = await api("POST", "/api/kb/propose", { kind: "new", title: "Long first line", body: "z".repeat(301) + "\nrest", agent: A });
 ok(r.status === 400 && r.json?.field === "body first line" && r.json?.limit === 300, "first line > 300 → 400", r);
 r = await api("POST", "/api/kb/propose", { kind: "new", title: "No body at all", agent: A });
