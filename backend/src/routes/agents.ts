@@ -45,7 +45,8 @@ import { onAgentStatusChange } from "../workflow-engine.js";
 import { getModelTier, getSessionRules, getPmSubRules, getPmPreamble, wrapRoleDefinition, getCompactReminder, getFullRulesHeader, getRetryHeader } from "../injections.js";
 import { hybridSearch } from "../knowledge/search.js";
 import { embeddingsReady } from "../knowledge/embeddings.js";
-import { logAccess, getEntry, lastSearchAt } from "../knowledge/store.js";
+import { logAccess, getEntry, lastSearchAt, inlinedSince, existingEntryIds } from "../knowledge/store.js";
+import { parseKbLine, citedEntryIds, updateText } from "../knowledge/citations.js";
 import { publishAgentMessage, publishAgentUpdate } from "../mqtt.js";
 import { PREDEFINED_ROLES } from "./roles.js";
 
@@ -267,15 +268,37 @@ function extractSurfaceQuery(content: string): string {
   return cleaned.slice(0, 400);
 }
 
-async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<string> {
+// INLINE SUPPRESSION — don't re-send a body the agent already has. An entry inlined to this
+// agent after BOTH its last context reset AND the last 4 hours is sent as a one-line pointer
+// instead. The context epoch is agents.rules_injected_at: it is stamped whenever the full rules
+// are (re-)delivered, which is exactly when the agent's context was reset (new session, resume,
+// reconnect, compaction — each marks rules due first) or got stale (>2h, non-compliance). Any
+// delivery that is itself carrying full rules (contextReset) re-inlines everything, because
+// rules_injected_at still holds the PREVIOUS epoch until after this delivery. The 4h window is
+// the backstop for a compaction nobody reported.
+const KB_INLINE_REPEAT_WINDOW_H = 4;
+
+/** SQLite-format UTC timestamp ('YYYY-MM-DD HH:MM:SS'). */
+function sqliteTs(ms: number): string {
+  return new Date(ms).toISOString().replace("T", " ").slice(0, 19);
+}
+
+async function buildKnowledgeHint(
+  rawContent: string,
+  agentId: string,
+  ctx: { contextReset: boolean; rulesInjectedAt: string | null },
+): Promise<string> {
   try {
     // Only meaningful once the embedding model is ready — otherwise skip to avoid noise.
     if (!embeddingsReady()) return "";
     const query = extractSurfaceQuery(rawContent);
     if (query.length < 12) return "";
-    const results = await hybridSearch(query, { type: "knowledge", limit: 6 });
+    // resolveIds:false — a relayed "[12]" or "KB 12" is a citation, not a search for entry 12.
+    const results = await hybridSearch(query, { type: "knowledge", limit: 6, resolveIds: false });
+    // Entries the message already cites are in front of the agent already — don't repeat them.
+    const cited = new Set(citedEntryIds(rawContent));
     const hits = results
-      .filter((r) => r.status === "approved" && r.sim >= KB_SURFACE_MIN_SIM)
+      .filter((r) => r.status === "approved" && r.sim >= KB_SURFACE_MIN_SIM && !cited.has(r.id))
       .slice(0, KB_SURFACE_MAX);
     if (hits.length === 0) return "";
     // Instrument the push: record what we surfaced to whom (distinct 'surface' action,
@@ -288,14 +311,30 @@ async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<
       top_score: Number(hits[0].sim.toFixed(4)),
       result_ids: hits.map((h) => h.id),
     });
+    const windowStart = sqliteTs(Date.now() - KB_INLINE_REPEAT_WINDOW_H * 3600_000);
+    const since = ctx.rulesInjectedAt && ctx.rulesInjectedAt > windowStart ? ctx.rulesInjectedAt : windowStart;
+    const alreadySent = ctx.contextReset ? new Set<number>() : inlinedSince(agentId, hits.map((h) => h.id), since);
     // Context-library push: INLINE the actual entry body into the delivery instead of a
     // title+snippet pointer that the agent had to GET separately. The pointer form had a
     // ~7% open rate — agents rarely made the extra call, so the knowledge never landed.
     // Inlining the content makes the read automatic: the standard is in front of them while
-    // they work, no fetch step. Each inlined entry is logged as a genuine 'view' (the body
-    // was delivered to and read by the agent), which is a stronger signal than a pointer.
+    // they work, no fetch step.
     const BODY_CHARS = 700;
     const blocks = hits.map((h) => {
+      if (alreadySent.has(h.id)) {
+        // Already in this context epoch: a pointer, logged under its own action so analytics
+        // can show the savings without counting it as a fresh delivery.
+        logAccess({
+          action: "inline_suppressed",
+          agent: agentId,
+          query: query.slice(0, 500),
+          result_count: 1,
+          top_score: Number(h.sim.toFixed(4)),
+          entry_id: h.id,
+          result_ids: [h.id],
+        });
+        return `▸ [${h.id}] ${h.title} (sent to you earlier this session; if it's no longer in your context: GET $AGENT_URL/api/kb/${h.id}?agent=$CLAUDE_AGENT_ID)`;
+      }
       const full = getEntry(h.id);
       // Strip a leading frontmatter block if present, then collapse whitespace.
       let body = String((full && full.body) || h.snippet || "")
@@ -324,6 +363,9 @@ async function buildKnowledgeHint(rawContent: string, agentId: string): Promise<
     });
     // Framed as an applicable STANDARD, with the content inlined so there is nothing to fetch.
     // High threshold above means when this fires it IS a strong match, so "apply it" is right.
+    if (alreadySent.size === hits.length) {
+      return `\n\n📌 APPLY — Knowledge Hub standard(s) for this task, already sent to you this session. Follow and cite the [id]:\n${blocks.join("\n")}`;
+    }
     return `\n\n📌 APPLY — your team's Knowledge Hub has standard(s) for what you're about to do (included below so you don't have to look them up). Follow and cite the [id]; if one is wrong or stale, propose an edit rather than ignoring it:\n\n${blocks.join("\n\n")}\n\nNeed more? /kb <question>. Missing something? Propose it.`;
   } catch {
     return "";
@@ -1049,13 +1091,18 @@ router.post("/:id/updates", agentUpdateLimiter, validate(updateSchema, flagNonCo
     const isCompletion = type === "text" && status === "idle" &&
       !(typeof summary === "string" && /compact/i.test(summary));
     if (isCompletion) {
-      const body = `${typeof content === "string" ? content : ""}\n${summary || ""}`;
+      const body = `${typeof content === "string" ? updateText(content) : ""}\n${summary || ""}`;
       const substantive = body.trim().length >= 200;
-      const hasKbRecord = /\bKB\s*[:\-]/i.test(body) ||
-        /\b(propos(e|ed|al)|knowledge hub|\/kb\b|kb[_-]?check|wanted_id|no(thing)? reusable)\b/i.test(body);
-      if (substantive && !hasKbRecord) {
-        kbReminder = "⚠️ Completion posted with NO Knowledge Hub record. Before your next task: /kb search what you just did; if the hub lacks it, PROPOSE the durable lesson (an empty/near-empty hub means MORE to add, not less). Then re-post your completion ending with a `KB:` line — `KB: searched <topics> → [ids|none]; proposed [id|'nothing reusable: <why>']`. Contributing is part of 'done'.";
-        logger.warn({ agentId: id }, "KB completion gate: substantive completion update lacked a KB record");
+      // The record line: `KB: [ids]` (entries used — each valid id is logged as a citation) or
+      // `KB: none` (a conscious decision that none applied — no reminder).
+      const kb = parseKbLine(body);
+      const validIds = kb?.kind === "ids" ? existingEntryIds(kb.ids) : [];
+      for (const entryId of validIds) logAccess({ action: "cite", agent: id, entry_id: entryId });
+      const recorded = kb?.kind === "none" || validIds.length > 0;
+      if (substantive && !recorded) {
+        const badIds = kb?.kind === "ids" ? ` (none of the ids you cited exist: ${kb.ids.map((n) => `[${n}]`).join(" ")})` : "";
+        kbReminder = `⚠️ Completion posted without a valid Knowledge Hub line${badIds}. End every completion with exactly one line: \`KB: [id, id]\` naming the hub entries you used, or \`KB: none\` if none applied. If you learned something reusable, POST /api/kb/propose first (kind:"edit" + entry_id, or append, if it improves an existing entry). Then re-post the completion with the KB line.`;
+        logger.warn({ agentId: id }, "KB completion gate: substantive completion update lacked a valid KB line");
       }
     }
 
@@ -1394,13 +1441,19 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
       let kbHint = "";
       if (lastFreshIdx >= 0) {
         const lf = rawMessages[lastFreshIdx];
-        if (typeof lf.content === "string" && lf.content.trim().length >= 40) {
+        // KB service messages (peer-review requests, lifecycle digests) ARE the hub talking:
+        // surfacing more entries or a search nudge on top of them is pure noise.
+        const fromKbService = lf.source_peer_name === "kb-review" || lf.source_peer_name === "kb-lifecycle";
+        if (!fromKbService && typeof lf.content === "string" && lf.content.trim().length >= 40) {
           // Attribute by the agent's UUID, not its display title. Titles are unstable and
           // agent-chosen, which fragmented the access log badly: the same agent appeared as
           // "<uuid>", "94b3599b (frontend dev)", "AIGroupPortal - PM" vs "AIGroupPortal-PM",
           // "Cam (Desktop)" vs "Cam" — so no join on agent identity could ever be trusted.
           // The UUID is stable for the life of the agent; resolve it to a title at read time.
-          kbHint = await buildKnowledgeHint(lf.content, id);
+          kbHint = await buildKnowledgeHint(lf.content, id, {
+            contextReset: fullReason != null,
+            rulesInjectedAt: ((agent as Record<string, unknown>).rules_injected_at as string | null) ?? null,
+          });
 
           // SEARCH NUDGE — the pull side of the context library.
           //
