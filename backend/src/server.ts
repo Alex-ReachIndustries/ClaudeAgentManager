@@ -20,6 +20,7 @@ import knowledgeRouter from "./routes/knowledge.js";
 import { warmEmbeddings } from "./knowledge/embeddings.js";
 import { startEmbedder } from "./knowledge/embedder.js";
 import { seedBaselineIfEmpty } from "./knowledge/baseline-seed.js";
+import { startKbReviewSchedulers } from "./knowledge/review.js";
 import { addClient, removeClient, broadcast, getClientCount } from "./sse.js";
 import { archiveInactiveAgents, getAgent, getDb, getFileByIdOnly, touchAgentHeartbeat, updateAgent, nudgeStalledAgents } from "./db.js";
 import { initPush } from "./push.js";
@@ -159,6 +160,9 @@ const server = app.listen(PORT, () => {
   // background embedder that vectorizes stale entries/profiles.
   warmEmbeddings();
   startEmbedder();
+
+  // Knowledge Hub: peer-review distribution (every 10 min) + weekly lifecycle hygiene.
+  startKbReviewSchedulers();
 
   // Set MQTT handlers for agent updates received via MQTT
   setMqttHandlers({

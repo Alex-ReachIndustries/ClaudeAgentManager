@@ -7,7 +7,9 @@ import { validate } from "../middleware/validate.js";
 import { logger } from "../logger.js";
 import { getDb } from "../db.js";
 import { hybridSearch } from "../knowledge/search.js";
-import { scanConflicts } from "../knowledge/conflict.js";
+import { scanConflicts, topApprovedMatch, DUPLICATE_SIM } from "../knowledge/conflict.js";
+import { KB_HIT_MIN_SIM } from "../knowledge/thresholds.js";
+import { reviewQueue, submitReview, distributeReviews, runLifecycle } from "../knowledge/review.js";
 import { broadcast } from "../sse.js";
 import { sendPushToAll } from "../push.js";
 import { seedFromMemories } from "../knowledge/seed.js";
@@ -16,6 +18,7 @@ import {
   createProposal, getEntry, listPending, getPending, decideProposal,
   upsertProfile, getProfile, listProfiles, stats, countEntries,
   logAccess, accessAnalytics, recordWanted, listWanted, decideWanted,
+  compactEntry, getEntriesCompact, listEntriesPaged,
 } from "../knowledge/store.js";
 import {
   listCategories, getCategory, createCategory, updateCategory, deleteCategory,
@@ -25,10 +28,15 @@ import {
 
 const router: Router = express.Router();
 
-// Absolute relevance floor: a search counts as a "hit" if it keyword-matched OR its top
-// raw vector cosine reached this. Tuned for bge-small-en-v1.5 (related ~0.6-0.8, unrelated
-// ~0.3-0.5); override via env if the embedding model changes.
-const KB_HIT_MIN_SIM = Number.parseFloat(process.env.KB_HIT_MIN_SIM || "0.55");
+// Absolute relevance floor (KB_HIT_MIN_SIM, knowledge/thresholds.ts): a search counts as a
+// "hit", and a result as "strong", when its raw vector cosine reaches it. Tuned for
+// bge-small-en-v1.5; override via env if the embedding model changes.
+
+// Proposal size gate. Entries are read inline in agents' contexts, so they must stay short
+// and lead with the rule.
+const MAX_TITLE = 120;
+const MAX_BODY = 2500;
+const MAX_FIRST_LINE = 300;
 
 // Best-effort attribution of the calling agent for the audit log. Agents pass their
 // identity via ?agent= (the /kb command sends $CLAUDE_AGENT_ID) or an X-Agent-Id
@@ -42,18 +50,29 @@ const KB_HIT_MIN_SIM = Number.parseFloat(process.env.KB_HIT_MIN_SIM || "0.55");
 // check, which looked up a UUID and never matched a title-keyed row, so the nudge fired at
 // agents that HAD just searched. The id is stable for the life of the agent; analytics
 // resolve it to a display name at READ time instead (see accessAnalytics by_agent).
+//
+// Precedence: ?agent= query, then a body `agent` field, then the X-Agent-Id (or legacy
+// X-Agent) header — so a client hook that only sets the header still gets every call credited.
 function callerAgent(req: Request): string | null {
-  const raw = String(req.query.agent ?? req.header("x-agent-id") ?? req.header("x-agent") ?? "").trim();
-  return raw || null;
+  const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+  for (const v of [req.query.agent, body.agent, req.header("x-agent-id"), req.header("x-agent")]) {
+    const s = typeof v === "string" ? v.trim() : "";
+    if (s) return s;
+  }
+  return null;
 }
 
 // ─── Schemas ───────────────────────────────────────────────────────────────
 
 const proposeSchema = z.object({
-  kind: z.enum(["new", "edit"]),
+  // retire/verify: lifecycle reviews of an existing entry (entry_id + rationale).
+  kind: z.enum(["new", "edit", "retire", "verify"]),
   entry_id: z.number().int().positive().optional(),
   title: z.string().min(1).max(500).optional(),
   body: z.string().max(100000).optional(),
+  // kind 'edit' only: text appended to the entry's current body as a new paragraph, so a
+  // gotcha can be added without rewriting (and possibly mangling) the whole entry.
+  append: z.string().min(1).max(100000).optional(),
   category: z.string().max(200).optional(),
   tags: z.array(z.string().max(100)).max(50).optional(),
   systems: z.array(z.string().max(100)).max(50).optional(),
@@ -62,8 +81,14 @@ const proposeSchema = z.object({
   rationale: z.string().max(4000).optional(),
   category_ids: z.array(z.number().int().positive()).max(50).optional(),
   wanted_id: z.number().int().positive().optional(),   // gap this fills; auto-resolved on approval
-}).refine((d) => d.kind === "edit" ? !!d.entry_id : !!d.title, {
-  message: "kind 'new' requires title; kind 'edit' requires entry_id",
+}).refine((d) => d.kind === "new" ? !!d.title : !!d.entry_id, {
+  message: "kind 'new' requires title; kinds 'edit', 'retire' and 'verify' require entry_id",
+});
+
+const reviewSchema = z.object({
+  agent: z.string().max(200).optional(),
+  verdict: z.enum(["approve", "reject"]),
+  note: z.string().max(2000).optional(),
 });
 
 const categoryCreateSchema = z.object({
@@ -130,24 +155,34 @@ router.get("/search", async (req: Request, res: Response) => {
   const type = (["all", "knowledge", "profile"].includes(typeParam) ? typeParam : "all") as "all" | "knowledge" | "profile";
   const limitRaw = parseInt(String(req.query.limit ?? "8"), 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 8;
+  const minSimRaw = Number.parseFloat(String(req.query.min_sim ?? ""));
+  const minSim = Number.isFinite(minSimRaw) ? Math.min(Math.max(minSimRaw, 0), 1) : null;
   const started = Date.now();
   try {
-    const results = await hybridSearch(q, { type, limit });
+    const all = await hybridSearch(q, { type, limit });
+    const vecReadyNow = embeddingsReady();
+    // Strong = a genuine match: raw cosine at/above the hit floor, an exact id reference, or —
+    // only while the vector model is warming up — a keyword match.
+    const isStrong = (r: (typeof all)[number]) =>
+      !!r.idMatch || (vecReadyNow ? r.sim >= KB_HIT_MIN_SIM : r.kw);
+    // Optional min_sim filter (exact id references always pass).
+    const results = minSim == null ? all : all.filter((r) => r.idMatch || r.sim >= minSim);
     // Attach category memberships (id + name + breadcrumb) to knowledge hits.
-    const enriched = results.map((r) =>
-      r.type === "knowledge" ? { ...r, categories: membershipsForEntry(r.id) } : r
-    );
+    const enriched = results.map((r) => {
+      const out = { ...r, relevance: isStrong(r) ? "strong" : "weak" };
+      return r.type === "knowledge" ? { ...out, categories: membershipsForEntry(r.id) } : out;
+    });
     // Hybrid search always returns the top-N by a *normalized* score, so a raw count
     // is a useless hit signal (even gibberish returns something). Judge relevance by an
     // ABSOLUTE measure: a keyword (FTS) match, or a raw vector cosine above a floor.
-    const vecReady = embeddingsReady();
-    const topSim = results.length ? Math.max(...results.map((r) => r.sim)) : 0;
-    const kwMatched = results.some((r) => r.kw);
+    const vecReady = vecReadyNow;
+    const topSim = all.length ? Math.max(...all.map((r) => r.sim)) : 0;
+    const kwMatched = all.some((r) => r.kw);
     // Semantic cosine is the honest relevance measure. When embeddings are ready (the
     // normal case) judge purely on it — FTS matches on common words ("how", "to") would
     // otherwise mark off-topic queries as hits. Fall back to keyword-match only during
     // the brief warmup before the embedding model is loaded.
-    const hit = vecReady ? topSim >= KB_HIT_MIN_SIM : kwMatched;
+    const hit = all.some((r) => r.idMatch) || (vecReady ? topSim >= KB_HIT_MIN_SIM : kwMatched);
     const searchAgent = callerAgent(req);
     // A genuine miss → actionable "knowledge wanted" backlog item (deduped).
     if (!hit) recordWanted(q, searchAgent);
@@ -158,42 +193,119 @@ router.get("/search", async (req: Request, res: Response) => {
       type_filter: type,
       result_count: results.length,
       // Log the raw top cosine (absolute, comparable across queries) — null when FTS-only.
-      top_score: vecReady && results.length ? Number(topSim.toFixed(4)) : null,
+      top_score: vecReady && all.length ? Number(topSim.toFixed(4)) : null,
       hit,
       result_ids: results.filter((r) => r.type === "knowledge").map((r) => r.id).slice(0, 10),
       latency_ms: Date.now() - started,
       embeddings_ready: vecReady,
     });
-    res.json({ query: q, type, embeddingsReady: embeddingsReady(), results: enriched });
+    // gap: nothing strong came back — log a "wanted" item rather than act on weak matches.
+    const gap = !enriched.some((r) => r.relevance === "strong");
+    res.json({
+      query: q, type, embeddingsReady: vecReady, gap,
+      ...(gap ? { gap_hint: "No strong match. Don't act on weak results: log the gap (POST /api/kb/wanted {query,note}), get the answer, then propose it with that wanted_id." } : {}),
+      results: enriched,
+    });
   } catch (err) {
     logger.error({ err }, "KB search failed");
     res.status(500).json({ error: "Search failed" });
   }
 });
 
+type GateError = { status: number; body: Record<string, unknown> };
+
+function sizeError(field: string, actual: number, limit: number, hint: string): GateError {
+  return { status: 400, body: { error: `${field} is ${actual} chars; the limit is ${limit}`, field, actual, limit, hint } };
+}
+
+/** Size + rule-first checks shared by every content-carrying proposal. */
+function checkContent(title: string | undefined, body: string | undefined, appended: boolean): GateError | null {
+  if (title != null && title.length > MAX_TITLE) {
+    return sizeError("title", title.length, MAX_TITLE, "Use a short, scannable name; put the detail in the body.");
+  }
+  if (body != null) {
+    if (body.length > MAX_BODY) {
+      return sizeError("body", body.length, MAX_BODY, appended
+        ? "With your append the entry would exceed the cap. Propose a tightened full body instead (kind:'edit' with body), or put the new point in its own entry."
+        : "Keep one topic per entry: lead with the rule, cut background, split unrelated points into separate entries (link them by [id]).");
+    }
+    const firstLine = body.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+    if (firstLine.length > MAX_FIRST_LINE) {
+      return sizeError("body first line", firstLine.length, MAX_FIRST_LINE,
+        "The first line must be the actionable rule in one sentence (it is what search results show). Move the explanation to the lines below it.");
+    }
+  }
+  return null;
+}
+
 // POST /api/kb/propose
 router.post("/propose", validate(proposeSchema), async (req: Request, res: Response) => {
   const body = req.body as z.infer<typeof proposeSchema>;
+  const agent = callerAgent(req);
   try {
+    // ── Gate ──
+    let current: Record<string, unknown> | undefined;
+    if (body.kind !== "new") {
+      current = getDb().prepare("SELECT id, title, body, status FROM knowledge_entries WHERE id = ?").get(body.entry_id) as Record<string, unknown> | undefined;
+      if (!current || current.status === "rejected") {
+        res.status(404).json({ error: `Entry ${body.entry_id} not found`, hint: "Search for the right entry id first (/kb <topic>), or propose kind:'new'." });
+        return;
+      }
+      if ((body.kind === "retire" || body.kind === "verify") && current.status !== "approved") {
+        res.status(400).json({ error: `kind '${body.kind}' applies only to approved entries; entry ${body.entry_id} is ${current.status}` });
+        return;
+      }
+    }
+    if (body.append != null) {
+      if (body.kind !== "edit") { res.status(400).json({ error: "append is only valid with kind:'edit' (and entry_id)" }); return; }
+      if (body.body != null) { res.status(400).json({ error: "Send either body (full replacement) or append (added to the current body), not both" }); return; }
+    }
+    if (body.kind === "new" && !(body.body ?? "").trim()) {
+      res.status(400).json({ error: "kind 'new' requires a body", field: "body", hint: "First line = the actionable rule; then the why/how in a few lines." });
+      return;
+    }
+    const proposedBody = body.append != null
+      ? `${String(current?.body ?? "").trimEnd()}\n\n${body.append.trim()}`
+      : body.body;
+    const isContent = body.kind === "new" || body.kind === "edit";
+    if (isContent) {
+      const err = checkContent(body.title, proposedBody, body.append != null);
+      if (err) { res.status(err.status).json(err.body); return; }
+    }
+    if (body.kind === "new") {
+      const dup = await topApprovedMatch({ title: body.title ?? "", body: proposedBody ?? "", tags: body.tags, systems: body.systems });
+      if (dup && dup.sim >= DUPLICATE_SIM) {
+        res.status(409).json({
+          error: `Near-duplicate of approved entry [${dup.id}] (similarity ${dup.sim.toFixed(2)})`,
+          duplicate_of: { id: dup.id, title: dup.title },
+          similarity: Number(dup.sim.toFixed(4)),
+          hint: "propose kind:'edit' with entry_id instead",
+        });
+        return;
+      }
+    }
+
     let conflicts: Awaited<ReturnType<typeof scanConflicts>> = [];
-    if (body.title || body.body) {
+    if (isContent && (body.title || proposedBody)) {
       conflicts = await scanConflicts({
         title: body.title ?? "",
-        body: body.body ?? "",
+        body: proposedBody ?? "",
         tags: body.tags,
         systems: body.systems,
       });
+      // An edit always resembles the entry it edits — that is not a conflict.
+      if (body.kind === "edit") conflicts = conflicts.filter((c) => c.entry_id !== body.entry_id);
     }
     const { entry_id, pending_id } = createProposal({
       kind: body.kind,
       entry_id: body.entry_id ?? null,
-      title: body.title,
-      body: body.body,
+      title: isContent ? body.title : undefined,
+      body: isContent ? proposedBody : undefined,
       category: body.category,
       tags: body.tags,
       systems: body.systems,
       source: body.source,
-      agent: body.agent,
+      agent: agent ?? undefined,
       rationale: body.rationale,
       conflicts,
       wanted_id: body.wanted_id,
@@ -205,22 +317,65 @@ router.post("/propose", validate(proposeSchema), async (req: Request, res: Respo
       }
     }
     // Notify the human: SSE (dashboard live badge + Android local notification) + web-push (dashboard background).
-    const kbTitle = body.title || (body.kind === "edit" ? `Edit to entry #${body.entry_id}` : "New knowledge");
+    const kbTitle = body.title || (body.kind === "new" ? "New knowledge" : `${body.kind[0].toUpperCase()}${body.kind.slice(1)} entry #${body.entry_id}`);
     broadcast("knowledge-pending", {
       pending_id, entry_id, kind: body.kind, title: kbTitle,
-      proposing_agent: body.agent ?? null, conflicts: conflicts.length,
+      proposing_agent: agent, conflicts: conflicts.length,
     });
     sendPushToAll(
       "Knowledge to review",
-      `${body.agent ? body.agent + " proposed: " : ""}${kbTitle}${conflicts.length ? ` (${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""})` : ""}`,
+      `${agent ? agent + " proposed: " : ""}${kbTitle}${conflicts.length ? ` (${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""})` : ""}`,
       "/knowledge/pending",
     ).catch((err) => logger.warn({ err }, "KB push notify failed"));
-    logAccess({ action: "propose", agent: body.agent ?? callerAgent(req), entry_id });
-    res.json({ entry_id, pending_id, conflicts });
+    logAccess({ action: "propose", agent, entry_id });
+    res.json({
+      entry_id, pending_id, conflicts,
+      review: "Peer review: two agreeing votes from other agents decide it (GET /api/kb/review-queue shows reviewers the oldest item).",
+    });
   } catch (err) {
     logger.error({ err }, "KB propose failed");
     res.status(500).json({ error: "Propose failed" });
   }
+});
+
+// GET /api/kb/review-queue?agent=ID — the oldest pending item this agent may review
+// (not proposed by it, not already voted on by it). At most one item.
+router.get("/review-queue", (req: Request, res: Response) => {
+  const agent = callerAgent(req);
+  if (!agent) { res.status(400).json({ error: "agent is required (?agent=$CLAUDE_AGENT_ID or X-Agent-Id header)" }); return; }
+  const item = reviewQueue(agent);
+  res.json({ data: item ? [item] : [] });
+});
+
+// POST /api/kb/pending/:id/review {agent, verdict, note} — a peer vote. Two agreeing votes decide.
+router.post("/pending/:id/review", validate(reviewSchema), (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const agent = callerAgent(req);
+  if (!agent) { res.status(400).json({ error: "agent is required (body.agent or X-Agent-Id header)" }); return; }
+  const body = req.body as z.infer<typeof reviewSchema>;
+  try {
+    const out = submitReview(id, agent, body.verdict, body.note);
+    if (!out.ok) { res.status(out.code).json({ error: out.error }); return; }
+    logAccess({ action: "review", agent, entry_id: (getPending(id)?.entry_id as number | null) ?? null });
+    if (out.status !== "pending") broadcast("knowledge-decided", { pending_id: id, status: out.status, decided_by: out.decided_by });
+    res.json({ pending_id: id, ...out });
+  } catch (err) {
+    logger.error({ err }, "KB review failed");
+    res.status(500).json({ error: "Review failed" });
+  }
+});
+
+// POST /api/kb/review-sweep — run one review-distribution pass now (it also runs every 10 min).
+router.post("/review-sweep", (_req: Request, res: Response) => {
+  try { res.json({ sent: distributeReviews() }); }
+  catch (err) { logger.error({ err }, "KB review sweep failed"); res.status(500).json({ error: "Sweep failed" }); }
+});
+
+// POST /api/kb/lifecycle/run {force} — run the lifecycle pass now (normally weekly).
+router.post("/lifecycle/run", (req: Request, res: Response) => {
+  try { res.json(runLifecycle(req.body?.force === true)); }
+  catch (err) { logger.error({ err }, "KB lifecycle run failed"); res.status(500).json({ error: "Lifecycle run failed" }); }
 });
 
 // GET /api/kb/pending
@@ -233,13 +388,18 @@ router.post("/pending/:id/decide", validate(decideSchema), async (req: Request, 
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const body = req.body as z.infer<typeof decideSchema>;
+  if (!body.decidedBy) {
+    const hdr = req.header("x-agent-id");
+    if (hdr && hdr.trim()) body.decidedBy = hdr.trim();
+  }
   const result = decideProposal(id, body);
   if (!result) { res.status(404).json({ error: "Proposal not found or already decided" }); return; }
   logger.info({ id, decision: body.decision, decidedBy: body.decidedBy }, "KB proposal decided");
   // On approval, auto-file the now-approved entry into the category tree. Safe to
   // call even if the vector isn't ready yet (classifyEntry embeds on demand); the
   // background embedder will also re-run this after any (re)embedding.
-  if ((body.decision === "accept" || body.decision === "update") && result.entry_id != null) {
+  const decidedKind = String(getPending(id)?.kind ?? "");
+  if ((body.decision === "accept" || body.decision === "update") && result.entry_id != null && decidedKind !== "retire") {
     classifyEntry(result.entry_id).catch((err) => logger.warn({ err, id: result.entry_id }, "KB classifyEntry after decide failed"));
   }
   res.json(result);
@@ -260,8 +420,9 @@ router.get("/profiles/:name", (req: Request, res: Response) => {
 // POST /api/kb/profiles — auto-applied, no approval
 router.post("/profiles", validate(profileSchema), (req: Request, res: Response) => {
   const body = req.body as z.infer<typeof profileSchema>;
+  const by = body.by ?? callerAgent(req) ?? undefined;
   try {
-    const profile = upsertProfile(body);
+    const profile = upsertProfile({ ...body, by });
     res.json(profile);
   } catch (err) {
     logger.error({ err }, "KB profile upsert failed");
@@ -292,7 +453,7 @@ router.post("/wanted", (req: Request, res: Response) => {
   const query = String(req.body?.query ?? "").trim();
   if (query.length < 3) { res.status(400).json({ error: "query is required" }); return; }
   const note = req.body?.note != null ? String(req.body.note).slice(0, 2000) : null;
-  const agent = callerAgent(req) || (req.body?.agent ? String(req.body.agent) : null);
+  const agent = callerAgent(req);
   const id = recordWanted(query, agent, note);
   if (id == null) { res.status(422).json({ error: "query too trivial to log (needs a real word, >=8 chars)" }); return; }
   res.json({ ok: true, wanted_id: id });
@@ -422,12 +583,41 @@ router.delete("/entries/:id/categories/:catId", (req: Request, res: Response) =>
 });
 
 // GET /api/kb/entries?category=<id>&descendants=0|1 — browse a category.
+// GET /api/kb/entries?status=approved&limit=50&offset=0 — without a category: a paged,
+// compact listing for tooling (status: approved|pending|superseded|all; limit ≤200).
 router.get("/entries", (req: Request, res: Response) => {
+  if (req.query.category == null || req.query.category === "") {
+    const status = String(req.query.status ?? "approved");
+    if (!["approved", "pending", "superseded", "all"].includes(status)) {
+      res.status(400).json({ error: "status must be approved|pending|superseded|all" }); return;
+    }
+    const limitRaw = parseInt(String(req.query.limit ?? "50"), 10);
+    const offsetRaw = parseInt(String(req.query.offset ?? "0"), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+    const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
+    const { data, total } = listEntriesPaged(status, limit, offset);
+    res.json({ status, limit, offset, total, data });
+    return;
+  }
   const catId = parseInt(String(req.query.category ?? ""), 10);
-  if (!Number.isFinite(catId)) { res.status(400).json({ error: "category query param is required" }); return; }
+  if (!Number.isFinite(catId)) { res.status(400).json({ error: "category must be a numeric id" }); return; }
   if (!getCategory(catId)) { res.status(404).json({ error: "Category not found" }); return; }
   const descendants = String(req.query.descendants ?? "0") === "1";
   res.json({ category_id: catId, descendants, data: entriesInCategory(catId, descendants) });
+});
+
+// GET /api/kb/batch?ids=1,2,3 — up to 10 entries in compact form, in one call.
+router.get("/batch", (req: Request, res: Response) => {
+  const raw = String(req.query.ids ?? "").trim();
+  const ids = [...new Set(raw.split(/[\s,]+/).filter(Boolean).map((v) => Number(v)))];
+  if (ids.length === 0 || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    res.status(400).json({ error: "ids must be a comma-separated list of entry ids, e.g. ?ids=12,34" }); return;
+  }
+  if (ids.length > 10) { res.status(400).json({ error: `At most 10 ids per batch (got ${ids.length})` }); return; }
+  const { data, missing } = getEntriesCompact(ids);
+  const agent = callerAgent(req);
+  for (const e of data) logAccess({ action: "view", agent, entry_id: Number(e.id) });
+  res.json({ data, missing });
 });
 
 // ─── Catch-all: GET /api/kb/:id ───────────────────────────────────────────
@@ -452,6 +642,9 @@ router.get("/:id", (req: Request, res: Response) => {
   const entry = getEntry(id);
   if (!entry || entry.status === "rejected") { res.status(404).json({ error: "Entry not found" }); return; }
   logAccess({ action: "view", agent: callerAgent(req), entry_id: id });
+  // ?format=compact → {id,title,body,tags,status,verified_at} only. (The full form never
+  // ships the embedding either: mapEntry drops it.)
+  if (String(req.query.format ?? "") === "compact") { res.json(compactEntry(entry)); return; }
   res.json(withMemberships(entry));
 });
 

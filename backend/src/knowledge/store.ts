@@ -5,6 +5,8 @@
 import { getDb } from "../db.js";
 import { bufferToVector } from "./embeddings.js";
 import { logger } from "../logger.js";
+import { parseKbLine, updateText } from "./citations.js";
+import { KB_HIT_MIN_SIM, KB_WEAK_MAX_SIM } from "./thresholds.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -14,8 +16,10 @@ export interface ConflictFlag {
   note: string;
 }
 
+export type ProposalKind = "new" | "edit" | "retire" | "verify";
+
 export interface ProposalInput {
-  kind: "new" | "edit";
+  kind: ProposalKind;
   entry_id?: number | null;
   title?: string;
   body?: string;
@@ -272,11 +276,28 @@ export function getPending(id: number): Record<string, unknown> | undefined {
   return row ? shapePending(row) : undefined;
 }
 
+/** Peer-review votes cast on a pending proposal, oldest first. */
+export function listReviews(pendingId: number): { agent: string; verdict: string; note: string | null; created_at: string }[] {
+  try {
+    return getDb().prepare(
+      "SELECT agent, verdict, note, created_at FROM kb_reviews WHERE pending_id = ? ORDER BY created_at ASC, id ASC"
+    ).all(pendingId) as { agent: string; verdict: string; note: string | null; created_at: string }[];
+  } catch {
+    return [];
+  }
+}
+
 function shapePending(row: Record<string, unknown>): Record<string, unknown> {
   let conflicts: unknown = [];
   try { conflicts = JSON.parse(String(row.conflict_flags ?? "[]")); } catch { conflicts = []; }
+  const reviews = listReviews(Number(row.id));
   return {
     ...row,
+    reviews,
+    votes: {
+      approve: reviews.filter((r) => r.verdict === "approve").length,
+      reject: reviews.filter((r) => r.verdict === "reject").length,
+    },
     conflict_flags: conflicts,
     proposed_tags: row.proposed_tags != null ? parseArr(row.proposed_tags) : null,
     proposed_systems: row.proposed_systems != null ? parseArr(row.proposed_systems) : null,
@@ -332,7 +353,18 @@ export function decideProposal(id: number, d: DecisionInput): { ok: boolean; ent
   const tx = db.transaction(() => {
     let pendingStatus: string;
 
-    if (d.decision === "accept") {
+    if (d.decision === "accept" && (kind === "retire" || kind === "verify")) {
+      // Lifecycle kinds act on an existing approved entry and never change its content.
+      if (entryId != null) {
+        if (kind === "retire") {
+          db.prepare("UPDATE knowledge_entries SET status = 'superseded', updated_at = datetime('now'), updated_by = ? WHERE id = ? AND status = 'approved'")
+            .run(d.decidedBy ?? null, entryId);
+        } else {
+          db.prepare("UPDATE knowledge_entries SET verified_at = datetime('now') WHERE id = ?").run(entryId);
+        }
+      }
+      pendingStatus = "accepted";
+    } else if (d.decision === "accept") {
       if (kind === "edit") {
         applyEntryUpdate({
           title: pending.proposed_title != null ? String(pending.proposed_title) : undefined,
@@ -398,6 +430,7 @@ export interface FtsHit {
   tags: string[];
   systems: string[];
   ftsScore: number; // higher = better (already negated from bm25)
+  rule: string;     // first non-empty body line (the actionable rule)
 }
 
 export function searchFTS(query: string, opts: { type?: "all" | "knowledge" | "profile"; limit?: number } = {}): FtsHit[] {
@@ -423,6 +456,7 @@ export function searchFTS(query: string, opts: { type?: "all" | "knowledge" | "p
           type: "knowledge",
           title: String(r.title ?? ""),
           snippet: makeSnippet(String(r.body ?? "")),
+          rule: makeRule(String(r.body ?? "")),
           status: String(r.status ?? ""),
           tags: parseArr(r.tags),
           systems: parseArr(r.systems),
@@ -445,6 +479,7 @@ export function searchFTS(query: string, opts: { type?: "all" | "knowledge" | "p
           type: "profile",
           title: String(r.name ?? ""),
           snippet: makeSnippet(String(r.summary ?? "")),
+          rule: makeRule(String(r.summary ?? "")),
           status: "approved",
           tags: [],
           systems: [],
@@ -464,6 +499,90 @@ export function makeSnippet(text: string, max = 240): string {
   const stripped = text.replace(/^﻿?\s*---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
   const clean = (stripped.trim() ? stripped : text).replace(/\s+/g, " ").trim();
   return clean.length > max ? clean.slice(0, max) + "…" : clean;
+}
+
+/**
+ * The entry's actionable rule: the first non-empty line of its body (frontmatter stripped),
+ * capped at 300 chars. Entries are written rule-first, so this is what an agent should act on.
+ */
+export function makeRule(text: string, max = 300): string {
+  const stripped = String(text ?? "").replace(/^\uFEFF?\s*---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const line = stripped.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  return line.length > max ? line.slice(0, max) + "…" : line;
+}
+
+/** Lean entry shape for agents/tooling: no embedding, no heavy metadata. */
+export function compactEntry(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: Number(row.id),
+    title: String(row.title ?? ""),
+    body: String(row.body ?? ""),
+    tags: Array.isArray(row.tags) ? row.tags : parseArr(row.tags),
+    status: String(row.status ?? ""),
+    verified_at: row.verified_at ?? null,
+  };
+}
+
+/** Several entries by id in compact form (rejected ones excluded). Bumps hit_count like getEntry. */
+export function getEntriesCompact(ids: number[]): { data: Record<string, unknown>[]; missing: number[] } {
+  if (ids.length === 0) return { data: [], missing: [] };
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT id, title, body, tags, status, verified_at FROM knowledge_entries
+     WHERE id IN (${ids.map(() => "?").join(",")}) AND status != 'rejected'`
+  ).all(...ids) as Record<string, unknown>[];
+  const byId = new Map(rows.map((r) => [Number(r.id), r]));
+  const bump = db.prepare("UPDATE knowledge_entries SET hit_count = hit_count + 1 WHERE id = ?");
+  const data: Record<string, unknown>[] = [];
+  const missing: number[] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (!r) { missing.push(id); continue; }
+    bump.run(id);
+    data.push(compactEntry(r));
+  }
+  return { data, missing };
+}
+
+/** Paged listing of entries by status (compact form), for tooling. status 'all' = every non-rejected entry. */
+export function listEntriesPaged(status: string, limit: number, offset: number): { data: Record<string, unknown>[]; total: number } {
+  const db = getDb();
+  const where = status === "all" ? "status != 'rejected'" : "status = ?";
+  const args = status === "all" ? [] : [status];
+  const total = Number((db.prepare(`SELECT COUNT(*) c FROM knowledge_entries WHERE ${where}`).get(...args) as { c: number }).c);
+  const rows = db.prepare(
+    `SELECT id, title, body, tags, status, verified_at FROM knowledge_entries WHERE ${where} ORDER BY id ASC LIMIT ? OFFSET ?`
+  ).all(...args, limit, offset) as Record<string, unknown>[];
+  return { data: rows.map(compactEntry), total };
+}
+
+/**
+ * Which of `entryIds` were already inlined (full body) to this agent at or after `since`
+ * (a SQLite 'YYYY-MM-DD HH:MM:SS' UTC timestamp). Used to send a pointer instead of
+ * re-sending a body the agent still has in its context.
+ */
+export function inlinedSince(agent: string, entryIds: number[], since: string): Set<number> {
+  if (!agent || entryIds.length === 0) return new Set();
+  try {
+    const rows = getDb().prepare(
+      `SELECT DISTINCT entry_id FROM kb_access_log
+       WHERE action = 'inline' AND agent = ? AND ts >= ?
+         AND entry_id IN (${entryIds.map(() => "?").join(",")})`
+    ).all(agent, since, ...entryIds) as { entry_id: number }[];
+    return new Set(rows.map((r) => Number(r.entry_id)));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Ids among `ids` that exist as entries (any status but rejected). */
+export function existingEntryIds(ids: number[]): number[] {
+  if (ids.length === 0) return [];
+  const rows = getDb().prepare(
+    `SELECT id FROM knowledge_entries WHERE id IN (${ids.map(() => "?").join(",")}) AND status != 'rejected'`
+  ).all(...ids) as { id: number }[];
+  const ok = new Set(rows.map((r) => Number(r.id)));
+  return ids.filter((id) => ok.has(id));
 }
 
 // ─── Profiles ─────────────────────────────────────────────────────────────
@@ -634,7 +753,10 @@ export function stats(): Record<string, unknown> {
 // ─── Access audit ────────────────────────────────────────────────────────────
 
 export interface AccessLogInput {
-  action: "search" | "view" | "related" | "propose" | "surface" | "inline";
+  // inline_suppressed: an entry already inlined to this agent in its current context epoch was
+  // sent as a one-line pointer instead of its body. cite: a completion's `KB: [id]` line named it.
+  // review: a peer-review vote was cast on a pending proposal.
+  action: "search" | "view" | "related" | "propose" | "surface" | "inline" | "inline_suppressed" | "cite" | "review";
   agent?: string | null;
   query?: string | null;
   type_filter?: string | null;
@@ -756,11 +878,11 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
   const byAction = db.prepare(
     "SELECT action, COUNT(*) c FROM kb_access_log WHERE ts >= datetime('now', ?) GROUP BY action"
   ).all(since) as { action: string; c: number }[];
-  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0, inline: 0 };
+  const windowTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0, inline: 0, inline_suppressed: 0, cite: 0, review: 0 };
   for (const r of byAction) windowTotals[r.action] = r.c;
 
   const allTime = db.prepare("SELECT action, COUNT(*) c FROM kb_access_log GROUP BY action").all() as { action: string; c: number }[];
-  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0, inline: 0 };
+  const allTimeTotals: Record<string, number> = { search: 0, view: 0, related: 0, propose: 0, surface: 0, inline: 0, inline_suppressed: 0, cite: 0, review: 0 };
   for (const r of allTime) allTimeTotals[r.action] = r.c;
 
   // Daily time series (one row per day, counts per action).
@@ -794,7 +916,10 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
 
   // WEAK — searches that "hit" but only marginally (top raw cosine below a good-match bar):
   // the topic is under-served and worth strengthening. top_score here is the raw cosine.
-  const weakBar = Number.parseFloat(process.env.KB_WEAK_MAX_SIM || "0.68");
+  // The bar is shared with the hit floor (thresholds.ts) and always sits above it, so the
+  // band is never empty. Rows logged as hits under the old 0.55 floor fall into it — which
+  // is honest: they were weak.
+  const weakBar = KB_WEAK_MAX_SIM;
   const weak = db.prepare(
     `SELECT query, COUNT(*) times, ROUND(AVG(top_score),3) avg_top_score, MAX(ts) last_at
      FROM kb_access_log
@@ -886,24 +1011,32 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
        (SELECT COUNT(*) FROM updates WHERE type='text' AND timestamp >= datetime('now', ?)) outputs`
   ).get(since, since) as { tasks: number; outputs: number };
   // CITATION RATE — the application signal. Delivery is not use: we can push an entry into
-  // an agent's context and still have no idea whether it changed anything. The one trace an
-  // agent leaves when knowledge actually informed its work is the "KB:" record line the
-  // completion gate asks for. Measured with the EXACT regexes agents.ts enforces, so the
-  // metric and the gate can never drift apart. (Population note: the gate fires only on
-  // status='idle' completions, but updates has no status column — this counts all
-  // substantive type='text' updates, a slight superset, so treat it as a floor.)
-  const KB_RECORD_EXPLICIT = /\bKB\s*[:\-]/i;
-  const KB_RECORD_LOOSE = /\b(propos(e|ed|al)|knowledge hub|\/kb\b|kb[_-]?check|wanted_id|no(thing)? reusable)\b/i;
+  // an agent's context and still have no idea whether it changed anything. The trace an agent
+  // leaves when knowledge actually informed its work is the completion's `KB: [ids]` line.
+  // A completion counts as CITED only when that line names at least one entry that exists
+  // (not rejected) — parsed with the SAME parseKbLine the completion gate uses, so the metric
+  // and the gate can never drift apart. `KB: none` is a conscious decision (kb_line_rate) but
+  // not a citation. (Population note: the gate fires only on status='idle' completions, but
+  // updates has no status column — this counts all substantive type='text' updates, a slight
+  // superset, so treat it as a floor.)
+  const existingIds = new Set(
+    (db.prepare("SELECT id FROM knowledge_entries WHERE status != 'rejected'").all() as { id: number }[]).map((r) => Number(r.id))
+  );
   const completionRows = db.prepare(
     "SELECT content, summary FROM updates WHERE type='text' AND timestamp >= datetime('now', ?)"
   ).all(since) as { content: string | null; summary: string | null }[];
   let substantiveCompletions = 0;
   let citedCompletions = 0;
+  let kbLineCompletions = 0;
+  let noneCompletions = 0;
   for (const row of completionRows) {
-    const body = `${row.content ?? ""}\n${row.summary ?? ""}`;
+    const body = `${updateText(row.content)}\n${row.summary ?? ""}`;
     if (body.trim().length < 200) continue;
     substantiveCompletions++;
-    if (KB_RECORD_EXPLICIT.test(body) || KB_RECORD_LOOSE.test(body)) citedCompletions++;
+    const kb = parseKbLine(body);
+    if (!kb) continue;
+    if (kb.kind === "none") { kbLineCompletions++; noneCompletions++; continue; }
+    if (kb.ids.some((id) => existingIds.has(id))) { kbLineCompletions++; citedCompletions++; }
   }
 
   const ratio = (n: number, d: number) => (d > 0 ? Number((n / d).toFixed(2)) : 0);
@@ -924,12 +1057,18 @@ export function accessAnalytics(days = 30): Record<string, unknown> {
     // are the two agent-initiated ratios above; open rate is kept only as an observation.
     substantive_completions: substantiveCompletions,
     citation_rate: substantiveCompletions ? Number((citedCompletions / substantiveCompletions).toFixed(3)) : null,
+    // Completions carrying a valid KB line at all (cited ids OR an explicit `KB: none`).
+    kb_line_rate: substantiveCompletions ? Number((kbLineCompletions / substantiveCompletions).toFixed(3)) : null,
+    kb_none_completions: noneCompletions,
+    // Push savings: bodies NOT re-sent because the agent already had them this context epoch.
+    inline_suppressed: windowTotals.inline_suppressed || 0,
     targets: { searches_per_task: 2, proposals_per_task: 0.3, citation_rate: 0.5 },
   };
 
   return {
     days: win,
     logging_since: first.t,
+    thresholds: { hit_min_sim: KB_HIT_MIN_SIM, weak_max_sim: KB_WEAK_MAX_SIM },
     uptake,
     knowledge_wanted: { open: wantedOpen, top: wantedTop },
     surfacing: {

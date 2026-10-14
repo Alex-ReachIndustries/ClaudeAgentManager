@@ -27,6 +27,35 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return inter / (a.size + b.size - inter);
 }
 
+/**
+ * The approved entry most similar to a proposed entry, by raw vector cosine — the duplicate
+ * gate on POST /propose. Embeds the same text shape the background embedder stores (title,
+ * body, tags, systems) so a verbatim duplicate scores ~1.0. Returns null when the embedding
+ * model isn't ready yet (the gate then can't judge, and lets the proposal through to review).
+ */
+export async function topApprovedMatch(input: {
+  title: string; body: string; tags?: string[]; systems?: string[];
+}): Promise<{ id: number; title: string; sim: number } | null> {
+  if (!embeddingsReady()) return null;
+  const entries = listEntriesForVector().filter((e) => e.status === "approved");
+  if (entries.length === 0) return null;
+  let qvec: Float32Array;
+  try {
+    qvec = await embed([input.title, input.body, (input.tags ?? []).join(" "), (input.systems ?? []).join(" ")]
+      .filter(Boolean).join("\n").slice(0, 8000), false);
+  } catch {
+    return null;
+  }
+  let best: { id: number; title: string; sim: number } | null = null;
+  for (const e of entries) {
+    const sim = cosine(qvec, e.vec);
+    if (!best || sim > best.sim) best = { id: e.id, title: e.title, sim };
+  }
+  return best;
+}
+
+export const DUPLICATE_SIM = Number.parseFloat(process.env.KB_DUPLICATE_SIM || "0.86");
+
 export async function scanConflicts(input: {
   title: string; body: string; tags?: string[]; systems?: string[];
 }): Promise<ConflictFlag[]> {
