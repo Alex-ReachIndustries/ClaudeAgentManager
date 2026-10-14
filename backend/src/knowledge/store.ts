@@ -264,6 +264,38 @@ export function listPending(): Record<string, unknown>[] {
   return rows.map(shapePending);
 }
 
+/**
+ * A reviewer's in-place improvement of a pending proposal (peer review "edit" verdict).
+ * Rewrites the proposed fields; for a 'new' proposal it also rewrites the not-yet-approved
+ * entry row the proposal created, so the accepted entry is the improved one.
+ */
+export function revisePending(id: number, fields: { title?: string; body?: string; tags?: string[] }): boolean {
+  const db = getDb();
+  const p = db.prepare("SELECT * FROM knowledge_pending WHERE id = ? AND status = 'pending'").get(id) as Record<string, unknown> | undefined;
+  if (!p) return false;
+  const tx = db.transaction(() => {
+    if (fields.title != null) db.prepare("UPDATE knowledge_pending SET proposed_title = ? WHERE id = ?").run(fields.title, id);
+    if (fields.body != null) db.prepare("UPDATE knowledge_pending SET proposed_body = ? WHERE id = ?").run(fields.body, id);
+    if (fields.tags != null) db.prepare("UPDATE knowledge_pending SET proposed_tags = ? WHERE id = ?").run(JSON.stringify(fields.tags), id);
+    const entryId = p.entry_id != null ? Number(p.entry_id) : null;
+    if (String(p.kind) === "new" && entryId != null) {
+      const cur = db.prepare("SELECT * FROM knowledge_entries WHERE id = ?").get(entryId) as Record<string, unknown> | undefined;
+      if (cur) {
+        const title = fields.title ?? String(cur.title ?? "");
+        const body = fields.body ?? String(cur.body ?? "");
+        const tags = fields.tags ?? parseArr(cur.tags);
+        const systems = parseArr(cur.systems);
+        const keywords = keywordsFor(title, tags, systems);
+        db.prepare("UPDATE knowledge_entries SET title = ?, body = ?, tags = ?, keywords = ?, updated_at = datetime('now'), embed_stale = 1 WHERE id = ?")
+          .run(title, body, JSON.stringify(tags), keywords, entryId);
+        syncEntryFts(entryId, title, body, keywords, tags);
+      }
+    }
+  });
+  tx();
+  return true;
+}
+
 export function getPending(id: number): Record<string, unknown> | undefined {
   const db = getDb();
   const row = db.prepare(`

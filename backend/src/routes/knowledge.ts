@@ -88,8 +88,12 @@ const proposeSchema = z.object({
 
 const reviewSchema = z.object({
   agent: z.string().max(200).optional(),
-  verdict: z.enum(["approve", "reject"]),
+  verdict: z.enum(["approve", "reject", "edit"]),
   note: z.string().max(2000).optional(),
+  // verdict 'edit' only: the reviewer's improved fields (same gate as a proposal).
+  title: z.string().max(500).optional(),
+  body: z.string().max(20000).optional(),
+  tags: z.array(z.string().max(80)).max(12).optional(),
 });
 
 const categoryCreateSchema = z.object({
@@ -355,8 +359,13 @@ router.post("/pending/:id/review", validate(reviewSchema), (req: Request, res: R
   const agent = callerAgent(req);
   if (!agent) { res.status(400).json({ error: "agent is required (body.agent or X-Agent-Id header)" }); return; }
   const body = req.body as z.infer<typeof reviewSchema>;
+  if (body.verdict === "edit") {
+    const gate = checkContent(body.title, body.body, false);
+    if (gate) { res.status(gate.status).json(gate.body); return; }
+  }
   try {
-    const out = submitReview(id, agent, body.verdict, body.note);
+    const revision = body.verdict === "edit" ? { title: body.title, body: body.body, tags: body.tags } : undefined;
+    const out = submitReview(id, agent, body.verdict, body.note, revision);
     if (!out.ok) { res.status(out.code).json({ error: out.error }); return; }
     logAccess({ action: "review", agent, entry_id: (getPending(id)?.entry_id as number | null) ?? null });
     if (out.status !== "pending") broadcast("knowledge-decided", { pending_id: id, status: out.status, decided_by: out.decided_by });

@@ -17,7 +17,7 @@ import { getDb, addMessage, getSetting, setSetting } from "../db.js";
 import { broadcast } from "../sse.js";
 import { publishAgentMessage } from "../mqtt.js";
 import { logger } from "../logger.js";
-import { createProposal, decideProposal, getPending, listReviews, makeSnippet } from "./store.js";
+import { createProposal, decideProposal, getPending, listReviews, makeSnippet, revisePending } from "./store.js";
 import { classifyEntry } from "./categories.js";
 
 export const KB_PURPOSE =
@@ -53,7 +53,8 @@ export function isProposer(pending: Record<string, unknown>, agent: string): boo
 // ─── Review queue + votes ─────────────────────────────────────────────────
 
 const VOTE_HOWTO = (pendingId: number) =>
-  `curl -s -X POST "$AGENT_URL/api/kb/pending/${pendingId}/review" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -H "X-Agent-Id: $CLAUDE_AGENT_ID" -d "{\\"agent\\":\\"$CLAUDE_AGENT_ID\\",\\"verdict\\":\\"approve\\",\\"note\\":\\"<one line why>\\"}"   (verdict: approve | reject)`;
+  `curl -s -X POST "$AGENT_URL/api/kb/pending/${pendingId}/review" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -H "X-Agent-Id: $CLAUDE_AGENT_ID" -d '{"verdict":"approve","note":"<one line why>"}'` +
+  ` — verdict: approve | reject | edit. For edit, also send the improved fields ("title","body","tags"); an edit counts as your approval and the improved version needs one more independent approve.`;
 
 /** The oldest pending item this agent may review: not its own, not already voted on. */
 export function reviewQueue(agent: string): Record<string, unknown> | null {
@@ -78,15 +79,37 @@ export type ReviewOutcome =
   | { ok: false; code: 400 | 403 | 404 | 409; error: string };
 
 /** Cast a vote; decides the proposal once two votes agree. */
-export function submitReview(pendingId: number, agent: string, verdict: "approve" | "reject", note?: string | null): ReviewOutcome {
+export function submitReview(
+  pendingId: number,
+  agent: string,
+  verdict: "approve" | "reject" | "edit",
+  note?: string | null,
+  revision?: { title?: string; body?: string; tags?: string[] },
+): ReviewOutcome {
   const db = getDb();
   const pending = db.prepare("SELECT * FROM knowledge_pending WHERE id = ?").get(pendingId) as Record<string, unknown> | undefined;
   if (!pending) return { ok: false, code: 404, error: `Pending proposal ${pendingId} not found` };
   if (pending.status !== "pending") return { ok: false, code: 409, error: `Proposal ${pendingId} is already decided (${pending.status})` };
   if (isProposer(pending, agent)) return { ok: false, code: 403, error: "You proposed this item — the proposer cannot review their own proposal" };
+  if (verdict === "edit") {
+    // EDIT = "accept, with my improvements". Only content proposals can be revised.
+    const kind = String(pending.kind);
+    if (kind !== "new" && kind !== "edit") return { ok: false, code: 400, error: `A '${kind}' proposal has no content to edit — vote approve or reject` };
+    if (!revision || (revision.title == null && revision.body == null && revision.tags == null)) {
+      return { ok: false, code: 400, error: "verdict 'edit' needs at least one of title, body, tags" };
+    }
+    const already = db.prepare("SELECT 1 FROM kb_reviews WHERE pending_id = ? AND agent = ?").get(pendingId, agent);
+    if (already) return { ok: false, code: 409, error: `You already reviewed proposal ${pendingId}` };
+    revisePending(pendingId, revision);
+    // Earlier approvals were for the old text, so they no longer count: the improved version
+    // needs one more independent approve. (Rejects stay: a reject is a reason to look again.)
+    db.prepare("DELETE FROM kb_reviews WHERE pending_id = ? AND verdict = 'approve'").run(pendingId);
+    note = `[edited] ${note ?? ""}`.trim();
+  }
+  const voteVerdict = verdict === "edit" ? "approve" : verdict;
   try {
     db.prepare("INSERT INTO kb_reviews (pending_id, agent, verdict, note) VALUES (?, ?, ?, ?)")
-      .run(pendingId, agent, verdict, note ?? null);
+      .run(pendingId, agent, voteVerdict, note ?? null);
   } catch (err) {
     if (err instanceof Error && /UNIQUE/i.test(err.message)) {
       return { ok: false, code: 409, error: `You already reviewed proposal ${pendingId}` };
@@ -382,7 +405,9 @@ export function startKbReviewSchedulers(): void {
   const safe = (name: string, fn: () => unknown) => () => {
     try { fn(); } catch (err) { logger.error({ err }, `KB ${name} failed`); }
   };
-  setInterval(safe("review distribution", distributeReviews), 10 * 60 * 1000);
+  // Message-based distribution is OFF by default: agents now pull reviews themselves in the
+  // background (the Stop-hook review check). Set KB_REVIEW_SWEEP=on to re-enable messaging.
+  if (process.env.KB_REVIEW_SWEEP === "on") setInterval(safe("review distribution", distributeReviews), 10 * 60 * 1000);
   // First lifecycle check shortly after boot (restarts must not starve it), then daily.
   setTimeout(safe("lifecycle", () => runLifecycle()), 10 * 60 * 1000);
   setInterval(safe("lifecycle", () => runLifecycle()), 24 * 60 * 60 * 1000);
