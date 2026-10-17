@@ -3,6 +3,7 @@ package com.claudemanager.app.ui.setup
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -312,7 +315,38 @@ private fun NotificationSettingsSection(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // User interactions only (no agent-to-agent notifications)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.onNotifyUserOnlyChanged(!state.notifyUserOnly) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "User interactions only",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = LumiOnSurface
+                    )
+                    Text(
+                        text = "Don't notify for agent-to-agent messages",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LumiOnSurfaceTertiary
+                    )
+                }
+                Checkbox(
+                    checked = state.notifyUserOnly,
+                    onCheckedChange = viewModel::onNotifyUserOnlyChanged,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = LumiPurple500,
+                        uncheckedColor = LumiOnSurfaceTertiary
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Quiet hours toggle
             Row(

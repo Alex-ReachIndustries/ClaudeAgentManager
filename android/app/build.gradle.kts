@@ -11,8 +11,8 @@ android {
         applicationId = "com.claudemanager.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "9.1.0"
+        versionCode = 11
+        versionName = "9.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

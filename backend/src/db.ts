@@ -656,6 +656,22 @@ export function getDb(): Database.Database {
   // Knowledge Hub schema (entries, pending queue, profiles + FTS5 shadow tables)
   initKnowledgeSchema(db);
 
+  // Who the latest activity involved, so clients can notify on user <-> agent traffic only.
+  // latest_update_type: type of the update that set latest_summary ('relay' = agent-to-agent).
+  // latest_ack_source: 'user' if the latest ack covered a message from the user, else 'agent'
+  // (every acked message came from another agent or a peer machine).
+  migrate("ALTER TABLE agents ADD COLUMN latest_update_type TEXT");
+  migrate("ALTER TABLE agents ADD COLUMN latest_ack_source TEXT");
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS after_update_insert_type AFTER INSERT ON updates
+      WHEN NEW.summary IS NOT NULL
+      BEGIN
+        UPDATE agents SET latest_update_type = NEW.type WHERE id = NEW.agent_id;
+      END
+    `);
+  } catch { /* exists */ }
+
   return db;
 }
 
@@ -1096,7 +1112,11 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
     SET status = 'acknowledged', acknowledged_at = datetime('now'), ack_content = ?
     WHERE agent_id = ? AND id IN (${placeholders}) AND status IN ('pending', 'delivered')
   `);
-  const updateAgent = db.prepare("UPDATE agents SET latest_ack_content = ? WHERE id = ?");
+  const updateAgent = db.prepare("UPDATE agents SET latest_ack_content = ?, latest_ack_source = ? WHERE id = ?");
+  const countUserSourced = db.prepare(`
+    SELECT COUNT(*) AS n FROM messages
+    WHERE agent_id = ? AND id IN (${placeholders}) AND (source IS NULL OR source NOT IN ('agent', 'peer'))
+  `);
   const fetchSourceAgents = db.prepare(`
     SELECT DISTINCT source_agent_id FROM messages
     WHERE agent_id = ? AND id IN (${placeholders}) AND source_agent_id IS NOT NULL
@@ -1110,7 +1130,10 @@ export function acknowledgeMessagesById(agentId: string, ids: number[], ackConte
   `);
   const transaction = db.transaction(() => {
     const result = ackStmt.run(ackContent, agentId, ...ids);
-    if (ackContent) updateAgent.run(ackContent, agentId);
+    if (ackContent) {
+      const fromUser = (countUserSourced.get(agentId, ...ids) as { n: number }).n > 0;
+      updateAgent.run(ackContent, fromUser ? "user" : "agent", agentId);
+    }
 
     // Echo ack back to each originating agent (skip cross-system agents not in this DB)
     const ackingAgent = getTitle.get(agentId) as { title: string } | undefined;

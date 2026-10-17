@@ -42,6 +42,14 @@ data class Agent(
     @SerializedName("latest_ack_content")
     val latestAckContent: String? = null,
 
+    // 'user' or 'agent': who sent the message(s) the latest ack covered. Null on older backends.
+    @SerializedName("latest_ack_source")
+    val latestAckSource: String? = null,
+
+    // Type of the update behind latestSummary ('relay' = agent-to-agent). Null on older backends.
+    @SerializedName("latest_update_type")
+    val latestUpdateType: String? = null,
+
     @SerializedName("latest_message")
     val latestMessage: String? = null,
 

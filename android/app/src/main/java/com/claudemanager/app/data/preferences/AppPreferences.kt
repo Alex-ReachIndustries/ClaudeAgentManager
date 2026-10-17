@@ -40,6 +40,7 @@ class AppPreferences(private val context: Context) {
         private val KEY_API_KEY = stringPreferencesKey("api_key")
         private val KEY_NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         private val KEY_QUIET_HOURS_ENABLED = booleanPreferencesKey("quiet_hours_enabled")
+        private val KEY_NOTIFY_USER_ONLY = booleanPreferencesKey("notify_user_interactions_only")
         private val KEY_QUIET_HOURS_START = intPreferencesKey("quiet_hours_start")
         private val KEY_QUIET_HOURS_END = intPreferencesKey("quiet_hours_end")
         private val KEY_MANAGERS_JSON = stringPreferencesKey("managers_json")
@@ -143,6 +144,22 @@ class AppPreferences(private val context: Context) {
      */
     val quietHoursEndFlow: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[KEY_QUIET_HOURS_END] ?: 8
+    }
+
+    /**
+     * Notify only for user <-> agent interactions (no agent-to-agent relays or their acks).
+     * Defaults to false.
+     */
+    val notifyUserOnlyFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_NOTIFY_USER_ONLY] ?: false
+    }
+
+    suspend fun getNotifyUserOnly(): Boolean = notifyUserOnlyFlow.first()
+
+    suspend fun setNotifyUserOnly(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTIFY_USER_ONLY] = enabled
+        }
     }
 
     /**

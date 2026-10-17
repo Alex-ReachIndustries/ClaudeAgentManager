@@ -231,6 +231,13 @@ class AgentNotificationService : Service() {
 
                 serviceScope.launch {
                     val preferences = AppPreferences(this@AgentNotificationService)
+                    // "User interactions only": skip an ack of another agent's message and a
+                    // relay update (this agent messaging another agent).
+                    if (preferences.getNotifyUserOnly()) {
+                        val agentToAgent = if (isAckUpdate) agent.latestAckSource == "agent"
+                            else agent.latestUpdateType == "relay"
+                        if (agentToAgent) return@launch
+                    }
                     if (preferences.getQuietHoursEnabled()) {
                         val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                         val start = preferences.getQuietHoursStart()

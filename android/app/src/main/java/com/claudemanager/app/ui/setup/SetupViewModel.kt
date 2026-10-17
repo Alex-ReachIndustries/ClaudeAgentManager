@@ -26,7 +26,8 @@ data class SetupUiState(
     val resolvedUrl: String? = null,
     val quietHoursEnabled: Boolean = true,
     val quietHoursStart: Int = 0,
-    val quietHoursEnd: Int = 8
+    val quietHoursEnd: Int = 8,
+    val notifyUserOnly: Boolean = false
 )
 
 /**
@@ -52,6 +53,7 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
             val quietEnabled = preferences.getQuietHoursEnabled()
             val quietStart = preferences.getQuietHoursStart()
             val quietEnd = preferences.getQuietHoursEnd()
+            val userOnly = preferences.getNotifyUserOnly()
 
             if (savedUrl.isNotBlank()) {
                 // Extract the address portion from a full URL
@@ -68,7 +70,8 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
                         resolvedUrl = savedUrl,
                         quietHoursEnabled = quietEnabled,
                         quietHoursStart = quietStart,
-                        quietHoursEnd = quietEnd
+                        quietHoursEnd = quietEnd,
+                        notifyUserOnly = userOnly
                     )
                 }
             } else {
@@ -77,7 +80,8 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
                         apiKey = savedKey,
                         quietHoursEnabled = quietEnabled,
                         quietHoursStart = quietStart,
-                        quietHoursEnd = quietEnd
+                        quietHoursEnd = quietEnd,
+                        notifyUserOnly = userOnly
                     )
                 }
             }
@@ -93,6 +97,16 @@ class SetupViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onApiKeyChanged(key: String) {
         _uiState.update { it.copy(apiKey = key) }
+    }
+
+    /**
+     * Toggle "user interactions only" notifications and persist to preferences.
+     */
+    fun onNotifyUserOnlyChanged(enabled: Boolean) {
+        _uiState.update { it.copy(notifyUserOnly = enabled) }
+        viewModelScope.launch {
+            preferences.setNotifyUserOnly(enabled)
+        }
     }
 
     /**
