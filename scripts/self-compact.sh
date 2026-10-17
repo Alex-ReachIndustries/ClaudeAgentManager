@@ -83,21 +83,29 @@ if ! wait_idle 1200; then log "agent never went idle within 20 min; giving up"; 
 type_line "/compact Preserve: your role/title, PM and project ids, the exact task in progress (repo, branch, modified files, what is done vs remaining), blockers, unacked message ids, any AWAITING_GREENLIGHT plan, and the state of your message watcher."
 log "typed /compact"
 
-# Wait for the compaction to start, then to finish.
-sleep 8
-deadline=$(( $(date +%s) + 900 ))
+# Wait for the compaction to start, then to finish. Finished = the "Compacting conversation"
+# status line has come and gone. Do not also require idle: a Monitor event queued during the
+# compaction starts a new turn the moment it ends (Sonnet C, 2026-10-17), and that is fine.
+seen=0
+start=$(date +%s)
+deadline=$(( start + 900 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
+  sleep 3
   t=$(tail_lines 12)
   if grep -qiE 'error (during|compacting)|compaction failed|conversation too long' <<<"$t"; then
     log "compaction reported an error:"; echo "$t"; exit 1
   fi
-  if ! grep -q 'Compacting conversation' <<<"$t" && ! busy; then break; fi
-  sleep 5
+  if grep -q 'Compacting conversation' <<<"$t"; then seen=1; continue; fi
+  [ "$seen" = 1 ] && break
+  # Never saw it (very fast, or not a Claude pane): accept once a minute has passed and it is idle.
+  if [ $(( $(date +%s) - start )) -ge 60 ] && ! busy; then break; fi
 done
 [ "$(date +%s)" -lt "$deadline" ] || { log "compaction did not finish within 15 min"; exit 1; }
-log "compaction finished"
+log "compaction finished (status line seen: ${seen})"
 
-if ! wait_idle 300; then log "not idle after compaction; skipping the re-ground prompt"; exit 0; fi
+# Prefer an idle pane; if the agent went straight into a queued turn, type anyway: Claude Code
+# queues the line and delivers it when that turn ends.
+wait_idle 300 || log "agent busy after compaction; the re-ground prompt will be queued"
 if [ "$REASON" = "watchdog" ]; then
   why="The watchdog compacted your context because you were close to the auto-compact limit."
 else
