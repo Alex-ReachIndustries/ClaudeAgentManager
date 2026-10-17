@@ -85,6 +85,19 @@ const AUTO_NUDGE_MIN_IDLE_MIN = 5;
 const nudgeCandidates = new Map(); // agentId -> { since, ids }
 const lastNudges = new Map();      // agentId -> timestamp
 
+// Auto-compact (approved by Alex 2026-10-17). An agent cannot run the built-in /compact itself,
+// and auto-compact only fires when a turn crosses the threshold. Sonnet B sat at 5-7% "until
+// auto-compact" for ~24h declining work as "context exhausted", so it never got there. For an idle
+// agent close to the limit, run scripts/self-compact.sh, which types /compact into its pane and
+// then tells it to re-ground. Two agreeing sightings, at most once per AUTO_COMPACT_COOLDOWN.
+const AUTO_COMPACT_MAX_PCT = 8;
+const AUTO_COMPACT_MIN_IDLE_MIN = 3;
+const AUTO_COMPACT_CONFIRM_GAP = 55 * 1000;
+const AUTO_COMPACT_COOLDOWN = 60 * 60 * 1000;
+const SELF_COMPACT_SCRIPT = path.join(__dirname, 'self-compact.sh');
+const compactCandidates = new Map(); // agentId -> { since }
+const lastCompacts = new Map();      // agentId -> timestamp
+
 // Per-agent wedge-alert cooldown: agentId -> timestamp of last alert
 const wedgeAlerts = new Map();
 
@@ -692,6 +705,100 @@ function autoNudgeDecision(f) {
 }
 
 /**
+ * Percent of context left before auto-compact, from Claude Code's footer ("7% until
+ * auto-compact", older builds "Context left until auto-compact: 7%"), or null if not shown. Only
+ * the bottom of the screen counts, so a copy in scrollback or in the transcript is ignored.
+ */
+function contextLeftPctFromText(text) {
+  const tail = String(text || '').split('\n').filter((l) => l.trim()).slice(-10).join('\n');
+  const m = tail.match(/(\d{1,3})%\s*until auto-compact/) || tail.match(/until auto-compact:\s*(\d{1,3})%/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Pure decision for the auto-compact. Returns { action: 'none' | 'arm' | 'compact', candidate }.
+ * Needs two sightings at least AUTO_COMPACT_CONFIRM_GAP apart, each with every safeguard holding.
+ */
+function autoCompactDecision(f) {
+  const ok = f.pct !== null && f.pct <= AUTO_COMPACT_MAX_PCT && !f.midTurn && !f.blocked
+    && f.sinceTurn !== null && f.sinceTurn >= AUTO_COMPACT_MIN_IDLE_MIN && !f.helperRunning
+    && (f.now - (f.lastCompactAt || 0)) >= AUTO_COMPACT_COOLDOWN;
+  if (!ok) return { action: 'none', candidate: null };
+  if (f.candidate && f.now - f.candidate.since >= AUTO_COMPACT_CONFIRM_GAP) return { action: 'compact', candidate: null };
+  if (f.candidate) return { action: 'none', candidate: f.candidate };
+  return { action: 'arm', candidate: { since: f.now } };
+}
+
+/** True if a self-compact helper already holds this agent's lock (e.g. the agent asked itself). */
+function selfCompactRunning(agentId) {
+  const r = spawnSync('flock', ['-n', `/tmp/self-compact-${String(agentId).slice(0, 8)}.lock`, 'true'], { timeout: 5000 });
+  return r.status === 1;
+}
+
+/**
+ * Find idle agents about to hit the context limit and compact them from outside.
+ */
+async function checkContextExhaustedAgents() {
+  if (shuttingDown || !IS_LINUX) return;
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch {
+    return;
+  }
+  const camId = (agents.find((a) => a.role === 'cam-linux' || a.title === 'Cam') || {}).id || null;
+
+  for (const agent of agents) {
+    if (agent.status === 'archived') continue;
+    if (!findClaudePidByResumeId(agent.id)) continue;
+    const target = findAgentTmuxTarget(agent.id);
+    if (!target) continue;
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) continue;
+    const pct = contextLeftPctFromText(r.stdout);
+    if (pct === null) { compactCandidates.delete(agent.id); continue; }
+
+    const decision = autoCompactDecision({
+      pct,
+      midTurn: paneTurnInProgress(target),
+      sinceTurn: paneMinutesSinceTurnEnded(target),
+      blocked: paneShowsUsageLimitMenu(target) || !!panePermissionPrompt(target) || paneWaitingOnUsageLimit(target),
+      helperRunning: selfCompactRunning(agent.id),
+      lastCompactAt: lastCompacts.get(agent.id) || 0,
+      candidate: compactCandidates.get(agent.id) || null,
+      now: Date.now(),
+    });
+    if (decision.action !== 'compact') {
+      if (decision.candidate) compactCandidates.set(agent.id, decision.candidate);
+      else compactCandidates.delete(agent.id);
+      continue;
+    }
+
+    compactCandidates.delete(agent.id);
+    lastCompacts.set(agent.id, Date.now());
+    try {
+      spawn('bash', [SELF_COMPACT_SCRIPT, agent.id, '--reason', 'watchdog'], { detached: true, stdio: 'ignore' }).unref();
+    } catch (err) {
+      logAgent(agent.id, `AUTO-COMPACT failed to start helper: ${err.message}`);
+      continue;
+    }
+    logAgent(agent.id, `AUTO-COMPACT: ${pct}% until auto-compact and idle; started self-compact.sh for ${target}`);
+
+    if (camId && camId !== agent.id) {
+      try {
+        await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
+          content: `[WATCHDOG] AUTO-COMPACTED ${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)}): idle at ${pct}% until auto-compact. Started scripts/self-compact.sh (types /compact, then a /session-connect compact prompt) in ${target}. Log: /tmp/self-compact-${agent.id.slice(0, 8)}.log. No action needed unless that log shows an error.`,
+          priority: 5,
+          source: 'agent',
+          source_peer_name: 'watchdog',
+        });
+      } catch (err) { log(`Auto-compact report to Cam FAILED (${err.message})`); }
+    }
+  }
+}
+
+/**
  * True if a deliver=true poller for this agent is a real Monitor: a direct child of the agent's
  * claude process whose stdout is a socket. A shell (run_in_background) writes to a file and a
  * nohup orphan is parented by systemd; neither counts. Used to tell fault 5 (healthy Monitor,
@@ -1016,6 +1123,7 @@ async function start() {
   activeIntervals.push(setInterval(checkAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkDeafAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkWedgedAgents, CHECK_INTERVAL));
+  activeIntervals.push(setInterval(checkContextExhaustedAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
 
   // First check after 10s (let things settle)
@@ -1034,4 +1142,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { findClaudeExePidByResumeId };
+module.exports = { findClaudeExePidByResumeId, contextLeftPctFromText, autoCompactDecision };

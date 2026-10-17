@@ -83,6 +83,8 @@ Maintain `claudeadmin/context-summary.md` — compressed snapshot of active stat
 ## Context pruning (35% threshold)
 At ~350k tokens, run `/compact-context`. But if context is relevant to ongoing tasks, skip and recheck at +10%. Only prune genuinely stale content.
 
+**Never decline work as "context exhausted" — run `/compact-context` and carry on.** You cannot run the built-in `/compact` yourself. `/compact-context` saves your state, then `scripts/self-compact.sh` types `/compact` into your pane once your turn ends and prompts you to re-ground. The watchdog also compacts idle agents at ≤8% until auto-compact.
+
 ---
 
 # 3. AWS — HARD PROHIBITION
