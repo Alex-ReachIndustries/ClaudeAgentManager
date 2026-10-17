@@ -59,6 +59,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.claudemanager.app.data.models.ServerManager
+import com.claudemanager.app.ui.setup.NotificationSettingsSection
+import com.claudemanager.app.ui.setup.SetupViewModel
 import com.claudemanager.app.ui.theme.LumiBackground
 import com.claudemanager.app.ui.theme.LumiCard
 import com.claudemanager.app.ui.theme.LumiError
@@ -83,12 +85,15 @@ fun ManagersScreen(
     viewModel: ManagersViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Notification preferences live in SetupViewModel (shared with the first-run setup screen).
+    val notifViewModel: SetupViewModel = viewModel()
+    val notifState by notifViewModel.uiState.collectAsState()
 
     Scaffold(
         containerColor = LumiBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Managers", style = MaterialTheme.typography.titleLarge, color = LumiOnSurface) },
+                title = { Text("Settings", style = MaterialTheme.typography.titleLarge, color = LumiOnSurface) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = LumiOnSurface)
@@ -134,6 +139,10 @@ fun ManagersScreen(
                         onEdit = { viewModel.openEditDialog(manager) },
                         onDelete = { viewModel.confirmDelete(manager) }
                     )
+                }
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    NotificationSettingsSection(viewModel = notifViewModel, state = notifState)
                 }
                 item { Spacer(modifier = Modifier.height(80.dp)) }
             }

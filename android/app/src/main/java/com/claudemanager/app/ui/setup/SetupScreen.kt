@@ -281,11 +281,12 @@ fun SetupScreen(
 }
 
 /**
- * Notification settings card with quiet hours toggle and hour pickers.
+ * Notification settings card: "user interactions only" and quiet hours. Shown on the first-run
+ * setup screen and on the Settings (managers) screen reached from the gear icon.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NotificationSettingsSection(
+internal fun NotificationSettingsSection(
     viewModel: SetupViewModel,
     state: SetupUiState
 ) {
