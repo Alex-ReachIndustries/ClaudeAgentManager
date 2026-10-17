@@ -58,6 +58,8 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -118,6 +120,45 @@ private sealed class ConversationItem(val sortTime: Long, val itemKey: String) {
     class Update(val update: AgentUpdate, time: Long) : ConversationItem(time, "update-${update.id}")
     class Message(val message: AgentMessage, time: Long) : ConversationItem(time, "msg-${message.id}")
     class File(val fileInfo: com.claudemanager.app.data.models.FileInfo, time: Long) : ConversationItem(time, "file-${fileInfo.id}")
+}
+
+/**
+ * Agent-to-agent traffic: relays this agent sent to or received from other agents (relay
+ * updates), and messages that came from another agent, a peer machine or the watchdog
+ * (source "agent" / "peer"). Everything else is between the user and this agent.
+ */
+private fun isAgentComms(update: AgentUpdate): Boolean = update.type == UpdateType.RELAY
+
+private fun isAgentComms(message: AgentMessage): Boolean =
+    message.source == "agent" || message.source == "peer"
+
+/**
+ * Slim header row with the "Hide agent comms" checkbox. The whole row is the touch target.
+ */
+@Composable
+private fun AgentCommsFilterRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(start = 4.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = CheckboxDefaults.colors(
+                checkedColor = LumiPurple500,
+                uncheckedColor = LumiOnSurfaceTertiary
+            )
+        )
+        Text(
+            text = "Hide agent-to-agent messages",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (checked) LumiOnSurface else LumiOnSurfaceSecondary
+        )
+    }
+    HorizontalDivider(color = LumiCard, thickness = 1.dp)
 }
 
 /**
@@ -191,14 +232,20 @@ fun ConversationPanel(
         if (!isUploading) uploadingFileName = null
     }
 
+    // "Hide agent comms": show only user <-> agent traffic. Remembered across agents and restarts.
+    val chatPrefs = remember { context.getSharedPreferences("chat_view", android.content.Context.MODE_PRIVATE) }
+    var hideAgentComms by remember { mutableStateOf(chatPrefs.getBoolean("hide_agent_comms", false)) }
+
     // Build merged chronological list
-    val items = remember(updates, messages, files) {
+    val items = remember(updates, messages, files, hideAgentComms) {
         val merged = mutableListOf<ConversationItem>()
         for (u in updates) {
+            if (hideAgentComms && isAgentComms(u)) continue
             val time = TimeUtils.parseIso(u.timestamp)?.time ?: 0L
             merged.add(ConversationItem.Update(u, time))
         }
         for (m in messages) {
+            if (hideAgentComms && isAgentComms(m)) continue
             val time = TimeUtils.parseIso(m.createdAt)?.time ?: 0L
             merged.add(ConversationItem.Message(m, time))
         }
@@ -256,6 +303,14 @@ fun ConversationPanel(
     }
 
     Column(modifier = modifier.imePadding()) {
+        AgentCommsFilterRow(
+            checked = hideAgentComms,
+            onCheckedChange = {
+                hideAgentComms = it
+                chatPrefs.edit().putBoolean("hide_agent_comms", it).apply()
+            }
+        )
+
         // Conversation feed
         if (items.isEmpty() && !isLoadingMore) {
             Box(
