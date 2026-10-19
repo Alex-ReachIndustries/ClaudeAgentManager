@@ -846,7 +846,7 @@ function paneWaitingOnUsageLimit(target) {
     let reached = -1;
     let reset = -1;
     lines.forEach((l, i) => {
-      if (/Usage limit reached|hit your (session|usage) limit/.test(l)) reached = i;
+      if (/Usage limit reached|hit your (session|usage|weekly) limit/.test(l)) reached = i;
       if (/Usage limit reset/.test(l)) reset = i;
     });
     return reached >= 0 && reached > reset;
@@ -928,6 +928,15 @@ async function checkWedgedAgents() {
       if (prompt) {
         action = `is waiting at a permission prompt: "${prompt}" — Do you want to proceed? It has NOT been answered (the watchdog never answers these). Check what it is asking in ${target} and decide.`;
       }
+    }
+
+    // Sitting out a usage limit: it cannot poll, so heartbeat for it. Otherwise the backend's 30-minute
+    // archive sweep archives it and the launcher closes its window mid-wait (PM + Sonnet A, 2026-10-18,
+    // during a 2.5-day weekly limit). The endpoint only touches last_update_at and consumes nothing.
+    if (!action && target && paneWaitingOnUsageLimit(target)) {
+      try { await postJSON(`${SERVER_URL}/api/agents/${agent.id}/heartbeat`, {}); }
+      catch (err) { log(`Limit-wait heartbeat for ${agent.id.slice(0, 8)} FAILED (${err.message})`); }
+      continue;
     }
 
     const age = Date.now() - parseTimestamp(agent.last_update_at);

@@ -1246,6 +1246,19 @@ router.post("/:id/close", (req: Request, res: Response) => {
   }
 });
 
+// POST /:id/heartbeat — mark an agent alive without consuming its messages. Used by the watchdog for
+// agents sitting out a usage limit: they cannot poll, so without this the 30-minute archive sweep
+// archives them and the launcher closes their windows (PM + Sonnet A, 2026-10-18).
+router.post("/:id/heartbeat", (req: Request, res: Response) => {
+  const id = param(req, "id");
+  if (!getAgent(id)) {
+    res.status(404).json({ error: "Agent not found" });
+    return;
+  }
+  touchAgentHeartbeat(id);
+  res.json({ ok: true });
+});
+
 // POST /:id/resume — resume an archived/suspended agent
 router.post("/:id/resume", (req: Request, res: Response) => {
   try {
@@ -1261,7 +1274,18 @@ router.post("/:id/resume", (req: Request, res: Response) => {
       return;
     }
 
-    const folderPath = (agent.cwd as string) || "";
+    // The launcher resumes in this folder, and claude --resume runs the session there. With no cwd the
+    // launcher fell back to its OWN directory (Sonnet A, 2026-10-19: resumed in ClaudeManager/launcher).
+    // Fall back to the agent's project folder; with neither, refuse rather than start it somewhere wrong.
+    let folderPath = (agent.cwd as string) || "";
+    if (!folderPath && agent.project_id) {
+      const proj = getProject(agent.project_id as string);
+      folderPath = (proj?.folder_path as string) || "";
+    }
+    if (!folderPath) {
+      res.status(400).json({ error: "Agent has no working directory (cwd) and no project folder; set one with PATCH /api/agents/:id {\"cwd\": \"/abs/path\"} and retry" });
+      return;
+    }
 
     // Create a resume launch request
     const launchResult = createLaunchRequest("resume", folderPath, id);
