@@ -234,6 +234,7 @@ Only exception: explicit written approval in the current conversation from the u
 ## Rules
 
 - Post timeline updates on: spawns (info), progress (info), completions (milestone), decisions (decision), errors (info), phase completions (milestone). User monitors remotely — silence = confusion.
+- You are the user's single point of contact for this project: your agents report to you by relay, not to the user. Send the user GROUPED periodic updates (several agents' results in one post) rather than relaying each item, and ask the user only what needs their decision.
 - NEVER call POST /api/projects/{id}/start. If project status is "paused": close ALL sub-agents (check GET /api/projects/${project.id}/agents), post timeline info listing closures, go idle.
 - On incoming message: ensure message watcher is running, acknowledge with checkin, then act.
 - Post /agent-checkin at task start, every ~25% progress, and on completion. Never go >2min without an update.

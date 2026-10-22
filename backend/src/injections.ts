@@ -39,14 +39,14 @@ export function getCompactReminder(
     // Haiku: full session rules every message, plus a one-line PM pointer with
     // the relay command inline (haiku should not have to reconstruct it).
     const pmLine = pmAgentId
-      ? `\n[PM ${pmAgentId}] Relay PLAN/STATUS/COMPLETED/BLOCKED to your PM: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmAgentId}","content":"..."}'`
+      ? `\n[PM ${pmAgentId}] Report to your PM, not the user (status heartbeats only on the dashboard). Relay PLAN/STATUS/COMPLETED/BLOCKED: curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmAgentId}","content":"..."}'`
       : "";
     return SESSION_RULES_HAIKU + pmLine + poolLine;
   }
 
   const roleLine = roleLabel ? `\n[role: ${roleLabel}]` : "";
   const pmLine = pmAgentId
-    ? `\n[PM ${pmAgentId}] Relay PLAN before executing, STATUS if a step passes 10 min, COMPLETED/BLOCKED when done.`
+    ? `\n[PM ${pmAgentId}] Report to your PM, not the user (dashboard = brief status only). Relay PLAN before executing, STATUS if a step passes 10 min, COMPLETED/BLOCKED when done.`
     : "";
   return `
 ---
@@ -196,6 +196,11 @@ const PM_SUB_RULES_HAIKU = (pmId: string) => `
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
 
+WHO YOU REPORT TO — your PM, not the user (alex, 2026-10-22):
+- Results, PR links, questions, decisions and blockers go to the PM by relay. The PM groups them into periodic updates for the user and asks the user whatever needs a decision.
+- Your own dashboard posts are brief type=status heartbeats only (what you're on). No type=text reports or questions aimed at the user, and never status=waiting-for-input for the user. This overrides the generic "post a type=text completion update" rule.
+- If the USER messages you directly, act on it and answer briefly, then tell your PM.
+
 WORKTREE — MANDATORY BEFORE ANY GIT WORK:
 Create your own worktree IMMEDIATELY after /session-connect, before touching any files:
   git worktree add ../<branch> -b <branch>   (use feat/<task-slug>)
@@ -228,10 +233,15 @@ If you receive a message starting with [TASK ASSIGNMENT]: read it fully — your
 const PM_SUB_RULES_SONNET = (pmId: string) => `
 
 [PM RULES] You are working under a Project Manager (PM agent ID: ${pmId}).
-The PM runs on Opus and manages a pool of 3 Sonnet agents — you are one of them.
+The PM runs on Opus and manages a pool of Sonnet agents — you are one of them.
 
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
+
+WHO YOU REPORT TO — your PM, not the user (alex, 2026-10-22):
+- Results, PR links, questions, decisions and blockers go to the PM by relay. The PM groups them into periodic updates for the user and asks the user whatever needs a decision.
+- Your own dashboard posts are brief type=status heartbeats only (what you're on). No type=text reports or questions aimed at the user, and never status=waiting-for-input for the user. This overrides the generic "post a type=text completion update" rule.
+- If the USER messages you directly, act on it and answer briefly, then tell your PM.
 
 WORKTREE — MANDATORY BEFORE ANY GIT WORK:
 Create your own worktree IMMEDIATELY after /session-connect, before touching any files:
@@ -287,10 +297,15 @@ OTHER:
 const PM_SUB_RULES_OPUS = (pmId: string) => `
 
 [PM RULES] You are working under a Project Manager (PM agent ID: ${pmId}).
-The PM runs on Opus and manages a pool of 3 Sonnet agents — you are one of them.
+The PM runs on Opus and manages a pool of Sonnet agents — you are one of them.
 
 MESSAGE YOUR PM:
 curl -s -X POST "$AGENT_URL/api/agents/$SESSION_UUID/relay" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"target_agent_id":"${pmId}","content":"YOUR MESSAGE HERE"}'
+
+WHO YOU REPORT TO — your PM, not the user (alex, 2026-10-22):
+- Results, PR links, questions, decisions and blockers go to the PM by relay. The PM groups them into periodic updates for the user and asks the user whatever needs a decision.
+- Your own dashboard posts are brief type=status heartbeats only (what you're on). No type=text reports or questions aimed at the user, and never status=waiting-for-input for the user. This overrides the generic "post a type=text completion update" rule.
+- If the USER messages you directly, act on it and answer briefly, then tell your PM.
 
 WORKTREE — MANDATORY BEFORE ANY GIT WORK:
 Create your own worktree IMMEDIATELY after /session-connect, before touching any files:
