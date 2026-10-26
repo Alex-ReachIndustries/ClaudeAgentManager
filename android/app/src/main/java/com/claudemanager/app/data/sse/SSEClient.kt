@@ -251,6 +251,19 @@ class SSEClient(
                 val conflicts = json.get("conflicts")?.asInt ?: 0
                 SSEEvent.KnowledgePending(pendingId, entryId, kind, title, proposingAgent, conflicts)
             }
+            "system-alert" -> {
+                val json = com.google.gson.JsonParser.parseString(data).asJsonObject
+                fun str(key: String, default: String): String =
+                    if (json.has(key) && !json.get(key).isJsonNull) json.get(key).asString else default
+                SSEEvent.SystemAlert(
+                    id = str("id", ""),
+                    kind = str("kind", "info"),
+                    severity = str("severity", "warning"),
+                    title = str("title", "System alert"),
+                    message = str("message", ""),
+                    createdAt = str("created_at", "")
+                )
+            }
             else -> {
                 Log.d(TAG, "Unknown SSE event type: $type")
                 null
@@ -339,5 +352,18 @@ sealed class SSEEvent {
         val title: String,
         val proposingAgent: String?,
         val conflicts: Int
+    ) : SSEEvent()
+
+    /**
+     * A host-level alert from the manager (fleet silent / recovered, usage limit nearing).
+     * Always a genuine user-facing notification, never agent-to-agent traffic.
+     */
+    data class SystemAlert(
+        val id: String,
+        val kind: String,
+        val severity: String,
+        val title: String,
+        val message: String,
+        val createdAt: String
     ) : SSEEvent()
 }

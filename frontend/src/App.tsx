@@ -14,6 +14,7 @@ import PendingKnowledge from './components/PendingKnowledge';
 import Costs from './components/Costs';
 import BottomNav from './components/BottomNav';
 import ErrorBoundary from './components/ErrorBoundary';
+import SystemAlertBanner from './components/SystemAlertBanner';
 
 function App() {
   const { agents, loading, error, refetch, connectionState } = useAgents();
@@ -22,6 +23,7 @@ function App() {
     <div className="min-h-screen flex flex-col">
       <Header agents={agents} connectionState={connectionState} />
       <main className="flex-1 pt-16 pb-20 md:pb-0">
+        <SystemAlertBanner />
         <Routes>
           <Route
             path="/"

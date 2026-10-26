@@ -879,6 +879,71 @@ function panePermissionPrompt(target) {
 }
 
 /**
+ * Claude usage readings from Claude Code's footer, e.g. "You've used 86% of your weekly limit ·
+ * resets Oct 28, 8am (Europe/London)" or the truncated "You've used 99% of your session li…".
+ * Returns [{ limit: 'session'|'weekly', percent, resets }] (resets null when cut off). Only the
+ * bottom of the screen counts, so a copy quoted in the transcript is ignored.
+ */
+function usageFromText(text) {
+  const tail = String(text || '').split('\n').filter((l) => l.trim()).slice(-8);
+  const out = [];
+  for (const line of tail) {
+    const m = line.match(/You['’]ve used (\d{1,3})% of your (session|weekly)\b/);
+    if (!m) continue;
+    const r = line.match(/resets ([^·…]+?)\s*(?:\(|·|…|$)/);
+    out.push({ limit: m[2], percent: Number(m[1]), resets: r ? r[1].trim() : null });
+  }
+  return out;
+}
+
+const USAGE_ALERT_MIN_PCT = 95;                  // backend alerts at 95 and 99
+const USAGE_REPOST_MS = 10 * 60 * 1000;          // re-send an unchanged reading at most every 10 min
+const usageLastPost = new Map();                 // limit -> { percent, at }
+const usageLastResets = new Map();               // limit -> last reset text seen
+
+/**
+ * Report the highest Claude usage seen across agent panes to the backend, which alerts the user
+ * (genuine notification) once per threshold per limit window.
+ */
+async function checkUsageLimits() {
+  if (shuttingDown || !IS_LINUX) return;
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch {
+    return;
+  }
+  const max = new Map(); // limit -> percent
+  for (const agent of agents) {
+    if (agent.status === 'archived') continue;
+    const target = findAgentTmuxTarget(agent.id);
+    if (!target) continue;
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) continue;
+    for (const u of usageFromText(r.stdout)) {
+      if (u.resets) usageLastResets.set(u.limit, u.resets);
+      if (u.percent > (max.get(u.limit) ?? -1)) max.set(u.limit, u.percent);
+    }
+  }
+  const now = Date.now();
+  for (const [limit, percent] of max) {
+    if (percent < USAGE_ALERT_MIN_PCT) continue;
+    const last = usageLastPost.get(limit);
+    if (last && last.percent === percent && now - last.at < USAGE_REPOST_MS) continue;
+    usageLastPost.set(limit, { percent, at: now });
+    const body = { limit, percent: Math.min(100, percent) };
+    if (usageLastResets.has(limit)) body.resets = usageLastResets.get(limit);
+    try {
+      const res = await postJSON(`${SERVER_URL}/api/system/alerts/usage`, body);
+      if (res && res.alerted) log(`USAGE ALERT sent: ${limit} limit at ${percent}%`);
+    } catch (err) {
+      log(`Usage report FAILED (${err.message})`);
+    }
+  }
+}
+
+/**
  * True if the agent already has an unacked re-arm reminder from the watchdog. One is enough: it
  * reads it when its turn ends, and adding another every cooldown only stacks up duplicates.
  */
@@ -1133,6 +1198,7 @@ async function start() {
   activeIntervals.push(setInterval(checkDeafAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkWedgedAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkContextExhaustedAgents, CHECK_INTERVAL));
+  activeIntervals.push(setInterval(checkUsageLimits, CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
 
   // First check after 10s (let things settle)
@@ -1151,4 +1217,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { findClaudeExePidByResumeId, contextLeftPctFromText, autoCompactDecision };
+module.exports = { findClaudeExePidByResumeId, contextLeftPctFromText, autoCompactDecision, usageFromText };

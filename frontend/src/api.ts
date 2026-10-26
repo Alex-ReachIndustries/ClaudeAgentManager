@@ -562,6 +562,34 @@ export function subscribeKnowledgePending(
   };
 }
 
+export interface SystemAlert {
+  id: string;
+  kind: 'fleet-silent' | 'fleet-recovered' | 'usage';
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  message: string;
+  created_at: string;
+}
+
+/** Recent host-level alerts (fleet silence, usage limits), newest first. */
+export async function getSystemAlerts(): Promise<SystemAlert[]> {
+  return request<SystemAlert[]>('/system/alerts');
+}
+
+/** Live 'system-alert' events. Own EventSource, like subscribeKnowledgePending (SSE-only). */
+export function subscribeSystemAlerts(onAlert: (alert: SystemAlert) => void): () => void {
+  const tokenParam = apiKey ? `?token=${encodeURIComponent(apiKey)}` : '';
+  const es = new EventSource(`${BASE}/events${tokenParam}`);
+  const handler = (e: MessageEvent) => {
+    try { onAlert(JSON.parse(e.data)); } catch { /* ignore */ }
+  };
+  es.addEventListener('system-alert', handler);
+  return () => {
+    es.removeEventListener('system-alert', handler);
+    es.close();
+  };
+}
+
 // --- SSE connection state tracking ---
 export type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 

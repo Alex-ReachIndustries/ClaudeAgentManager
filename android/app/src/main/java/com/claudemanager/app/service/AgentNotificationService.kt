@@ -238,30 +238,27 @@ class AgentNotificationService : Service() {
                             else agent.latestUpdateType == "relay"
                         if (agentToAgent) return@launch
                     }
-                    if (preferences.getQuietHoursEnabled()) {
-                        val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-                        val start = preferences.getQuietHoursStart()
-                        val end = preferences.getQuietHoursEnd()
-                        val inQuiet = if (start < end) now in start until end else now >= start || now < end
-                        if (inQuiet) return@launch
-                    }
+                    if (inQuietHours(preferences)) return@launch
                     NotificationHelper.showAgentNotification(this@AgentNotificationService, agent, notifText)
                 }
             }
             is SSEEvent.AgentDeleted -> NotificationHelper.cancelAgentNotification(this, event.agentId)
+            is SSEEvent.SystemAlert -> {
+                // Always a genuine user notification: the "User interactions only" filter does
+                // not apply, and it is shown even with the app open. Quiet hours still apply.
+                serviceScope.launch {
+                    val preferences = AppPreferences(this@AgentNotificationService)
+                    if (inQuietHours(preferences)) return@launch
+                    NotificationHelper.showSystemAlertNotification(this@AgentNotificationService, event)
+                }
+            }
             is SSEEvent.KnowledgePending -> {
                 val app = application as? ClaudeManagerApp
                 if (app?.isAppInForeground == true) return
 
                 serviceScope.launch {
                     val preferences = AppPreferences(this@AgentNotificationService)
-                    if (preferences.getQuietHoursEnabled()) {
-                        val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-                        val start = preferences.getQuietHoursStart()
-                        val end = preferences.getQuietHoursEnd()
-                        val inQuiet = if (start < end) now in start until end else now >= start || now < end
-                        if (inQuiet) return@launch
-                    }
+                    if (inQuietHours(preferences)) return@launch
                     NotificationHelper.showKnowledgeNotification(
                         this@AgentNotificationService,
                         title = event.title,
@@ -273,6 +270,14 @@ class AgentNotificationService : Service() {
             }
             else -> Unit
         }
+    }
+
+    private suspend fun inQuietHours(preferences: AppPreferences): Boolean {
+        if (!preferences.getQuietHoursEnabled()) return false
+        val now = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val start = preferences.getQuietHoursStart()
+        val end = preferences.getQuietHoursEnd()
+        return if (start < end) now in start until end else now >= start || now < end
     }
 
     private fun updateServiceNotification(connectionState: String) {

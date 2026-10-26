@@ -16,6 +16,7 @@ import com.claudemanager.app.MainActivity
 import com.claudemanager.app.R
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentStatus
+import com.claudemanager.app.data.sse.SSEEvent
 import com.claudemanager.app.service.AgentNotificationService
 
 /**
@@ -32,9 +33,16 @@ object NotificationHelper {
     const val CHANNEL_AGENTS = "agent_updates"
     const val CHANNEL_SERVICE = "service_status"
     const val CHANNEL_KNOWLEDGE = "knowledge_review"
+    const val CHANNEL_SYSTEM = "system_alerts"
 
     /** Base id for knowledge-review notifications (offset by pending id). */
     private const val NOTIF_ID_KNOWLEDGE_BASE = 100_000
+
+    /**
+     * Base id for system alerts. One slot per alert group, so a newer alert replaces the
+     * older one: fleet-recovered replaces fleet-silent, and 99% replaces 95%.
+     */
+    private const val NOTIF_ID_SYSTEM_BASE = 200_000
 
     const val KEY_REPLY_TEXT = "key_reply_text"
     const val ACTION_REPLY = "com.claudemanager.app.ACTION_REPLY"
@@ -94,7 +102,19 @@ object NotificationHelper {
 
         notificationManager.createNotificationChannel(agentChannel)
         notificationManager.createNotificationChannel(serviceChannel)
+        // System alerts channel -- high importance: fleet silent / usage limit nearing
+        val systemChannel = NotificationChannel(
+            CHANNEL_SYSTEM,
+            "System alerts",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Fleet outages and usage limits nearing"
+            enableVibration(true)
+            enableLights(true)
+        }
+
         notificationManager.createNotificationChannel(knowledgeChannel)
+        notificationManager.createNotificationChannel(systemChannel)
     }
 
     /**
@@ -382,6 +402,46 @@ object NotificationHelper {
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(contentPendingIntent)
+            .build()
+
+        try {
+            notificationManager.notify(notificationId, notification)
+        } catch (_: SecurityException) {
+            // POST_NOTIFICATIONS permission not granted -- silently ignore
+        }
+    }
+
+    /**
+     * Shows a host-level system alert (fleet silent / recovered, usage limit nearing).
+     * Alerts in the same group share a notification id, so the latest replaces the last.
+     */
+    fun showSystemAlertNotification(context: Context, alert: SSEEvent.SystemAlert) {
+        val notificationManager = NotificationManagerCompat.from(context)
+
+        val group = if (alert.kind.startsWith("fleet")) 0 else 1
+        val notificationId = NOTIF_ID_SYSTEM_BASE + group
+
+        val contentIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val critical = alert.severity == "critical"
+        val notification = NotificationCompat.Builder(context, CHANNEL_SYSTEM)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(COLOR_LUMI_PURPLE)
+            .setContentTitle(alert.title)
+            .setContentText(alert.message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(alert.message))
+            .setCategory(if (critical) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_STATUS)
+            .setPriority(if (critical) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(contentPendingIntent)
             .build()

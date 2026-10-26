@@ -17,6 +17,8 @@ import projectsRouter from "./routes/projects.js";
 import rolesRouter from "./routes/roles.js";
 import totpRouter from "./routes/totp.js";
 import knowledgeRouter from "./routes/knowledge.js";
+import systemRouter from "./routes/system.js";
+import { startFleetSilenceMonitor } from "./system-alerts.js";
 import { warmEmbeddings } from "./knowledge/embeddings.js";
 import { startEmbedder } from "./knowledge/embedder.js";
 import { seedBaselineIfEmpty } from "./knowledge/baseline-seed.js";
@@ -105,6 +107,7 @@ app.use("/api/retention", retentionRouter);
 app.use("/api/roles", rolesRouter);
 app.use("/api/totp", totpRouter);
 app.use("/api/kb", knowledgeRouter);
+app.use("/api/system", systemRouter);
 
 // Failsafe: look up a file by ID alone (no agent_id required).
 // Prevents 400 loops when agents call the wrong endpoint path (missing agent segment).
@@ -193,6 +196,10 @@ const server = app.listen(PORT, () => {
     }
 
   }, 5 * 60 * 1000);
+
+  // Fleet-silence alert: tell the user (genuine notification) when no agent has checked in
+  // for 15 min, e.g. the host's agent session died. Runs here because the backend survives that.
+  startFleetSilenceMonitor();
 
   // Re-engagement sweep: nudge idle agents that acked a task but never reported
   // (completed-but-unreported / stalled after a self-compact). One nudge per idle spell.
