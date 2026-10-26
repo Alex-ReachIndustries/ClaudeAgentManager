@@ -42,5 +42,10 @@ expect allow 'cat > notes.md <<EOF
 never run kill $(ps -o ppid= -p X)
 EOF'
 expect allow 'kill $(ps -o ppid= -p 1) # kill-guard-ok'
+# Prose that mentions ppid and kill is not a kill (2026-10-26 false positive on a log write).
+expect allow 'echo "- Session crash: kill of systemd --user — ppid-kill took it down" >> notes.md'
+expect allow 'git commit -m "kill guard: block ppid kills"'
+expect deny  'if true; then kill $(ps -o ppid= -p 5); fi'
+expect deny  'sudo kill -9 -1'
 echo "deny-dangerous-kill: $pass passed, $fail failed"
 [ $fail -eq 0 ]
