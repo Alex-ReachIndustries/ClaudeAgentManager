@@ -158,6 +158,9 @@ Before CPU/GPU/disk-heavy ops:
 3. If CPU >80% or disk <2GB free, delay 60s and recheck (up to 5 retries)
 4. Stagger heavy operations. Clean up after builds.
 
+## Stopping processes — never take the session down
+Kill only processes YOU started: keep the pid when you start it (`cmd & echo $!`), or `docker kill <your container>`. **Never** kill a pid computed from a parent (`ps -o ppid=`, `$PPID`). **Never** pkill/killall/`pgrep -x` by a generic name (make, python, node, docker, claude). An orphaned process's parent is `systemd --user`; on 2026-10-26 `kill $(ps -o ppid= -p <pid>)` SIGTERMed it and logged out the whole session (desktop, every agent, watchdog) for 8 hours. A hook and a `kill` guard now block these. Before any computed kill, check the pid with `ps -o pid,ppid,comm,args -p <pid>`.
+
 ## Code quality
 Fix continuously: injection, XSS, SQLi, secrets, auth, error handling, races, type safety.
 
