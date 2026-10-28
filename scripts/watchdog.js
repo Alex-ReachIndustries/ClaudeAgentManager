@@ -95,8 +95,26 @@ const AUTO_COMPACT_MIN_IDLE_MIN = 3;
 const AUTO_COMPACT_CONFIRM_GAP = 55 * 1000;
 const AUTO_COMPACT_COOLDOWN = 60 * 60 * 1000;
 const SELF_COMPACT_SCRIPT = path.join(__dirname, 'self-compact.sh');
+const CAM_AGENT_ID = 'd2a07dc6-2325-4276-a0db-ad4cd3f658fc'; // Cam manages its own watcher
 const compactCandidates = new Map(); // agentId -> { since }
 const lastCompacts = new Map();      // agentId -> timestamp
+
+// Watcher recovery (approved by Alex 2026-10-28). An agent's Monitor watcher expires after 30
+// min; an agent that ends a turn without re-arming, or whose watcher expires mid-way through a long
+// turn, is deaf until someone notices, and its missing poll (its heartbeat) gets it archived after
+// 30 min. Cam fixed this by hand ~15 times on 2026-10-28. Now: 0 pollers for 3+ min and idle ->
+// type a re-arm prompt; busy -> heartbeat every check and queue the prompt; 2+ pollers -> alert Cam.
+const WATCHER_MISSING_MIN_MS = 3 * 60 * 1000;      // 0 (or 2+) pollers this long before acting
+const WATCHER_NUDGE_COOLDOWN = 30 * 60 * 1000;     // per agent, between typed re-arm prompts
+const WATCHER_DUPE_ALERT_COOLDOWN = 60 * 60 * 1000;
+const WATCHER_REARM_PROMPT = '[WATCHDOG] Your message watcher is not running (0 pollers for your id). '
+  + 'Make sure exactly ONE Monitor watcher is running (deliver=true, timeout_ms 1800000): if one is still '
+  + 'running keep it; otherwise start one. Ack any pending messages, then carry on. Run long jobs with '
+  + 'run_in_background so the watcher keeps polling.';
+const watcherZeroSince = new Map();  // agentId -> first time seen with 0 pollers
+const watcherMultiSince = new Map(); // agentId -> first time seen with 2+ pollers
+const lastWatcherNudges = new Map(); // agentId -> timestamp of last typed/queued re-arm prompt
+const lastWatcherAlerts = new Map(); // agentId -> timestamp of last duplicate-poller alert
 
 // Per-agent wedge-alert cooldown: agentId -> timestamp of last alert
 const wedgeAlerts = new Map();
@@ -736,6 +754,37 @@ function selfCompactRunning(agentId) {
 }
 
 /**
+ * Number of message pollers for an agent, from a process list of { pid, ppid, comm, cmdline }:
+ * bash running the poll loop (while true ... deliver=true ... <agent id>). One-off commands that
+ * merely mention deliver=true (an agent's own ps/kill checks) have no loop and don't count, and
+ * neither do the loop's own $(...) subshells (a matching process whose parent also matches).
+ */
+function pollerCount(procs, agentId) {
+  const isPoller = (p) => p.comm === 'bash' && typeof p.cmdline === 'string'
+    && p.cmdline.includes('deliver=true') && p.cmdline.includes(agentId) && /while\s+true/.test(p.cmdline);
+  const matched = procs.filter(isPoller);
+  const pids = new Set(matched.map((p) => p.pid));
+  return matched.filter((p) => !pids.has(p.ppid)).length;
+}
+
+/**
+ * Pure decision for watcher recovery. Returns 'none' | 'rearm-idle' | 'heartbeat-and-queue' |
+ * 'heartbeat' | 'alert-dupes'. zeroSince / multiSince are when 0 / 2+ pollers were first seen
+ * (null if not currently so); both must have lasted WATCHER_MISSING_MIN_MS, i.e. 2+ sightings.
+ */
+function watcherRecoveryDecision(f) {
+  if (f.pollers >= 2) {
+    const sustained = f.multiSince !== null && f.multiSince !== undefined && f.now - f.multiSince >= WATCHER_MISSING_MIN_MS;
+    return sustained && f.now - (f.lastAlertAt || 0) >= WATCHER_DUPE_ALERT_COOLDOWN ? 'alert-dupes' : 'none';
+  }
+  if (f.pollers !== 0 || f.zeroSince === null || f.zeroSince === undefined) return 'none';
+  if (f.now - f.zeroSince < WATCHER_MISSING_MIN_MS || f.blocked) return 'none';
+  const cooled = f.now - (f.lastNudgeAt || 0) >= WATCHER_NUDGE_COOLDOWN;
+  if (f.busy) return cooled ? 'heartbeat-and-queue' : 'heartbeat';
+  return cooled ? 'rearm-idle' : 'none';
+}
+
+/**
  * Find idle agents about to hit the context limit and compact them from outside.
  */
 async function checkContextExhaustedAgents() {
@@ -795,6 +844,124 @@ async function checkContextExhaustedAgents() {
         });
       } catch (err) { log(`Auto-compact report to Cam FAILED (${err.message})`); }
     }
+  }
+}
+
+/** All processes as { pid, ppid, comm, cmdline } from /proc (cmdline NULs turned into spaces). */
+function readProcessList() {
+  const out = [];
+  for (const pid of fs.readdirSync('/proc').filter((p) => /^\d+$/.test(p))) {
+    try {
+      const comm = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+      if (comm !== 'bash') continue;
+      const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const ppid = parseInt(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1], 10);
+      out.push({ pid: Number(pid), ppid, comm, cmdline });
+    } catch { /* process exited */ }
+  }
+  return out;
+}
+
+/** True if the pane shows something the re-arm prompt must not be typed over. */
+function paneBlocksWatcherNudge(target) {
+  if (paneShowsUsageLimitMenu(target) || !!panePermissionPrompt(target) || paneWaitingOnUsageLimit(target)) return true;
+  try {
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', target], { encoding: 'utf8', timeout: 5000 });
+    if (r.status !== 0) return true;
+    const tail = (r.stdout || '').split('\n').filter((l) => l.trim()).slice(-12).join('\n');
+    return /Compacting conversation/.test(tail) || /\u276f\s*\/compact/.test(tail);
+  } catch {
+    return true;
+  }
+}
+
+function typeIntoPane(target, text, clearFirst) {
+  if (clearFirst) spawnSync('tmux', ['send-keys', '-t', target, 'C-u'], { timeout: 5000 });
+  spawnSync('tmux', ['send-keys', '-t', target, '-l', text], { timeout: 5000 });
+  spawnSync('sleep', ['1']);
+  spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { timeout: 5000 });
+}
+
+/**
+ * Find live agents with no message watcher (or with duplicates) and recover them: re-arm prompt if
+ * idle, heartbeat + queued prompt if busy, alert Cam about duplicates. Never acts on Cam itself.
+ */
+async function checkWatcherlessAgents() {
+  if (shuttingDown || !IS_LINUX) return;
+  let agents;
+  try {
+    const data = await fetchJSON(`${SERVER_URL}/api/agents?limit=100`);
+    agents = data.data || [];
+  } catch {
+    return;
+  }
+  const camId = (agents.find((a) => a.role === 'cam-linux' || a.title === 'Cam') || {}).id || null;
+  let procs;
+  try { procs = readProcessList(); } catch { return; }
+  const seen = new Set();
+
+  for (const agent of agents) {
+    if (agent.status === 'archived' || agent.id === camId || agent.id === CAM_AGENT_ID) continue;
+    if (!findClaudePidByResumeId(agent.id)) continue;
+    const target = findAgentTmuxTarget(agent.id);
+    if (!target) continue;
+    seen.add(agent.id);
+    const now = Date.now();
+    const pollers = pollerCount(procs, agent.id);
+
+    if (pollers === 0) { if (!watcherZeroSince.has(agent.id)) watcherZeroSince.set(agent.id, now); }
+    else watcherZeroSince.delete(agent.id);
+    if (pollers >= 2) { if (!watcherMultiSince.has(agent.id)) watcherMultiSince.set(agent.id, now); }
+    else watcherMultiSince.delete(agent.id);
+    if (pollers === 1) continue;
+
+    const busy = paneTurnInProgress(target);
+    const decision = watcherRecoveryDecision({
+      pollers,
+      zeroSince: watcherZeroSince.has(agent.id) ? watcherZeroSince.get(agent.id) : null,
+      multiSince: watcherMultiSince.has(agent.id) ? watcherMultiSince.get(agent.id) : null,
+      busy,
+      blocked: pollers === 0 ? (paneBlocksWatcherNudge(target) || selfCompactRunning(agent.id)) : false,
+      lastNudgeAt: lastWatcherNudges.get(agent.id) || 0,
+      lastAlertAt: lastWatcherAlerts.get(agent.id) || 0,
+      now,
+    });
+    if (decision === 'none') continue;
+    const name = `${agent.title || agent.id.slice(0, 8)} (${agent.id.slice(0, 8)})`;
+    const zeroMin = watcherZeroSince.has(agent.id) ? Math.round((now - watcherZeroSince.get(agent.id)) / 60000) : 0;
+
+    if (decision === 'heartbeat' || decision === 'heartbeat-and-queue') {
+      try { await postJSON(`${SERVER_URL}/api/agents/${agent.id}/heartbeat`); }
+      catch (err) { logAgent(agent.id, `WATCHER: heartbeat FAILED (${err.message})`); }
+      if (decision === 'heartbeat-and-queue') {
+        typeIntoPane(target, WATCHER_REARM_PROMPT, false);
+        lastWatcherNudges.set(agent.id, now);
+        logAgent(agent.id, `WATCHER: 0 pollers for ${zeroMin}m mid-turn; posted heartbeat and queued re-arm prompt in ${target}`);
+      }
+    } else if (decision === 'rearm-idle') {
+      // Re-check right before typing: the agent may have started a turn or a prompt since.
+      if (paneTurnInProgress(target) || paneBlocksWatcherNudge(target)) continue;
+      typeIntoPane(target, WATCHER_REARM_PROMPT, true);
+      lastWatcherNudges.set(agent.id, now);
+      logAgent(agent.id, `WATCHER: 0 pollers for ${zeroMin}m while idle; typed re-arm prompt in ${target}`);
+    } else if (decision === 'alert-dupes') {
+      lastWatcherAlerts.set(agent.id, now);
+      logAgent(agent.id, `WATCHER: ${pollers} pollers for 3+ min; alerting Cam`);
+      if (camId) {
+        try {
+          await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
+            content: `[WATCHDOG] ${name} has ${pollers} message pollers (sustained 3+ min). Duplicate pollers steal each other's messages. Not killed automatically: check which one belongs to its live Monitor and stop the other.`,
+            priority: 5,
+            source: 'agent',
+            source_peer_name: 'watchdog',
+          });
+        } catch (err) { log(`Watcher duplicate alert to Cam FAILED (${err.message})`); }
+      }
+    }
+  }
+  for (const m of [watcherZeroSince, watcherMultiSince]) {
+    for (const id of [...m.keys()]) if (!seen.has(id)) m.delete(id);
   }
 }
 
@@ -1148,6 +1315,12 @@ function cleanupTracking() {
   for (const [id, info] of recentRestarts) {
     if (now - info.restartedAt > maxAge) recentRestarts.delete(id);
   }
+  for (const [id, t] of lastWatcherNudges) {
+    if (now - t > WATCHER_NUDGE_COOLDOWN) lastWatcherNudges.delete(id);
+  }
+  for (const [id, t] of lastWatcherAlerts) {
+    if (now - t > WATCHER_DUPE_ALERT_COOLDOWN) lastWatcherAlerts.delete(id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,6 +1372,7 @@ async function start() {
   activeIntervals.push(setInterval(checkWedgedAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkContextExhaustedAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(checkUsageLimits, CHECK_INTERVAL));
+  activeIntervals.push(setInterval(checkWatcherlessAgents, CHECK_INTERVAL));
   activeIntervals.push(setInterval(cleanupTracking, 10 * 60 * 1000));
 
   // First check after 10s (let things settle)
@@ -1217,4 +1391,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { findClaudeExePidByResumeId, contextLeftPctFromText, autoCompactDecision, usageFromText };
+module.exports = { findClaudeExePidByResumeId, contextLeftPctFromText, autoCompactDecision, usageFromText,
+  pollerCount, watcherRecoveryDecision };
