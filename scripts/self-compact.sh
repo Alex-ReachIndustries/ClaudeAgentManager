@@ -111,5 +111,5 @@ if [ "$REASON" = "watchdog" ]; then
 else
   why="Your /compact-context request has completed."
 fi
-type_line "${why} Run /session-connect compact now (re-read claudeadmin/context-summary.md, restart your message watcher, check for pending messages), then carry on with your task. Never decline work as 'context exhausted': run /compact-context instead."
+type_line "${why} Run /session-connect compact now (re-read claudeadmin/context-summary.md, make sure exactly ONE message watcher is running (compaction does NOT stop your Monitor: if one is still running keep it and do not start another; start one only if none is running), check for pending messages), then carry on with your task. Never decline work as 'context exhausted': run /compact-context instead."
 log "typed re-ground prompt; done"
