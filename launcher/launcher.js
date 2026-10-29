@@ -1597,102 +1597,11 @@ function scheduleArrangement(sessionName, delayMs = 15000) {
   arrangementTimers.set(sessionName, timerId);
 }
 
-// ---------------------------------------------------------------------------
-// Rate-limit scanner (Linux/tmux only)
-// Scans all tmux panes every ~60s. When a pane shows a Claude rate-limit
-// dialog, it:
-//   1. Parses the reset time from the dialog text
-//   2. Schedules a recovery: at reset+2min, sends Enter (confirm "wait") then
-//      types a resume message so the agent continues automatically
-// ---------------------------------------------------------------------------
-
-// pane target → { timerId, resetAt } — prevents double-scheduling the same pane
-const rateLimitScheduled = new Map();
-
-function parseRateLimitReset(paneText) {
-  // Absolute time formats: "resets at 1:30 PM", "reset at 7:00 AM", "after 2:30 PM"
-  // Restrict to unambiguous reset-context keywords only — avoid matching "after" mid-sentence.
-  const absMatch = paneText.match(/(?:resets?\s+at|reset\s+at|resets?\s+after|reset\s+after|until\s+(?:limit\s+)?resets?)\s+(\d{1,2}:\d{2}\s*[AP]M)/i)
-    || paneText.match(/\bat\s+(\d{1,2}:\d{2}\s*[AP]M)\b/i);
-  if (absMatch) {
-    const parts = absMatch[1].match(/(\d{1,2}):(\d{2})\s*([AP]M)/i);
-    if (parts) {
-      let h = parseInt(parts[1]);
-      const m = parseInt(parts[2]);
-      const ampm = parts[3].toUpperCase();
-      if (ampm === 'PM' && h !== 12) h += 12;
-      if (ampm === 'AM' && h === 12) h = 0;
-      const now = new Date();
-      const reset = new Date(now);
-      reset.setHours(h, m, 0, 0);
-      // If the parsed time is in the past, it must be tomorrow
-      if (reset <= now) reset.setDate(reset.getDate() + 1);
-      return reset;
-    }
-  }
-  // Relative time: "in 2h 30m", "in 2 hours and 34 minutes", "in 45 minutes", "in 1 hour"
-  // "(?:and\s+)?" handles natural-language phrasing like "2 hours and 34 minutes"
-  const relMatch = paneText.match(/in\s+(?:(\d+)\s*h(?:ours?)?)?\s*(?:and\s+)?(?:(\d+)\s*m(?:in(?:utes?)?)?)?/i);
-  if (relMatch && (relMatch[1] || relMatch[2])) {
-    const hours = parseInt(relMatch[1] || 0);
-    const mins = parseInt(relMatch[2] || 0);
-    if (hours || mins) {
-      return new Date(Date.now() + (hours * 60 + mins) * 60000);
-    }
-  }
-  return null;
-}
-
-async function scanRateLimitDialogs() {
-  if (!IS_LINUX) return;
-  try {
-    const listResult = spawnSync('tmux', ['list-panes', '-a', '-F', '#{session_name}:#{window_index}'],
-      { encoding: 'utf8', stdio: 'pipe' });
-    const panes = (listResult.stdout || '').split('\n').filter(Boolean);
-
-    for (const pane of panes) {
-      if (rateLimitScheduled.has(pane)) continue; // already scheduled
-      const captureResult = spawnSync('tmux', ['capture-pane', '-p', '-t', pane],
-        { encoding: 'utf8', stdio: 'pipe' });
-      const content = captureResult.stdout || '';
-      if (!/rate.?limit|usage.?limit/i.test(content)) continue;
-
-      log(`Rate/usage limit dialog detected in pane ${pane}`);
-      const resetAt = parseRateLimitReset(content);
-      // Fallback: 60 min when we can't parse the reset time (safe default vs 5 min which fires before reset)
-      const recoveryAt = resetAt ? new Date(resetAt.getTime() + 2 * 60000) : new Date(Date.now() + 60 * 60000);
-      const delayMs = Math.max(0, recoveryAt.getTime() - Date.now());
-      log(`Rate limit recovery scheduled for pane ${pane} in ${Math.round(delayMs / 60000)} min (at ${recoveryAt.toLocaleTimeString()})`);
-
-      const timerId = setTimeout(async () => {
-        rateLimitScheduled.delete(pane);
-        // Re-check: only proceed if the pane still exists AND still shows a rate-limit dialog.
-        // Without this, the recovery fires even when the dialog was already dismissed.
-        const check = spawnSync('tmux', ['capture-pane', '-p', '-t', pane], { encoding: 'utf8', stdio: 'pipe' });
-        if (check.status !== 0) {
-          log(`Rate limit recovery: pane ${pane} no longer exists — skipping`);
-          return;
-        }
-        const currentContent = check.stdout || '';
-        if (!/rate.?limit|usage.?limit/i.test(currentContent)) {
-          log(`Rate limit recovery: pane ${pane} no longer shows rate/usage-limit dialog — skipping`);
-          return;
-        }
-        log(`Rate limit recovery firing for pane ${pane}`);
-        // Send Enter to confirm "stop and wait" option (or dismiss — safe either way)
-        spawnSync('tmux', ['send-keys', '-t', pane, '', 'Enter'], { stdio: 'pipe' });
-        await new Promise(r => setTimeout(r, 2000));
-        const msg = 'keep up the good work, no need to acknowledge this, just wanted to let you know all is well';
-        spawnSync('tmux', ['send-keys', '-t', pane, msg, 'Enter'], { stdio: 'pipe' });
-        log(`Rate limit recovery complete for pane ${pane} — sent resume message`);
-      }, delayMs);
-
-      rateLimitScheduled.set(pane, { timerId, resetAt: recoveryAt });
-    }
-  } catch (err) {
-    log(`Rate limit scan error: ${err.message}`);
-  }
-}
+// (A rate-limit "recovery" scanner used to live here. It pressed Enter and typed
+// "keep up the good work..." into every pane 2 min after a usage-limit reset. Removed
+// 2026-10-29: Claude Code now continues by itself after a reset, and scripts/watchdog.js
+// answers the old usage-limit menu, heartbeats waiting agents and re-arms their watchers.
+// The blind keystrokes left stray text in agents' input boxes and cost turns.)
 
 // Main loop — use recursive setTimeout so concurrent invocations can't overlap.
 // setInterval does not await async callbacks, meaning if a poll takes >3s (e.g.
@@ -1702,7 +1611,6 @@ log(`Agent Launcher started — polling ${SERVER_URL} every ${POLL_INTERVAL / 10
 log(`User home: ${USER_HOME}`);
 log(`Platform: ${IS_LINUX ? 'Linux' : 'Windows'}`);
 
-let rateLimitScanCounter = 0;
 
 // ---------------------------------------------------------------------------
 // Tmux reconciliation sweep (Linux only, runs every ~60s)
@@ -1794,13 +1702,6 @@ async function schedulePoll() {
   if (poolCheckCounter >= 10) {
     poolCheckCounter = 0;
     await processPoolAgents();
-  }
-
-  // Run rate-limit scan every ~60s (every 20th poll)
-  rateLimitScanCounter++;
-  if (rateLimitScanCounter >= 20) {
-    rateLimitScanCounter = 0;
-    await scanRateLimitDialogs();
   }
 
   // Run tmux reconciliation sweep every ~60s (every 20th poll)
