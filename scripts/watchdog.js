@@ -613,7 +613,7 @@ async function maybeAutoNudge(agent, camId, paneTarget, stuckDelivered, delivere
   lastNudges.set(agent.id, Date.now());
   // Leading separator: the input box may already hold text (the launcher's rate-limit line has
   // been seen there), and send-keys appends to it.
-  const text = ` — watchdog: you have ${ids.length} delivered-but-unacked message(s) (ids ${ids.join(', ')}). Your Monitor fired but you were not woken. Fetch messages?status=delivered, ack and act.`;
+  const text = ` — watchdog: you have ${ids.length} delivered-but-unacked message(s) (ids ${ids.join(', ')}). Your Monitor fired but you were not woken. Fetch messages?status=delivered, ack and act. Your watcher is still running: do NOT start another one.`;
   spawnSync('tmux', ['send-keys', '-t', paneTarget, '-l', text], { timeout: 5000 });
   spawnSync('tmux', ['send-keys', '-t', paneTarget, 'Enter'], { timeout: 5000 });
   logAgent(agent.id, `AUTO-NUDGE: typed a read-your-messages line into ${paneTarget} for ids ${ids.join(', ')}`);
