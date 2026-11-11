@@ -29,7 +29,15 @@ data class FileInfo(
     val description: String? = null,
 
     @SerializedName("created_at")
-    val createdAt: String
+    val createdAt: String,
+
+    /** Present only in GET /api/files (cross-agent search). */
+    @SerializedName("agent_title")
+    val agentTitle: String? = null,
+
+    /** Present only in GET /api/files (cross-agent search). */
+    @SerializedName("agent_status")
+    val agentStatus: String? = null
 ) {
     /**
      * Whether this file was uploaded by the user (from the dashboard/app)

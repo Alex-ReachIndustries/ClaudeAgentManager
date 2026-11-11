@@ -3,6 +3,7 @@ package com.claudemanager.app.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Tune
@@ -33,6 +34,7 @@ import com.claudemanager.app.ui.admin.AdminScreen
 import com.claudemanager.app.ui.admin.WorkflowDetailScreen
 import com.claudemanager.app.ui.agents.AgentListScreen
 import com.claudemanager.app.ui.detail.AgentDetailScreen
+import com.claudemanager.app.ui.files.FilesScreen
 import com.claudemanager.app.ui.knowledge.KnowledgeListScreen
 import com.claudemanager.app.ui.knowledge.PendingKnowledgeScreen
 import com.claudemanager.app.ui.projects.ProjectDetailScreen
@@ -58,6 +60,7 @@ object Routes {
     const val WORKFLOW_DETAIL = "workflow/{workflowId}"
     const val MANAGERS = "managers"
     const val KNOWLEDGE = "knowledge"
+    const val FILES = "files"
     const val PENDING_KB = "pending-kb"
 
     fun agentDetail(agentId: String): String = "agent/$agentId"
@@ -76,19 +79,20 @@ enum class BottomNavItem(
     AGENTS(Routes.AGENTS, "Agents", Icons.Default.People),
     PROJECTS(Routes.PROJECTS, "Projects", Icons.Default.Folder),
     KNOWLEDGE(Routes.KNOWLEDGE, "Knowledge", Icons.Default.MenuBook),
+    FILES(Routes.FILES, "Files", Icons.Default.InsertDriveFile),
     ADMIN(Routes.ADMIN, "Admin", Icons.Default.Tune)
 }
 
 /**
  * Routes that show the bottom navigation bar (the tab destinations).
  */
-private val bottomNavRoutes = setOf(Routes.AGENTS, Routes.PROJECTS, Routes.KNOWLEDGE, Routes.ADMIN)
+private val bottomNavRoutes = setOf(Routes.AGENTS, Routes.PROJECTS, Routes.KNOWLEDGE, Routes.FILES, Routes.ADMIN)
 
 /**
  * Root navigation graph for the ClaudeManager app.
  *
- * Uses a Scaffold with bottom NavigationBar for the three main destinations:
- * Agents, Projects, and Admin. Sub-routes (agent detail, project detail,
+ * Uses a Scaffold with bottom NavigationBar for the main destinations:
+ * Agents, Projects, Knowledge, Files and Admin. Sub-routes (agent detail, project detail,
  * workflow detail, setup) are displayed full-screen without the bottom nav.
  *
  * @param preferences App preferences for reading server URL configuration.
@@ -296,6 +300,14 @@ fun AppNavGraph(
                 KnowledgeListScreen(
                     onPendingClick = {
                         navController.navigate(Routes.PENDING_KB)
+                    }
+                )
+            }
+
+            composable(Routes.FILES) {
+                FilesScreen(
+                    onOpenAgent = { agentId ->
+                        navController.navigate(Routes.agentDetail(agentId))
                     }
                 )
             }

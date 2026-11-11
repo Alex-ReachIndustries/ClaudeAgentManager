@@ -198,6 +198,18 @@ interface AgentApi {
     suspend fun getFiles(@Path("id") agentId: String): Response<PaginatedResponse<FileInfo>>
 
     /**
+     * Search file metadata across ALL agents, newest first. [q] matches part of the filename,
+     * part of the file id, or the start of the agent id. [before] is the next_cursor of the
+     * previous page.
+     */
+    @GET("api/files")
+    suspend fun searchAllFiles(
+        @Query("q") q: String,
+        @Query("limit") limit: Int = 50,
+        @Query("before") before: String? = null
+    ): Response<PaginatedResponse<FileInfo>>
+
+    /**
      * Upload a file attachment to an agent.
      * Uses multipart form data with a "file" field and optional "source" and "description" fields.
      */

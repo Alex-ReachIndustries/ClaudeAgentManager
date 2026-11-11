@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.claudemanager.app.data.api.AgentApi
 import com.claudemanager.app.data.api.ApiClient
+import com.claudemanager.app.data.api.PaginatedResponse
 import com.claudemanager.app.data.models.Agent
 import com.claudemanager.app.data.models.AgentMessage
 import com.claudemanager.app.data.models.AgentUpdate
@@ -270,6 +271,13 @@ class AgentRepository {
     suspend fun getFiles(agentId: String): Result<List<FileInfo>> = apiCall {
         api.getFiles(agentId)
     }.map { it.data }
+
+    /**
+     * Search files from every agent (see AgentApi.searchAllFiles). Returns one page.
+     */
+    suspend fun searchAllFiles(q: String, before: String? = null, limit: Int = 50): Result<PaginatedResponse<FileInfo>> = apiCall {
+        api.searchAllFiles(q, limit, before)
+    }
 
     /**
      * Build the download URL for a specific file. This URL can be opened

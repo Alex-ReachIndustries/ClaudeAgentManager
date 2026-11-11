@@ -18,6 +18,7 @@ import rolesRouter from "./routes/roles.js";
 import totpRouter from "./routes/totp.js";
 import knowledgeRouter from "./routes/knowledge.js";
 import systemRouter from "./routes/system.js";
+import filesRouter from "./routes/files.js";
 import { startFleetSilenceMonitor } from "./system-alerts.js";
 import { warmEmbeddings } from "./knowledge/embeddings.js";
 import { startEmbedder } from "./knowledge/embedder.js";
@@ -108,6 +109,7 @@ app.use("/api/roles", rolesRouter);
 app.use("/api/totp", totpRouter);
 app.use("/api/kb", knowledgeRouter);
 app.use("/api/system", systemRouter);
+app.use("/api/files", filesRouter);
 
 // Failsafe: look up a file by ID alone (no agent_id required).
 // Prevents 400 loops when agents call the wrong endpoint path (missing agent segment).

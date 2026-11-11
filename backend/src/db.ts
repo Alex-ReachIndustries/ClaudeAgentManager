@@ -1292,6 +1292,39 @@ export function getFilesMeta(agentId: string, limit: number = 50, before?: numbe
   }
 }
 
+/**
+ * Search file metadata across ALL agents (newest first). `q` matches part of the filename
+ * (case-insensitive), part of the file id, or the start of the agent id. Never returns blobs.
+ */
+export function searchFiles(q: string, limit: number = 50, before?: number): PaginatedResult<Record<string, unknown>> {
+  const db = getDb();
+  const term = q.trim();
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (term) {
+    const like = term.replace(/[\\%_]/g, (c) => "\\" + c);
+    where.push(`(f.filename LIKE ? ESCAPE '\\' OR CAST(f.id AS TEXT) LIKE ? ESCAPE '\\' OR f.agent_id LIKE ? ESCAPE '\\')`);
+    params.push(`%${like}%`, `%${like}%`, `${like}%`);
+  }
+  if (before) {
+    where.push("f.id < ?");
+    params.push(before);
+  }
+  const stmt = db.prepare(`
+    SELECT f.id, f.agent_id, f.filename, f.mimetype, f.size, f.source, f.description, f.created_at,
+           a.title AS agent_title, a.status AS agent_status
+    FROM files f LEFT JOIN agents a ON a.id = f.agent_id
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
+    ORDER BY f.id DESC LIMIT ?
+  `);
+  const rows = stmt.all(...params, limit) as Record<string, unknown>[];
+  return {
+    data: rows,
+    next_cursor: rows.length > 0 ? rows[rows.length - 1].id as number : null,
+    has_more: rows.length === limit,
+  };
+}
+
 export function deleteAgentFiles(agentId: string): string[] {
   const db = getDb();
   const rows = db.prepare("SELECT file_path FROM files WHERE agent_id = ? AND file_path IS NOT NULL").all(agentId) as { file_path: string }[];
