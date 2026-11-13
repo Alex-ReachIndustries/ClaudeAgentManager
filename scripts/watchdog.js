@@ -477,6 +477,12 @@ async function checkAgents() {
  * so a watchdog using it would consume the very messages the agent is waiting for and make the
  * problem worse while hiding it.
  */
+/** True for the automatic "[ACK from <agent>]: ..." reply an ack sends back to the sender. */
+function isAutoAckRelay(content) {
+  return typeof content === 'string'
+    && /^\s*(\[↔ RELAY FROM AGENT[^\]]*\]\s*)?\[ACK from [^\]\n]+\]:/.test(content);
+}
+
 async function checkDeafAgents() {
   if (shuttingDown) return;
 
@@ -512,8 +518,11 @@ async function checkDeafAgents() {
     // Also ignore the watchdog's own re-arm reminders: checkWedgedAgents queues one precisely when an
     // agent is not polling and has already alerted on it, so counting it here reported every stale
     // agent twice (the "1 message(s) still 'pending'" alerts of 2026-09-30 were all reminders).
+    // And ignore the automatic "[ACK from X]" replies one agent's ack sends another: there is
+    // nothing to act on, so agents often leave them unacked, which read as deafness (false alarms
+    // on Sonnets B and E, 2026-11-11). Approved by Alex 2026-11-13.
     const real = messages.filter((m) => m.source !== 'system' && !m.acknowledged_at
-      && m.source_peer_name !== 'watchdog');
+      && m.source_peer_name !== 'watchdog' && !isAutoAckRelay(m.content));
 
     const oldest = (list) => list.reduce((acc, m) => {
       const t = parseTimestamp(m.delivered_at || m.created_at);
@@ -759,23 +768,37 @@ function selfCompactRunning(agentId) {
  * merely mention deliver=true (an agent's own ps/kill checks) have no loop and don't count, and
  * neither do the loop's own $(...) subshells (a matching process whose parent also matches).
  */
-function pollerCount(procs, agentId) {
-  const isPoller = (p) => p.comm === 'bash' && typeof p.cmdline === 'string'
+function isPollerOf(p, agentId) {
+  return p.comm === 'bash' && typeof p.cmdline === 'string'
     && p.cmdline.includes('deliver=true') && p.cmdline.includes(agentId) && /while\s+true/.test(p.cmdline);
-  const matched = procs.filter(isPoller);
+}
+
+function pollerCount(procs, agentId) {
+  const matched = procs.filter((p) => isPollerOf(p, agentId));
   const pids = new Set(matched.map((p) => p.pid));
   return matched.filter((p) => !pids.has(p.ppid)).length;
 }
 
 /**
+ * Duplicate pollers to stop for an agent: every poller loop that is a DIRECT child of the agent's
+ * own claude process, except the newest (highest start time). Pollers with any other parent are
+ * never returned (not provably this agent's live Monitor). Empty unless 2+ such pollers exist.
+ */
+function pollersToStop(procs, agentId, claudePid) {
+  const own = procs.filter((p) => isPollerOf(p, agentId) && p.ppid === claudePid)
+    .sort((a, b) => (a.start - b.start) || (a.pid - b.pid));
+  return own.length >= 2 ? own.slice(0, -1).map((p) => p.pid) : [];
+}
+
+/**
  * Pure decision for watcher recovery. Returns 'none' | 'rearm-idle' | 'heartbeat-and-queue' |
- * 'heartbeat' | 'alert-dupes'. zeroSince / multiSince are when 0 / 2+ pollers were first seen
+ * 'heartbeat' | 'stop-dupes'. zeroSince / multiSince are when 0 / 2+ pollers were first seen
  * (null if not currently so); both must have lasted WATCHER_MISSING_MIN_MS, i.e. 2+ sightings.
  */
 function watcherRecoveryDecision(f) {
   if (f.pollers >= 2) {
     const sustained = f.multiSince !== null && f.multiSince !== undefined && f.now - f.multiSince >= WATCHER_MISSING_MIN_MS;
-    return sustained && f.now - (f.lastAlertAt || 0) >= WATCHER_DUPE_ALERT_COOLDOWN ? 'alert-dupes' : 'none';
+    return sustained && f.now - (f.lastAlertAt || 0) >= WATCHER_DUPE_ALERT_COOLDOWN ? 'stop-dupes' : 'none';
   }
   if (f.pollers !== 0 || f.zeroSince === null || f.zeroSince === undefined) return 'none';
   if (f.now - f.zeroSince < WATCHER_MISSING_MIN_MS || f.blocked) return 'none';
@@ -847,7 +870,10 @@ async function checkContextExhaustedAgents() {
   }
 }
 
-/** All processes as { pid, ppid, comm, cmdline } from /proc (cmdline NULs turned into spaces). */
+/**
+ * All bash processes as { pid, ppid, comm, cmdline, start } from /proc (cmdline NULs turned into
+ * spaces; start = starttime in clock ticks since boot, for ordering).
+ */
 function readProcessList() {
   const out = [];
   for (const pid of fs.readdirSync('/proc').filter((p) => /^\d+$/.test(p))) {
@@ -856,8 +882,10 @@ function readProcessList() {
       if (comm !== 'bash') continue;
       const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
       const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const ppid = parseInt(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1], 10);
-      out.push({ pid: Number(pid), ppid, comm, cmdline });
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+      const ppid = parseInt(fields[1], 10);
+      const start = parseInt(fields[19], 10);
+      out.push({ pid: Number(pid), ppid, comm, cmdline, start });
     } catch { /* process exited */ }
   }
   return out;
@@ -945,18 +973,44 @@ async function checkWatcherlessAgents() {
       typeIntoPane(target, WATCHER_REARM_PROMPT, true);
       lastWatcherNudges.set(agent.id, now);
       logAgent(agent.id, `WATCHER: 0 pollers for ${zeroMin}m while idle; typed re-arm prompt in ${target}`);
-    } else if (decision === 'alert-dupes') {
+    } else if (decision === 'stop-dupes') {
+      // Approved by Alex 2026-11-13: stop the older duplicates, keep the newest. Only pollers that
+      // are direct children of this agent's own claude process are touched; each is re-checked in
+      // /proc right before the signal so a recycled pid can never be hit.
       lastWatcherAlerts.set(agent.id, now);
-      logAgent(agent.id, `WATCHER: ${pollers} pollers for 3+ min; alerting Cam`);
-      if (camId) {
+      const claudePid = findClaudePidByResumeId(agent.id);
+      const stopped = [];
+      for (const pid of claudePid ? pollersToStop(procs, agent.id, claudePid) : []) {
         try {
-          await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
-            content: `[WATCHDOG] ${name} has ${pollers} message pollers (sustained 3+ min). Duplicate pollers steal each other's messages. Not killed automatically: check which one belongs to its live Monitor and stop the other.`,
+          const fresh = readProcessList().find((p) => p.pid === pid);
+          if (!fresh || fresh.ppid !== claudePid || !isPollerOf(fresh, agent.id)) continue;
+          process.kill(pid, 'SIGTERM');
+          stopped.push(pid);
+        } catch (err) { logAgent(agent.id, `WATCHER: stopping duplicate ${pid} FAILED (${err.message})`); }
+      }
+      const left = pollers - stopped.length;
+      logAgent(agent.id, `WATCHER: ${pollers} pollers for 3+ min; stopped older duplicate(s) ${stopped.join(', ') || 'none'}, ${left} left`);
+      if (stopped.length) {
+        try {
+          await postJSON(`${SERVER_URL}/api/agents/${agent.id}/messages`, {
+            content: `[WATCHDOG] You had ${pollers} message watchers running; duplicates steal each other's messages. I stopped the older one(s) and kept your newest. When the stopped Monitor reports that it ended, do NOT start a replacement: your newest watcher is still running. Only re-arm on the expiry notice of your current watcher.`,
             priority: 5,
             source: 'agent',
             source_peer_name: 'watchdog',
           });
-        } catch (err) { log(`Watcher duplicate alert to Cam FAILED (${err.message})`); }
+        } catch (err) { logAgent(agent.id, `WATCHER: duplicate notice to agent FAILED (${err.message})`); }
+      }
+      if (camId) {
+        try {
+          await postJSON(`${SERVER_URL}/api/agents/${camId}/messages`, {
+            content: stopped.length && left === 1
+              ? `[WATCHDOG] ${name} had ${pollers} message pollers (3+ min). Stopped the older one(s) (pid ${stopped.join(', ')}), kept the newest. No action needed.`
+              : `[WATCHDOG] ${name} has ${pollers} message pollers (3+ min) and I could not reduce them to one (stopped: ${stopped.join(', ') || 'none'}; some are not direct children of its claude process). Check its pollers by hand.`,
+            priority: 5,
+            source: 'agent',
+            source_peer_name: 'watchdog',
+          });
+        } catch (err) { log(`Watcher duplicate report to Cam FAILED (${err.message})`); }
       }
     }
   }
@@ -1392,4 +1446,4 @@ if (require.main === module) {
 }
 
 module.exports = { findClaudeExePidByResumeId, contextLeftPctFromText, autoCompactDecision, usageFromText,
-  pollerCount, watcherRecoveryDecision };
+  pollerCount, pollersToStop, watcherRecoveryDecision, isAutoAckRelay };
