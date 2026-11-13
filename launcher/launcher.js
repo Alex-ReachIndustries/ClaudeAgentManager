@@ -781,7 +781,11 @@ async function autoAcceptTrustDialog(session, windowName) {
 //    received a prompt. Concurrent watchers for the same cwd (e.g. two pool
 //    slots spawned in rapid succession) will skip a claimed agent and wait for
 //    the next one to register.
-async function deliverPromptWhenRegistered(cwd, prompt) {
+// 3. expectedId (Linux): the agent's pre-generated UUID. When known, ONLY that agent can match;
+//    cwd + timing are not enough, because two agents spawned seconds apart into the same folder
+//    register in either order and each loop grabbed the first one (Sonnet F got E's brief,
+//    2026-10-22). Callers skip this function entirely when the backend delivers the prompt.
+async function deliverPromptWhenRegistered(cwd, prompt, expectedId = null) {
   const spawnTime = Date.now();
   const deadline = spawnTime + 120000;
   const normCwd = cwd.replace(/\\/g, '/').replace(/\/$/, '');
@@ -792,6 +796,7 @@ async function deliverPromptWhenRegistered(cwd, prompt) {
       const agents = await fetchJSON(`${SERVER_URL}/api/agents`);
       const list = Array.isArray(agents) ? agents : (agents.data || agents.agents || []);
       const fresh = list.find(a => {
+        if (expectedId) return a.id === expectedId && !promptDeliveredAgentIds.has(a.id);
         if (a.status === 'archived') return false;
         if (promptDeliveredAgentIds.has(a.id)) return false;
         const agentCwd = (a.cwd || '').replace(/\\/g, '/').replace(/\/$/, '');
@@ -816,7 +821,7 @@ async function deliverPromptWhenRegistered(cwd, prompt) {
   log(`Timed out (2 min) waiting for agent at "${normCwd}" to register — prompt not delivered`);
 }
 
-function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
+function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid, backendDeliversPrompt = false) {
   const cwd = resolveFolder(folderPath);
   log(`Launching NEW agent in: ${cwd}${wtWindow ? ` [window: ${wtWindow}]` : ''}`);
 
@@ -851,8 +856,11 @@ function launchNewAgent(folderPath, spawnMeta, wtWindow, pregenUuid) {
 
   // If a task prompt was provided, deliver it as a message once the agent registers.
   // Agents start with /session-init so the task arrives after workspace context loads.
-  if (spawnMeta && spawnMeta.prompt) {
-    deliverPromptWhenRegistered(cwd, spawnMeta.prompt);
+  // The backend already delivers it when the launch request's JSON metadata carries the prompt
+  // and a claimed_uuid ties it to exactly this agent (POST /updates link step); delivering here
+  // too gave every spawned agent its brief twice, and by cwd, sometimes another agent's brief.
+  if (spawnMeta && spawnMeta.prompt && !backendDeliversPrompt) {
+    deliverPromptWhenRegistered(cwd, spawnMeta.prompt, pregenUuid);
   }
 
   const modelFlag = (spawnMeta && spawnMeta.model) ? ` --model ${resolveModel(spawnMeta.model)}` : '';
@@ -1432,6 +1440,7 @@ async function processPendingRequests() {
           // Fixes race condition where multiple agents with the same CWD grab the wrong
           // launch request metadata (wrong model/role/prompt).
           let pregenUuid = null;
+          let backendDeliversPrompt = false;
           if (IS_LINUX) {
             pregenUuid = randomUUID();
             try {
@@ -1441,11 +1450,13 @@ async function processPendingRequests() {
               await patchJSON(`${SERVER_URL}/api/launch-requests/${req.id}`, {
                 agent_id: JSON.stringify(curMeta)
               });
+              // The backend's link step sends curMeta.prompt to exactly this UUID on first registration.
+              backendDeliversPrompt = !!curMeta.prompt;
             } catch (err) {
               log(`Warning: could not write claimed_uuid for request #${req.id}: ${err.message}`);
             }
           }
-          launchNewAgent(req.folder_path, spawnMeta, wtWindow, pregenUuid);
+          launchNewAgent(req.folder_path, spawnMeta, wtWindow, pregenUuid, backendDeliversPrompt);
         } else if (req.type === 'signal') {
           sendSignalToTerminal(req.target_pid, req.folder_path, req.resume_agent_id);
         } else if (req.type === 'input') {
