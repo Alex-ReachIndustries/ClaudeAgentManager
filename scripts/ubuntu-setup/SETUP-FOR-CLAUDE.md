@@ -177,8 +177,9 @@ tailscale status
 
 Must show this machine as `active; relay`. If not, stop and ask.
 
-x11vnc only starts when the user logs into the desktop GUI — don't try to
-test it now. Note in your final summary that the human needs to:
+x11vnc runs as a system service (04b) from boot, showing the login screen
+until the user logs in. It needs Tailscale up, so test it only after the
+tailnet auth above. Note in your final summary that the human needs to:
 - Change the VNC password (current default is `vncpass`)
 - Install AVNC on Android and connect to the tailnet name on port 5900
 
